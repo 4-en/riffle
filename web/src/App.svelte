@@ -1,6 +1,6 @@
 <script>
   import { tick, untrack } from 'svelte';
-  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, DATE_GROUPS, LOCATION_GROUPS } from './lib/state.svelte.js';
+  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup } from './lib/state.svelte.js';
   import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds } from './lib/api.js';
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import TopBar from './components/TopBar.svelte';
@@ -12,6 +12,9 @@
   import SelectionBar from './components/SelectionBar.svelte';
   import Compare from './components/Compare.svelte';
   import ExportDialog from './components/ExportDialog.svelte';
+  import Calendar from './components/Calendar.svelte';
+  // The map (d3 + country outlines) loads only when it is first shown.
+  const loadMap = () => import('./components/MapView.svelte');
 
   const PAGE = 120;
 
@@ -173,6 +176,26 @@
     }
   }
 
+  /** From an overview (calendar or map): show that group in the grouped grid. */
+  async function openGroup(mode, key) {
+    const requery = view.q || view.similar || view.group !== mode;
+    view.overview = false;
+    if (requery) {
+      pendingJump = { key, id: null };
+      view.q = '';
+      view.similar = null;
+      view.group = mode;
+    } else {
+      await tick(); // the grid is back
+      jumpToGroup(key);
+    }
+  }
+
+  // An overview needs a grouping and makes no sense for search results.
+  $effect(() => {
+    if (view.overview && (!view.group || view.q || view.similar)) view.overview = false;
+  });
+
   /** From the detail view: browse the photo's date group ('date') or place ('location')
    * in the grouped grid, keeping the current level of that kind if one is active. */
   function showInTimeline(photo, kind = 'date') {
@@ -321,6 +344,8 @@
       view.collapse = view.collapse === 'stacks' ? 'dupes' : 'stacks';
     } else if (key === 'h') {
       toggleHideRejected();
+    } else if (key === 'o' && view.group && !view.q && !view.similar) {
+      view.overview = !view.overview;
     } else if (key === 'r') {
       view.compare = { kind: 'review' };
     }
@@ -353,6 +378,14 @@
             </button>
           {/if}
         </div>
+      {:else if view.overview && isLocationGroup(view.group)}
+        {#await loadMap()}
+          <p class="p-4 text-sm text-neutral-500">Loading map…</p>
+        {:then { default: MapView }}
+          <MapView onopen={openGroup} />
+        {/await}
+      {:else if view.overview}
+        <Calendar onopen={openGroup} />
       {:else}
         <Grid
           bind:this={grid}

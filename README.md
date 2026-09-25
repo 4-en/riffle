@@ -15,8 +15,9 @@ A local tool for finding the best photos in a large archive and exporting them f
 - Duplicate grouping via perceptual hash
 - RAW files tracked by matching filenames (never read or modified)
 - EXIF: date, camera, lens, focal length, aperture, shutter speed, ISO, GPS
-- Filters for flag, exposure (blown highlights / crushed shadows), date range, camera, lens, focal length, aperture, ISO, orientation, and location; like tags, options are counted within the other active filters, and filters that can't narrow the results are hidden
+- Filters for flag, date range, camera, lens, focal length, aperture, ISO, orientation, and location; like tags, options are counted within the other active filters, and filters that can't narrow the results are hidden
 - Timeline view: group the grid by day, month, or year (only groups with matching photos appear), jump between groups, and go from any photo to its day
+- **Overviews:** a calendar (for date groupings) and a map (for location groupings) of where your photos are; click a day, month, or place to open it in the grid
 - **Location from your phone:** add a Google Timeline export (or Records.json / GPX) and photos without GPS are placed by capture time; group by place, region, or country, filter by where you were, and optionally write the position into exported copies
 - Simple local web UI, including adding photo folders and running indexing from the browser
 
@@ -81,7 +82,7 @@ Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike 
 
 | Where | Keys |
 |---|---|
-| Anywhere | `/` search · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
+| Anywhere | `O` calendar / map overview (with a grouping) · `/` search · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
 | Grid | click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected · `R` review stacks |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag (and go to the next photo) |
 | Compare | click or `1`–`9` keep · `A` keep the suggested one · `Enter` pick kept, reject rest · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag the focused photo · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
@@ -101,6 +102,8 @@ The file stays where it is and is only read (its path is saved in `config.yaml` 
 | Timeline: stayed | the phone recorded a visit at that time | ~50 m |
 | Timeline: on the move | taken while travelling; interpolated along the route | tens of metres to a few km |
 | Timeline: nearby | a recorded position within 15 minutes | depends on the gap |
+
+With a location grouping, **Map** (top bar, or `O`) shows your photos as clusters on a world map; hover for a cover photo, click to open the place in the grid. The outlines are Natural Earth country borders bundled with the app, so the map works offline and never contacts a map server; it is an overview, not a street map. With a date grouping, the same button shows a **Calendar**: a year of months where each day with photos shows a cover and a count.
 
 Places are named offline from a bundled GeoNames dataset: the nearest town or village, its region, and its country. Group the grid by **Place / Region / Country** (groups are in trip order), filter by country, place, or source in the sidebar, and use **Show place** in the photo view. `location.max_gap_minutes` and `location.min_population` in `config.yaml` tune matching and naming.
 

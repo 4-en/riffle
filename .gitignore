@@ -218,6 +218,8 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Photo Archive
+# The Python template above ignores every lib/ folder; the UI's source lives in one.
+!web/src/lib/
 data/
 examples/
 /config.yaml

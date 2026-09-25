@@ -22,6 +22,7 @@ def client(indexed, fake_clip, conn):
         )
     conn.commit()
     with TestClient(create_app(indexed, text_encoder=fake_clip.encode_text)) as c:
+        c.app_cfg = indexed
         yield c
 
 
@@ -82,8 +83,9 @@ def test_facets_exclude_their_own_filter(client):
 
 
 def test_grouped_listing(client):
+    kc = lambda groups: [{"key": g["key"], "count": g["count"]} for g in groups]
     res = client.get("/api/photos", params={"group": "day", "dupes": "all"}).json()
-    assert res["groups"] == [
+    assert kc(res["groups"]) == [
         {"key": "2024-05-01", "count": 1},
         {"key": "2024-05-03", "count": 1},
         {"key": "2024-06-10", "count": 1},
@@ -97,9 +99,27 @@ def test_grouped_listing(client):
 
     # Groups follow the filters and duplicate collapsing; empty groups are absent.
     filtered = client.get("/api/photos", params={"group": "year", "iso_min": 200}).json()
-    assert filtered["groups"] == [{"key": "2024", "count": 2}]
+    assert kc(filtered["groups"]) == [{"key": "2024", "count": 2}]
     paged = client.get("/api/photos", params={"group": "day", "dupes": "all", "limit": 1, "offset": 3}).json()
     assert len(paged["groups"]) == 4 and paged["items"][0]["group"] == ""
 
     assert client.get("/api/photos", params={"group": "week"}).status_code == 400
     assert "groups" not in client.get("/api/photos").json()
+
+
+def test_groups_endpoint_with_covers(client, conn):
+    from archive import selections
+
+    res = client.get("/api/groups", params={"group": "month", "dupes": "all"}).json()
+    may = next(g for g in res["groups"] if g["key"] == "2024-05")
+    ids = {n: photo(conn, n)["id"] for n in ("IMG_0001.jpg", "IMG_0002.jpg")}
+    assert may["count"] == 2 and may["cover"] == ids["IMG_0001.jpg"]  # first photo of the month
+    assert may["first"] == "2024:05:01 10:00:00" and may["last"] == "2024:05:03 09:00:00"
+    # A pick becomes the cover.
+    selections.set_flags(conn, client.app_cfg.selections_path, [([ids["IMG_0002.jpg"]], "pick")])
+    may = next(g for g in client.get("/api/groups", params={"group": "month", "dupes": "all"}).json()["groups"] if g["key"] == "2024-05")
+    assert may["cover"] == ids["IMG_0002.jpg"]
+    # Filters apply, and there are no items.
+    res = client.get("/api/groups", params={"group": "day", "iso_min": 200}).json()
+    assert [g["key"] for g in res["groups"]] == ["2024-05-01", "2024-06-10"] and "items" not in res
+    assert client.get("/api/groups", params={"group": "week"}).status_code == 400

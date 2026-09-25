@@ -87,6 +87,20 @@
       </optgroup>
     </select>
   </label>
+  {#if view.group}
+    {@const isMap = ['place', 'region', 'country'].includes(view.group)}
+    <button
+      class="shrink-0 rounded border px-2 py-1 text-xs disabled:opacity-40 {view.overview
+        ? 'border-sky-700 bg-sky-800 text-white'
+        : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
+      aria-pressed={view.overview}
+      disabled={!!(view.q || view.similar)}
+      title={view.q || view.similar ? 'Overviews apply when browsing, not to search results' : `${isMap ? 'Map' : 'Calendar'} overview of the groups (O)`}
+      onclick={() => (view.overview = !view.overview)}
+    >
+      {isMap ? 'Map' : 'Calendar'}
+    </button>
+  {/if}
 
   <button
     class="shrink-0 rounded border px-2 py-1 text-xs {view.collapse === 'stacks'

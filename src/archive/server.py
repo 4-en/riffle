@@ -286,19 +286,59 @@ def create_app(
             keys = {r[0]: r[1] or "" for r in rows}
             for item in items:
                 item["group"] = keys[item["id"]]
-            group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else f"grp {direction}"
-            labels = location_labels(conn)[group] if by_location else {}
-            result["groups"] = [
-                {"key": k or "", "count": n}
-                | ({"label": labels.get(k, "Unknown location") if k else "Unknown location",
-                    "first": first, "last": last} if by_location else {})
-                for k, n, first, last in conn.execute(
-                    f"""{cte} SELECT {key} AS grp, COUNT(*), MIN(p.taken_at), MAX(p.taken_at) {shown}
-                        GROUP BY grp ORDER BY grp IS NULL, {group_order}""",
-                    params,
-                )
-            ]
+            result["groups"] = group_summary(conn, cte, shown, params, group, direction)
         return result
+
+    def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "") -> list[dict]:
+        """Every non-empty group of the listing, in display order, with its count,
+        first/last capture time, and a cover photo (a pick if the group has one,
+        else its first photo). Location groups add a label and a centre point."""
+        key = GROUP_KEYS[group]
+        by_location = group in LOCATION_KEYS
+        group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else f"grp {direction}"
+        extra = ""
+        if by_location:
+            lat = "(SELECT l.lat FROM photo_locations l WHERE l.photo_id = p.id)"
+            lon = "(SELECT l.lon FROM photo_locations l WHERE l.photo_id = p.id)"
+            extra = f", AVG({lat}), AVG({lon})"
+        rows = conn.execute(
+            f"""{cte} SELECT {key} AS grp, COUNT(*), MIN(p.taken_at), MAX(p.taken_at){extra} {shown}
+                GROUP BY grp ORDER BY grp IS NULL, {group_order}""",
+            params,
+        ).fetchall()
+        covers = dict(
+            conn.execute(
+                f"""{cte} SELECT grp, id FROM (
+                      SELECT {key} AS grp, p.id AS id, ROW_NUMBER() OVER (
+                        PARTITION BY {key} ORDER BY {FLAG_EXPR} = 'pick' DESC, p.taken_at, p.id) AS rn
+                      {shown}) WHERE rn = 1""",
+                params,
+            ).fetchall()
+        )
+        labels = location_labels(conn)[group] if by_location else {}
+        out = []
+        for r in rows:
+            k = r[0]
+            g = {"key": k or "", "count": r[1], "first": r[2], "last": r[3], "cover": covers.get(k)}
+            if by_location:
+                g["label"] = labels.get(k, "Unknown location") if k else "Unknown location"
+                g["lat"], g["lon"] = (r[4], r[5]) if k else (None, None)
+            out.append(g)
+        return out
+
+    @app.get("/api/groups")
+    def list_groups(
+        group: str,
+        flt: PhotoFilter = Depends(photo_filter),
+        dupes: str = "collapse",
+        collapse: str | None = None,
+        conn=Depends(get_conn),
+    ):
+        """Only the groups of a grouped listing (for the calendar and map overviews)."""
+        if group not in GROUP_KEYS:
+            raise HTTPException(400, f"group must be one of {', '.join(GROUP_KEYS)}")
+        cte, shown, _, params = listing(flt, collapse_mode(collapse, dupes), "taken_at", group)
+        return {"group": group, "groups": group_summary(conn, cte, shown, params, group)}
 
     @app.get("/api/photos/{photo_id}")
     def photo_detail(photo_id: int, conn=Depends(get_conn)):

@@ -209,3 +209,14 @@ def test_library_location_history_endpoints(archive_dir, timeline_file, tmp_path
             time.sleep(0.05)
         assert c.request("DELETE", "/api/location-history", json={"path": str(timeline_file)}).status_code == 200
         assert load_config(archive_dir / "config.yaml").location_history == []
+
+
+def test_location_groups_have_map_centres(located, conn):
+    locate_photos(conn, located)
+    with TestClient(create_app(located, text_encoder=FakeClip().encode_text)) as c:
+        groups = c.get("/api/groups", params={"group": "place", "collapse": "none"}).json()["groups"]
+        sthlm = next(g for g in groups if g["label"] == "Stockholm, Sweden")
+        assert (sthlm["lat"], sthlm["lon"]) == pytest.approx(STOCKHOLM) and sthlm["cover"] is not None
+        country = c.get("/api/groups", params={"group": "country", "collapse": "none"}).json()["groups"]
+        sweden = next(g for g in country if g["key"] == "SE")
+        assert sweden["count"] == 3 and STOCKHOLM[0] < sweden["lat"] < UPPSALA[0]  # centre of its photos
