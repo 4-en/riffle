@@ -155,8 +155,8 @@ data_dir: data
 vocabulary: vocabulary.yaml
 
 model:
-  name: ViT-B-16
-  pretrained: laion2b_s34b_b88k
+  name: ViT-L-14-quickgelu   # default since 26 Sep 2026 (was ViT-B-16 / laion2b_s34b_b88k)
+  pretrained: dfn2b
   device: auto        # cuda, mps, or cpu
   batch_size: 32
 
@@ -171,7 +171,7 @@ dupes:
 
 stacks:
   max_gap_seconds: 30     # consecutive photos at most this far apart...
-  min_similarity: 0.90    # ...and at least this CLIP-similar form a stack
+  min_similarity: 0.92    # ...and at least this CLIP-similar form a stack (model-dependent)
 
 selections: selections.sqlite3   # pick/reject flags (user data)
 
@@ -387,6 +387,8 @@ Culling aids, both derived and recomputed on every index in about a second (no m
 
 **Stacks** (`stacks.py`): photos in capture order are linked to the next one when taken at most `max_gap_seconds` apart with CLIP cosine similarity ≥ `min_similarity`; these links are merged with the duplicate groups (union–find), and every connected set of two or more is a stack. On the first real library (743 photos, very bursty wildlife shooting: 253 consecutive pairs within 2 s), the defaults 30 s / 0.90 give 141 stacks covering 510 photos, the largest 29. Requiring similarity to the stack's first photo as well (against slow drift) made no difference there, so the chaining stays simple.
 
+Similarity values depend on the model. After the switch to ViT-L-14 (DFN-2B), which rates consecutive shots as more similar (median 0.955 vs 0.937 within 30 s), 0.92 matched the B-16 links at 0.90 best (91% agreement on 810 consecutive pairs; 557 vs 545 links; 251 stacks covering 813 of 1,146 photos vs 253 / 804). The pairs the two models disagree on were borderline reframings of the same subject either way.
+
 ## 10. Vocabulary
 
 Families are top-level keys (any number; the MVP uses `subject`, `scene`, and `look`). An entry is either a plain tag name or a tag with alternative phrases; the tag name itself is always one of its phrases.
@@ -515,7 +517,7 @@ In rough order of expected value:
 1. Manual tag add/remove, stored separately from zero-shot tags (in the selections DB, like flags).
 2. Named collections (e.g. "Print", "Photo book") on top of the global pick/reject, each with its own export; and optionally star ratings for ranking the picks.
 3. Finer location "spots" within a town (clustering visit positions, e.g. within 200 m), labelled with the town and, where the timeline marks them, "Home"/"Work" from its frequent places (§14.1).
-4. A second embedding model for comparison (e.g. a SigLIP-family or multilingual model).
+4. Comparing models on the §13 queries (the default is now ViT-L-14 DFN-2B; SigLIP SO400M or a multilingual model for Chinese queries are the next candidates; SigLIP needs `tags.softmax_scale` and the stack threshold retuned).
 5. Image-prototype tags built from a few example photos, for concepts that text describes badly.
 6. Per-camera clock offset correction (date and camera filters are done). Location matching depends on it: a camera that is 10 minutes off places photos along the wrong part of a route.
 7. A map of photo locations, and a 2D embedding map (UMAP) for exploration.
@@ -562,4 +564,4 @@ Implemented as described in §9.8 and §11.3, with the user's choices: the histo
 1. Development machine: Linux, NVIDIA RTX 3090 (CUDA).
 2. Image formats: JPEG/PNG/TIFF supported; test data includes large 16-bit PNGs. HEIC is an optional extra (`pip install -e ".[heic]"`).
 3. RAW location: defaults `.`, `RAW`, `../RAW` relative to each image's folder; adjust `raw_search_dirs` per archive.
-4. Default CLIP model: `ViT-B-16` / `laion2b_s34b_b88k`; a larger model can be compared later (§14).
+4. Default CLIP model: started with `ViT-B-16` / `laion2b_s34b_b88k`; switched on 26 Sep 2026 to `ViT-L-14-quickgelu` / `dfn2b` (about 81% ImageNet zero-shot vs 70%; the 1,146-photo library embeds in well under a minute on the RTX 3090). Documented alternatives: `ViT-B-16` / `dfn2b` for laptops (about 76%, same speed as before), `ViT-H-14-quickgelu` / `dfn5b` for maximum quality (about 83%).

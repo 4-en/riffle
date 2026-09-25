@@ -10,9 +10,15 @@ raw_search_dirs: [".", "RAW", "../RAW"]   # relative to each image's folder
 data_dir: data
 vocabulary: vocabulary.yaml
 
+# CLIP model for search, tags, stacks, and the quality hint. Each model keeps its
+# own embeddings, so you can switch back and forth; after switching, run
+# `archive index` (embeds everything once) and check stacks.min_similarity.
+#   Default:     ViT-L-14-quickgelu / dfn2b   good quality; fine on a GPU, slower to index on a laptop CPU
+#   Faster:      ViT-B-16 / dfn2b             ~4x faster indexing, ~0.6 GB; a good choice for laptops
+#   Max quality: ViT-H-14-quickgelu / dfn5b   best search and tags; ~2.5x slower than the default, ~4 GB RAM
 model:
-  name: ViT-B-16
-  pretrained: laion2b_s34b_b88k
+  name: ViT-L-14-quickgelu
+  pretrained: dfn2b
   device: auto        # cuda, mps, or cpu
   batch_size: 32
 
@@ -27,9 +33,11 @@ dupes:
 
 # Stacks: bursts and near-identical shots, for choosing the best of several.
 # Consecutive photos at most max_gap_seconds apart with CLIP similarity >= min_similarity.
+# Similarity values depend on the model: 0.92 for the default ViT-L-14, about 0.90
+# for ViT-B-16 (the models rate the same shots differently).
 stacks:
   max_gap_seconds: 30
-  min_similarity: 0.90
+  min_similarity: 0.92
 
 # Your pick/reject flags. User data: keep it outside data/ and back it up.
 selections: selections.sqlite3

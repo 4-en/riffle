@@ -31,7 +31,7 @@ Next is a short evaluation of search and tag quality (see `development_plan.md` 
 - Python 3.12+
 - Node.js 20.19+ or 22.12+ (to build the UI)
 - A GPU or Apple Silicon is recommended but not required
-- About 600 MB of disk for the CLIP model weights, downloaded on first use
+- About 1.7 GB of disk for the default CLIP model weights, downloaded on first use (see [Model](#model) for a smaller one)
 
 ## Setup
 
@@ -75,7 +75,7 @@ With a location history, the export can also **add the location to photos withou
 
 Exports never overwrite anything: identical files already in the destination are skipped (so an interrupted export can simply be run again), and other name clashes get a `-1` suffix, with an image and its RAW keeping matching names. Each export writes an `export-manifest.csv`. The destination can't be inside a photo folder, where the copies would be indexed again.
 
-Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike (`stacks.min_similarity`) in `config.yaml`; adjust and re-run `archive index` (fast, no re-embedding) if they are too eager or too strict.
+Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike (`stacks.min_similarity`) in `config.yaml`; adjust and re-run `archive index` (fast, no re-embedding) if they are too eager or too strict. The right `min_similarity` depends on the model (see [Model](#model)).
 
 ### Keyboard
 
@@ -105,6 +105,18 @@ The file stays where it is and is only read (its path is saved in `config.yaml` 
 Places are named offline from a bundled GeoNames dataset: the nearest town or village, its region, and its country. Group the grid by **Place / Region / Country** (groups are in trip order), filter by country, place, or source in the sidebar, and use **Show place** in the photo view. `location.max_gap_minutes` and `location.min_population` in `config.yaml` tune matching and naming.
 
 Photos are matched by the camera's clock, so a camera set to the wrong time places photos wrongly. Location history is sensitive: it never leaves your machine, the derived positions live in `data/`, and nothing is written into your originals. Keep the export out of any shared or synced folder (the repository's `.gitignore` excludes `Timeline.json`, `Records.json`, and `*.gpx`).
+
+## Model
+
+The CLIP model drives search, tags, stacks, and the quality hint. Set it under `model:` in `config.yaml`:
+
+| Option | `name` / `pretrained` | When |
+|---|---|---|
+| **Default** | `ViT-L-14-quickgelu` / `dfn2b` | Good search and tags. Fast on a GPU; indexing on a laptop CPU is slow (a few photos per second), but only happens once per photo. |
+| **Faster** | `ViT-B-16` / `dfn2b` | About 4× faster indexing and ~0.6 GB. A good choice for laptops; somewhat looser search and tags. |
+| **Max quality** | `ViT-H-14-quickgelu` / `dfn5b` | The best search and tags. About 2.5× slower to index than the default and ~4 GB of memory. |
+
+Each model keeps its own embeddings and tags, so switching back and forth loses nothing; the first `archive index` with a new model embeds every photo once. Similarity values differ between models, so after switching also set `stacks.min_similarity` (0.92 for the default, about 0.90 for ViT-B-16) and check the stacks.
 
 ## Tags
 

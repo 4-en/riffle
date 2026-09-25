@@ -12,8 +12,8 @@ import yaml
 
 @dataclass
 class ModelConfig:
-    name: str = "ViT-B-16"
-    pretrained: str = "laion2b_s34b_b88k"
+    name: str = "ViT-L-14-quickgelu"
+    pretrained: str = "dfn2b"
     device: str = "auto"
     batch_size: int = 32
 
@@ -42,7 +42,7 @@ class TagConfig:
 @dataclass
 class StackConfig:
     max_gap_seconds: float = 30.0
-    min_similarity: float = 0.90
+    min_similarity: float = 0.92  # tuned for the default model; see config.example.yaml
 
 
 @dataclass
@@ -118,8 +118,8 @@ def config_from_dict(raw: dict, root: Path) -> Config:
 
     m = raw.get("model") or {}
     model = ModelConfig(
-        name=m.get("name", "ViT-B-16"),
-        pretrained=m.get("pretrained", "laion2b_s34b_b88k"),
+        name=m.get("name", ModelConfig.name),
+        pretrained=m.get("pretrained", ModelConfig.pretrained),
         device=m.get("device", "auto"),
         batch_size=int(m.get("batch_size", 32)),
     )
@@ -146,7 +146,7 @@ def config_from_dict(raw: dict, root: Path) -> Config:
         phash_max_distance=int((raw.get("dupes") or {}).get("phash_max_distance", 8)),
         stacks=StackConfig(
             max_gap_seconds=float((raw.get("stacks") or {}).get("max_gap_seconds", 30)),
-            min_similarity=float((raw.get("stacks") or {}).get("min_similarity", 0.90)),
+            min_similarity=float((raw.get("stacks") or {}).get("min_similarity", StackConfig.min_similarity)),
         ),
         selections_path=resolve(raw.get("selections", "selections.sqlite3")),
         location_history=[resolve(p) for p in raw.get("location_history") or []],
