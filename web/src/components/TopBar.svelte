@@ -149,6 +149,13 @@
     {/if}
   </button>
 
+  <button
+    class="shrink-0 rounded-full border border-neutral-700 px-2 py-0.5 text-xs font-semibold text-neutral-400 hover:bg-neutral-800 hover:text-white"
+    title="How it works (?)"
+    aria-label="How it works"
+    onclick={() => (view.help = true)}>?</button
+  >
+
   {#if active}
     <button
       class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"

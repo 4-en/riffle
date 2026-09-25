@@ -22,6 +22,7 @@ export const view = $state({
   overview: false, // calendar (date grouping) or map (location grouping) instead of the grid
   compare: null, // open compare view: {kind: 'stack', id} | {kind: 'ids', ids} | {kind: 'review'} (not in the URL)
   exporting: false, // export dialog open (not in the URL)
+  help: false, // how-to guide open (not in the URL)
   photo: null, // open detail photo id
   raws: false, // unmatched RAWs list open
   library: false, // folders / indexing dialog open (not mirrored to the URL)

@@ -13,6 +13,7 @@
   import Compare from './components/Compare.svelte';
   import ExportDialog from './components/ExportDialog.svelte';
   import Calendar from './components/Calendar.svelte';
+  import Help from './components/Help.svelte';
   // The map (d3 + country outlines) loads only when it is first shown.
   const loadMap = () => import('./components/MapView.svelte');
 
@@ -300,7 +301,8 @@
 
     if (view.compare) return; // the compare view handles its own keys
     if (key === 'Escape') {
-      if (view.exporting) view.exporting = false;
+      if (view.help) view.help = false;
+      else if (view.exporting) view.exporting = false;
       else if (view.library) view.library = false;
       else if (view.raws) view.raws = false;
       else if (view.photo != null) view.photo = null;
@@ -308,7 +310,11 @@
       else clearSelection();
       return;
     }
-    if (typing || view.exporting || view.library || view.raws) return;
+    if (typing || view.exporting || view.library || view.raws || view.help) return;
+    if (key === '?') {
+      view.help = true;
+      return;
+    }
 
     if (mod && key === 'z') {
       e.preventDefault();
@@ -373,6 +379,7 @@
             <p>Indexing… photos appear here when it finishes.</p>
           {:else}
             <p>No photos in the library yet.</p>
+            <button class="text-xs text-sky-400 hover:underline" onclick={() => (view.help = true)}>How does this work?</button>
             <button class="rounded bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600" onclick={() => (view.library = true)}>
               Add a photo folder
             </button>
@@ -418,6 +425,10 @@
   {#key view.compare}
     <Compare context={view.compare} {itemsById} />
   {/key}
+{/if}
+
+{#if view.help}
+  <Help />
 {/if}
 
 {#if view.exporting}
