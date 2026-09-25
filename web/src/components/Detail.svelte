@@ -2,7 +2,7 @@
   import { view, findSimilar } from '../lib/state.svelte.js';
   import { fetchPhoto } from '../lib/api.js';
 
-  let { id, hasPrev, hasNext, onstep } = $props();
+  let { id, hasPrev, hasNext, onstep, ontimeline } = $props();
 
   let photo = $state(null);
   let error = $state('');
@@ -101,6 +101,13 @@
         <div class="flex flex-wrap gap-2">
           <button class="rounded bg-sky-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-600" onclick={() => findSimilar(photo.id)}>
             Find similar
+          </button>
+          <button
+            class="rounded border border-neutral-700 px-3 py-1.5 text-xs hover:bg-neutral-800"
+            title="Browse this photo's {view.group || 'day'} in the grouped grid"
+            onclick={() => ontimeline(photo)}
+          >
+            {photo.taken_at ? `Show ${view.group || 'day'}` : 'Show undated'}
           </button>
           <button class="rounded border border-neutral-700 px-3 py-1.5 text-xs hover:bg-neutral-800" onclick={copyPath}>
             {copied ? 'Copied' : 'Copy path'}

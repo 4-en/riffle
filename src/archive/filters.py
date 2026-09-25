@@ -15,6 +15,13 @@ from fastapi import HTTPException, Query
 # EXIF dates are stored as written ("2024:05:01 10:00:00"); compare as "2024-05-01".
 DATE_EXPR = "replace(substr(p.taken_at, 1, 10), ':', '-')"
 
+# Group keys for the grouped listing: "2026-03-12", "2026-03", "2026"; NULL = undated.
+GROUP_KEYS = {
+    "day": DATE_EXPR,
+    "month": f"substr({DATE_EXPR}, 1, 7)",
+    "year": f"substr({DATE_EXPR}, 1, 4)",
+}
+
 RANGE_COLUMNS = {"focal": "p.focal_length", "aperture": "p.aperture", "iso": "p.iso"}
 
 ORIENTATIONS = {

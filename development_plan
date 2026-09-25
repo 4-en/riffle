@@ -34,6 +34,7 @@ The MVP answers one question: **does CLIP-based search and tagging make this arc
 - Exact and near-duplicate grouping via perceptual hash.
 - A simple local web UI: grid, tag filter sidebar, search bar, detail view.
 - Managing photo folders and running indexing from the UI (added during implementation).
+- Date group views (day, month, year) in the grid, with a jump from a photo to its group (added during implementation). Location grouping is deferred: camera files usually have no GPS (the first real library: 0 of 743); the planned route is phone location history (§14.1).
 
 ### Explicitly out of scope for the MVP
 
@@ -343,7 +344,7 @@ Editing this file and rerunning `archive tag` is the whole workflow for changing
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/photos?<filters>&dupes=collapse&sort=taken_at&offset=&limit=` | Paged grid listing. `sort`: `taken_at`, `-taken_at`, `path`, `id` |
+| GET | `/api/photos?<filters>&dupes=collapse&sort=taken_at&group=&offset=&limit=` | Paged grid listing. `sort`: `taken_at`, `-taken_at`, `path`, `id`. With `group=day|month|year`, items come in date order with a `group` key (`""` = undated, last) and `groups` lists every non-empty group of the filtered set with its count |
 | GET | `/api/photos/{id}` | Detail: metadata, tags with probabilities, RAW paths, duplicate group |
 | GET | `/api/search/text?q=&<filters>&dupes=&offset=&limit=` | Text search within the filters |
 | GET | `/api/search/similar/{id}?<filters>&dupes=&offset=&limit=` | Similar images (the query photo and, when collapsing, its duplicates are excluded) |
@@ -365,13 +366,13 @@ Mutating endpoints accept only JSON bodies, so other websites cannot trigger the
 
 ### 11.2 UI
 
-A single page with no router; view state lives in a small Svelte store and is mirrored into the URL query string (`q`, `similar`, `tags`, the EXIF filters, `photo`) so views can be bookmarked.
+A single page with no router; view state lives in a small Svelte store and is mirrored into the URL query string (`q`, `similar`, `tags`, the EXIF filters, `group`, `photo`) so views can be bookmarked.
 
-- **Top bar:** search input (Enter runs text search), "similar to" chip, result count, **Library** button (shows indexing progress), clear button.
+- **Top bar:** search input (Enter runs text search), "similar to" chip, grouping (All / Day / Month / Year; browsing only, not search results), result count, **Library** button (shows indexing progress), clear button.
 - **Left sidebar, filters:** date range, camera, lens, focal length, aperture, ISO, orientation, GPS, with counts within the other active filters. A filter that cannot narrow the results (e.g. a single camera) is hidden unless in use. **Reset** clears them.
 - **Left sidebar, tags:** one section per tag family, in vocabulary order, with counts within the current filter. Tags with no matching photos are hidden. Click a tag to filter, click again to remove. Filters combine with search.
-- **Grid:** responsive thumbnail grid with infinite scroll. Badges show RAW and duplicate count; search results show their score on hover.
-- **Detail panel:** opens on click. It shows a large preview, capture date, camera and lens, exposure (focal length, aperture, shutter speed, ISO), source path, RAW path, tags with probabilities (click to filter), duplicates, and GPS coordinates as text. Buttons: **Find similar**, **Copy path**, **Previous/Next**.
+- **Grid:** responsive thumbnail grid with infinite scroll. When grouped: sticky section headers with the group's full count, only groups with matching photos, a **Jump to…** menu, and **Only this day/month/year** to turn a group into a date filter. Badges show RAW and duplicate count; search results show their score on hover.
+- **Detail panel:** opens on click. It shows a large preview, capture date, camera and lens, exposure (focal length, aperture, shutter speed, ISO), source path, RAW path, tags with probabilities (click to filter), duplicates, and GPS coordinates as text. Buttons: **Find similar**, **Show day** (switches to the grouped grid, loads as far as needed, scrolls to the photo's group and highlights the photo), **Copy path**, **Previous/Next**.
 - **Library dialog:** configured folders with photo counts and **Remove**; a server-side folder browser with a path box and **Add this folder and index**; **Index now** with a progress bar and step log. Opens automatically when no folders are configured; an empty library shows an "Add a photo folder" prompt.
 - **Keyboard:** arrow keys move between photos, Esc closes the detail panel or dialog, `/` focuses search.
 
@@ -407,11 +408,44 @@ In rough order of expected value:
 
 1. Manual tag add/remove, stored separately from zero-shot tags.
 2. Collections, with export as a list of source paths.
-3. A second embedding model for comparison (e.g. a SigLIP-family or multilingual model).
-4. Image-prototype tags built from a few example photos, for concepts that text describes badly.
-5. Per-camera clock offset correction (date and camera filters are done).
-6. A 2D embedding map (UMAP) for exploration.
-7. Captions and OCR through a local vision-language model.
+3. **Location from phone location history** (see §14.1). Most camera files have no GPS, but the photographer's phone usually recorded where they were.
+4. A second embedding model for comparison (e.g. a SigLIP-family or multilingual model).
+5. Image-prototype tags built from a few example photos, for concepts that text describes badly.
+6. Per-camera clock offset correction (date and camera filters are done). Also a prerequisite for accurate location matching.
+7. A 2D embedding map (UMAP) for exploration.
+8. Captions and OCR through a local vision-language model.
+
+### 14.1 Location from phone location history
+
+**Idea.** Camera files rarely carry GPS (the first real library: 0 of 743 photos), but almost everyone carries a phone that records its position. Matching each photo's capture time against the phone's location history should place most photos without any manual work, and unlock location groups, place filters, and eventually a map.
+
+**Inputs** (imported as files; nothing is fetched online):
+
+- Google Maps Timeline export. Since 2024 Timeline is stored on the device, and the phone app exports it as JSON (`Timeline.json`); older Google Takeout exports (`Records.json`, `Semantic Location History/`) use different formats, so each needs a small parser.
+- GPX tracks from logging or sports apps (GPSLogger, OsmAnd, Strava, Garmin and similar).
+- Apple devices have no easy export of Significant Locations; GPX from a logging app is the practical route there.
+- Photos that already have GPS (phones, some cameras) serve as extra anchor points, and as ground truth to measure matching accuracy.
+
+**Matching.**
+
+1. Convert every photo's capture time to UTC. This needs the timezone: use `OffsetTimeOriginal` when present (stored as `tz_offset`; the OM-5 Mark II writes it), otherwise infer it from the location history itself or from a per-import setting.
+2. Correct camera clock drift first (§14 item 6). A camera that is 10 minutes off can place a photo in the wrong street, or the wrong town when travelling.
+3. Look up the phone positions just before and after the capture time. Interpolate between them if both are close in time; if the nearest fix is too far away (a gap in the history, e.g. more than 30–60 minutes), leave the photo unplaced rather than guess.
+4. Record the result with its provenance: source (`exif`, `phone-history`, `manual`), estimated accuracy in metres, and the time gap to the nearest fix. Photos from the same burst or day can share evidence.
+
+**Storage.** A separate table (e.g. `photo_locations(photo_id, lat, lon, accuracy_m, source, gap_s)`) rather than the EXIF columns, so the evidence stays distinguishable from what the camera recorded. Derived locations follow principle 2: rebuildable from the originals plus the imported history files. The history files may be kept outside `data/` or copied in, since the history is input rather than derived data.
+
+**Place names.** Offline reverse geocoding against a bundled dataset (e.g. GeoNames cities), keeping principle 3 (no network calls). Grouping by city or region, plus clustering nearby photos into "places" for trips that pass through small spots.
+
+**UI.** Location group view next to the date groups, place and "has location" filters (source-aware: EXIF vs. estimated), location and accuracy in the detail panel, a "Show place" button analogous to "Show day", and later a map.
+
+**Privacy.** Location history is sensitive. It is only read locally, never uploaded, and the tool must never write coordinates back into the originals (principle 1). Exports stay user-driven.
+
+**Open questions.**
+
+- How reliable is the history for the actual trips? Measure it on photos that have both a GPS tag and a history match.
+- Where should imported history files live, and how are they re-imported when a newer export covers more time?
+- How to handle several people's phones or a missing phone for part of a trip.
 
 ## 15. Decisions before coding (resolved)
 

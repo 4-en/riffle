@@ -79,3 +79,27 @@ def test_facets_exclude_their_own_filter(client):
     assert len(f["lens"]) == 3
     assert f["iso"] == {"min": 100, "max": 100, "count": 1}
     assert f["camera"] == [{"value": "Canon EOS R5", "count": 1}]
+
+
+def test_grouped_listing(client):
+    res = client.get("/api/photos", params={"group": "day", "dupes": "all"}).json()
+    assert res["groups"] == [
+        {"key": "2024-05-01", "count": 1},
+        {"key": "2024-05-03", "count": 1},
+        {"key": "2024-06-10", "count": 1},
+        {"key": "", "count": 1},  # undated last
+    ]
+    assert [i["group"] for i in res["items"]] == ["2024-05-01", "2024-05-03", "2024-06-10", ""]
+
+    month = client.get("/api/photos", params={"group": "month", "dupes": "all", "sort": "-taken_at"}).json()
+    assert [(g["key"], g["count"]) for g in month["groups"]] == [("2024-06", 1), ("2024-05", 2), ("", 1)]
+    assert [i["group"] for i in month["items"]] == ["2024-06", "2024-05", "2024-05", ""]
+
+    # Groups follow the filters and duplicate collapsing; empty groups are absent.
+    filtered = client.get("/api/photos", params={"group": "year", "iso_min": 200}).json()
+    assert filtered["groups"] == [{"key": "2024", "count": 2}]
+    paged = client.get("/api/photos", params={"group": "day", "dupes": "all", "limit": 1, "offset": 3}).json()
+    assert len(paged["groups"]) == 4 and paged["items"][0]["group"] == ""
+
+    assert client.get("/api/photos", params={"group": "week"}).status_code == 400
+    assert "groups" not in client.get("/api/photos").json()

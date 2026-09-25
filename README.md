@@ -13,9 +13,14 @@ A local tool for searching and browsing a large photo archive by what is in the 
 - RAW files tracked by matching filenames (never read or modified)
 - EXIF: date, camera, lens, focal length, aperture, shutter speed, ISO, GPS
 - Filters for date range, camera, lens, focal length, aperture, ISO, orientation, and GPS; like tags, options are counted within the other active filters, and filters that can't narrow the results are hidden
+- Timeline view: group the grid by day, month, or year (only groups with matching photos appear), jump between groups, and go from any photo to its day
 - Simple local web UI, including adding photo folders and running indexing from the browser
 
 Your originals are never modified. All derived data lives in `data/` and can be deleted and regenerated at any time.
+
+## Planned
+
+Next is a short evaluation of search and tag quality (see `development_plan` §13). After that, the most promising addition is **location from phone location history**: camera files rarely carry GPS, but your phone usually recorded where you were. Matching capture times against an exported history (Google Maps Timeline, or GPX tracks from a logging app) would place most photos automatically and enable location groups, place filters, and a map. It will work fully offline, and coordinates will never be written into your originals. Details and other candidates are in `development_plan` §14.
 
 ## Requirements
 

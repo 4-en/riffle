@@ -1,6 +1,6 @@
 <script>
-  import { untrack } from 'svelte';
-  import { view, readUrl, urlFor, clearSearch } from './lib/state.svelte.js';
+  import { tick, untrack } from 'svelte';
+  import { view, readUrl, urlFor, clearSearch, groupKey } from './lib/state.svelte.js';
   import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources } from './lib/api.js';
   import TopBar from './components/TopBar.svelte';
   import Sidebar from './components/Sidebar.svelte';
@@ -78,38 +78,102 @@
     })
     .catch(() => {});
 
-  async function loadMore() {
-    if (loading || (loaded && items.length >= total)) return;
+  // Date groups of the whole result set (only when browsing with grouping on).
+  let groups = $state([]);
+  let inflight = null; // the page request in progress, so callers can await it
+
+  function loadMore() {
+    if (inflight) return inflight;
+    if (loaded && items.length >= total) return Promise.resolve();
     const mine = token;
     loading = true;
-    try {
-      const page = await fetchResults(view, items.length, PAGE);
-      if (mine !== token) return;
-      items = [...items, ...page.items];
-      total = page.total;
-      loaded = true;
-      error = '';
-    } catch (e) {
-      if (mine === token) error = e.message;
-    } finally {
-      if (mine === token) loading = false;
-    }
+    inflight = (async () => {
+      try {
+        const page = await fetchResults(view, items.length, PAGE);
+        if (mine !== token) return;
+        items = [...items, ...page.items];
+        total = page.total;
+        groups = page.groups ?? [];
+        loaded = true;
+        error = '';
+      } catch (e) {
+        if (mine === token) error = e.message;
+      } finally {
+        if (mine === token) {
+          loading = false;
+          inflight = null;
+        }
+      }
+    })();
+    return inflight;
   }
 
-  function reset() {
+  async function reset() {
     token++;
     items = [];
     total = 0;
+    groups = [];
     loaded = false;
     loading = false;
-    loadMore();
+    inflight = null;
+    await loadMore();
+    if (pendingJump) {
+      const { key, id } = pendingJump;
+      pendingJump = null;
+      jumpToGroup(key, id);
+    }
   }
 
-  // Re-query whenever the search or filters change.
+  // Re-query whenever the search, filters or grouping change.
   $effect(() => {
-    view.q, view.similar, view.tags, JSON.stringify(view.filters);
+    view.q, view.similar, view.tags, JSON.stringify(view.filters), view.group;
     untrack(reset);
   });
+
+  // ---- jumping to a date group --------------------------------------------------
+
+  let highlight = $state(null); // photo id briefly marked after "Show in timeline"
+  let pendingJump = null; // applied once the re-query triggered by the jump has loaded
+
+  const grouped = $derived(!!view.group && !view.q && !view.similar);
+
+  /** Load pages until the group is in the grid, then scroll to it (and its photo). */
+  async function jumpToGroup(key, photoId = null) {
+    const i = groups.findIndex((g) => g.key === key);
+    if (i < 0) return;
+    const end = groups.slice(0, i + 1).reduce((n, g) => n + g.count, 0);
+    while (items.length < end && items.length < total) {
+      const before = items.length;
+      await loadMore();
+      if (items.length === before) break; // failed or superseded
+    }
+    await tick();
+    const tile = photoId != null && document.getElementById(`tile-${photoId}`);
+    const target = tile || document.getElementById(`group-${key || 'undated'}`);
+    target?.scrollIntoView({ block: tile ? 'center' : 'start' });
+    if (tile) {
+      highlight = photoId;
+      setTimeout(() => {
+        if (highlight === photoId) highlight = null;
+      }, 2500);
+    }
+  }
+
+  /** From the detail view: browse the photo's date group in the grouped grid. */
+  function showInTimeline(photo) {
+    const mode = view.group || 'day';
+    const key = groupKey(photo.taken_at, mode);
+    const requery = view.q || view.similar || view.group !== mode;
+    view.photo = null;
+    if (requery) {
+      pendingJump = { key, id: photo.id };
+      view.q = '';
+      view.similar = null;
+      view.group = mode;
+    } else {
+      jumpToGroup(key, photo.id);
+    }
+  }
 
   // Mirror state into the URL. New searches get a history entry; opening photos does not.
   let lastSearchKey = urlFor({ ...view, photo: null, raws: false });
@@ -186,7 +250,7 @@
           {/if}
         </div>
       {:else}
-        <Grid {items} {loading} {hasMore} onmore={loadMore} />
+        <Grid {items} {loading} {hasMore} onmore={loadMore} groups={grouped ? groups : null} {highlight} onjump={jumpToGroup} />
       {/if}
     </main>
   </div>
@@ -198,6 +262,7 @@
     hasPrev={index > 0}
     hasNext={index >= 0 && (index < items.length - 1 || hasMore)}
     onstep={step}
+    ontimeline={showInTimeline}
   />
 {/if}
 

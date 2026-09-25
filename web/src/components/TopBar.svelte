@@ -64,6 +64,22 @@
     </span>
   {/if}
 
+  <div
+    class="flex shrink-0 overflow-hidden rounded border border-neutral-700 text-xs {view.q || view.similar ? 'opacity-40' : ''}"
+    role="group"
+    aria-label="Group by date"
+    title={view.q || view.similar ? 'Grouping applies when browsing, not to search results' : 'Group by date'}
+  >
+    {#each [['', 'All'], ['day', 'Day'], ['month', 'Month'], ['year', 'Year']] as [value, label] (value)}
+      <button
+        class="px-2 py-1 {view.group === value ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:bg-neutral-800'}"
+        aria-pressed={view.group === value}
+        disabled={!!(view.q || view.similar)}
+        onclick={() => (view.group = value)}>{label}</button
+      >
+    {/each}
+  </div>
+
   <span class="shrink-0 text-xs tabular-nums text-neutral-400">
     {#if loading && !total}Loading…{:else}{total.toLocaleString()} {total === 1 ? 'photo' : 'photos'}{/if}
   </span>

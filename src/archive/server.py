@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from . import db
 from .config import Config, load_config, set_sources
 from .embed import embedding_paths, load_embeddings
-from .filters import PhotoFilter, facets, photo_filter
+from .filters import GROUP_KEYS, PhotoFilter, facets, photo_filter
 from .jobs import IndexJob
 
 log = logging.getLogger(__name__)
@@ -181,11 +181,19 @@ def create_app(
         flt: PhotoFilter = Depends(photo_filter),
         dupes: str = "collapse",
         sort: str = "taken_at",
+        group: str | None = None,
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
         conn=Depends(get_conn),
     ):
+        """Paged listing. With ``group`` (day, month, year) photos come in date
+        order, each item carries its group key ("" = undated, last), and
+        ``groups`` lists every non-empty group of the filtered set with its count."""
         where, params = flt.where(model_id)
+        if group and group not in GROUP_KEYS:
+            raise HTTPException(400, f"group must be one of {', '.join(GROUP_KEYS)}")
+        if group and sort not in ("taken_at", "-taken_at"):
+            sort = "taken_at"  # groups must be contiguous
         order = {
             "taken_at": "p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
             "-taken_at": "p.taken_at IS NULL, p.taken_at DESC, p.source, p.rel_path",
@@ -200,14 +208,29 @@ def create_app(
             collapse = """WHERE f.dupe_group IS NULL
                 OR f.id = (SELECT MIN(g.id) FROM filtered g WHERE g.dupe_group = f.dupe_group)"""
         cte = f"WITH filtered AS (SELECT p.* FROM photos p WHERE {where})"
+        shown = f"FROM filtered p WHERE p.id IN (SELECT f.id FROM filtered f {collapse})"
+        key = GROUP_KEYS[group] if group else "NULL"
         total = conn.execute(f"{cte} SELECT COUNT(*) FROM filtered f {collapse}", params).fetchone()[0]
         rows = conn.execute(
-            f"""{cte} SELECT p.id FROM filtered p
-                WHERE p.id IN (SELECT f.id FROM filtered f {collapse})
-                ORDER BY {order} LIMIT ? OFFSET ?""",
+            f"{cte} SELECT p.id, {key} AS grp {shown} ORDER BY {order} LIMIT ? OFFSET ?",
             [*params, limit, offset],
         ).fetchall()
-        return {"total": total, "items": items_for(conn, [r[0] for r in rows])}
+        items = items_for(conn, [r[0] for r in rows])
+        result = {"total": total, "items": items}
+        if group:
+            keys = {r[0]: r[1] or "" for r in rows}
+            for item in items:
+                item["group"] = keys[item["id"]]
+            direction = "DESC" if sort == "-taken_at" else ""
+            result["groups"] = [
+                {"key": k or "", "count": n}
+                for k, n in conn.execute(
+                    f"""{cte} SELECT {key} AS grp, COUNT(*) {shown}
+                        GROUP BY grp ORDER BY grp IS NULL, grp {direction}""",
+                    params,
+                )
+            ]
+        return result
 
     @app.get("/api/photos/{photo_id}")
     def photo_detail(photo_id: int, conn=Depends(get_conn)):
