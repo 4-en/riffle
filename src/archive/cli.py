@@ -1,0 +1,60 @@
+"""Command line entry point: `archive index | tag | serve`."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+
+from .config import load_config
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="archive", description="Local photo archive search.")
+    parser.add_argument("-c", "--config", default="config.yaml", help="path to config.yaml")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("index", help="scan, thumbnail, embed, tag and group duplicates (incremental)")
+    sub.add_parser("tag", help="re-tag from stored embeddings after editing vocabulary or thresholds")
+    serve = sub.add_parser("serve", help="run the web UI and API")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--reload", action="store_true", help="auto-reload on code changes")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+
+    try:
+        cfg = load_config(args.config)
+    except FileNotFoundError as e:
+        sys.exit(str(e))
+
+    if args.command == "index":
+        from .index import run_index
+
+        run_index(cfg)
+    elif args.command == "tag":
+        from .index import run_tag
+
+        run_tag(cfg)
+    elif args.command == "serve":
+        import uvicorn
+
+        os.environ["ARCHIVE_CONFIG"] = os.path.abspath(args.config)
+        print(f"Serving on http://{args.host}:{args.port}")
+        uvicorn.run(
+            "archive.server:create_app",
+            factory=True,
+            host=args.host,
+            port=args.port,
+            reload=args.reload,
+            reload_dirs=[os.path.dirname(__file__)] if args.reload else None,
+        )
+
+
+if __name__ == "__main__":
+    main()

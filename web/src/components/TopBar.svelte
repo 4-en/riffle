@@ -1,0 +1,91 @@
+<script>
+  import { view, search, clearSearch } from '../lib/state.svelte.js';
+
+  let { total, loading, indexStatus = null, textSearch = true } = $props();
+
+  const indexPct = $derived(
+    indexStatus?.running && indexStatus.total ? Math.round((100 * indexStatus.done) / indexStatus.total) : null
+  );
+
+  let input;
+  let text = $state(view.q);
+
+  // Keep the box in sync when the query changes elsewhere (back button, Find similar).
+  $effect(() => {
+    text = view.q;
+  });
+
+  export function focus() {
+    input.focus();
+    input.select();
+  }
+
+  function onsubmit(e) {
+    e.preventDefault();
+    search(text);
+  }
+
+  function clear() {
+    text = '';
+    clearSearch();
+    view.tags = [];
+  }
+
+  const active = $derived(view.q || view.similar || view.tags.length);
+</script>
+
+<header class="flex items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-4 py-2">
+  <button
+    class="shrink-0 text-sm font-semibold tracking-wide text-neutral-100"
+    onclick={() => {
+      clear();
+      view.photo = null;
+    }}
+  >
+    Photo Archive
+  </button>
+
+  <form class="relative flex-1" {onsubmit}>
+    <input
+      bind:this={input}
+      bind:value={text}
+      type="search"
+      disabled={!textSearch}
+      placeholder={textSearch ? 'Search photos, e.g. "red lanterns at night"   ( / )' : 'Text search unavailable (model not loaded)'}
+      class="w-full max-w-2xl rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm placeholder-neutral-500 outline-none focus:border-sky-600"
+    />
+  </form>
+
+  {#if view.similar}
+    <span class="flex items-center gap-2 rounded-full bg-sky-900/60 py-0.5 pl-1 pr-3 text-xs text-sky-100">
+      <img src="/thumbs/{view.similar}.jpg" alt="" class="h-6 w-6 rounded-full object-cover" />
+      Similar to #{view.similar}
+    </span>
+  {/if}
+
+  <span class="shrink-0 text-xs tabular-nums text-neutral-400">
+    {#if loading && !total}Loading…{:else}{total.toLocaleString()} {total === 1 ? 'photo' : 'photos'}{/if}
+  </span>
+
+  <button
+    class="flex shrink-0 items-center gap-2 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+    title={indexStatus?.running ? indexStatus.step : 'Photo folders and indexing'}
+    onclick={() => (view.library = true)}
+  >
+    {#if indexStatus?.running}
+      <span class="h-2 w-2 animate-pulse rounded-full bg-sky-500"></span>
+      Indexing{indexPct !== null ? ` ${indexPct}%` : '…'}
+    {:else}
+      Library
+    {/if}
+  </button>
+
+  {#if active}
+    <button
+      class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+      onclick={clear}
+    >
+      Clear
+    </button>
+  {/if}
+</header>

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photo-archive"
+version = "0.1.0"
+description = "Local CLIP-based search and browsing for a photo archive"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "pillow>=10.3",
+    "imagehash>=4.3",
+    "numpy>=1.26",
+    "torch>=2.2",
+    "open_clip_torch>=2.24",
+    "pyyaml>=6.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+heic = ["pillow-heif>=0.16"]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+archive = "archive.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

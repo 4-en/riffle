@@ -1,0 +1,26 @@
+# Copy to config.yaml and edit. Relative paths are resolved against this file's folder.
+sources:
+  - examples
+exclude:
+  - "**/.Trashes/**"
+image_extensions: [.jpg, .jpeg, .png, .tif, .tiff, .heic]
+raw_extensions: [.cr2, .cr3, .nef, .arw, .raf, .dng, .orf, .rw2]
+raw_search_dirs: [".", "RAW", "../RAW"]   # relative to each image's folder
+
+data_dir: data
+vocabulary: vocabulary.yaml
+
+model:
+  name: ViT-B-16
+  pretrained: laion2b_s34b_b88k
+  device: auto        # cuda, mps, or cpu
+  batch_size: 32
+
+tags:
+  softmax_scale: 100
+  subject: { min_prob: 0.15, max_tags: 3 }
+  scene:   { min_prob: 0.30, max_tags: 1 }
+  look:    { min_prob: 0.30, max_tags: 2 }
+
+dupes:
+  phash_max_distance: 8

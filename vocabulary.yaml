@@ -1,0 +1,128 @@
+# Zero-shot tag vocabulary.
+#
+# Each family (subject, scene, look) is scored separately: a softmax over its tags,
+# then thresholds from config.yaml (tags.<family>.min_prob / max_tags).
+#
+# An entry is either a plain tag name, or a tag with alternative phrases:
+#
+#   - cats: [a cat, a kitten, a cat sleeping]
+#
+# A photo scores a tag by its best-matching phrase (max similarity), so phrases
+# of the same tag never compete with each other. Keep tags within a family from
+# overlapping (e.g. "cats" and "animals"), because overlapping tags split the
+# probability between them. Stick to concrete, visible things.
+#
+# After editing, run `archive tag` (seconds; reuses stored embeddings).
+
+templates:
+  - "a photo of {}"
+  - "a photograph of {}"
+  - "a street photo of {}"
+
+subject:
+  # people
+  - people: [a person, a man, a woman, people walking, pedestrians, a couple]
+  - a crowd: [a crowd of people, a large crowd, many people in a street, a queue of people]
+  - a portrait: [a portrait of a person, a close-up of a face, a person looking at the camera]
+  - children: [a child, kids playing, a baby, schoolchildren, a toddler]
+  - elderly people: [an old man, an old woman, elderly people sitting, grandparents]
+  - street vendors: [a street vendor, a food stall, a hawker selling goods, a fruit seller, a stall keeper]
+  - workers: [a worker, a labourer, a builder at work, a farmer working, a cleaner sweeping]
+  - performers: [a musician, a street performer, a dancer, people performing on stage]
+  # food and goods
+  - food: [a dish of food, noodles, dumplings, street food, a meal on a table, bread]
+  - drinks: [a cup of tea, a cup of coffee, bottles of drinks, a glass of beer]
+  - produce: [vegetables, fruit, fish at a market, meat hanging in a shop, spices]
+  - goods for sale: [goods on shelves, merchandise, clothes for sale, souvenirs]
+  # animals
+  - cats: [a cat, a kitten, a cat sleeping]
+  - dogs: [a dog, a puppy, a dog on a leash]
+  - birds: [a bird, pigeons, ducks, chickens, a bird in a cage, seagulls]
+  - livestock: [sheep, cows, horses, goats, pigs, a herd of animals, a water buffalo]
+  - wildlife: [a wild animal, a deer, a monkey, a fish, insects, a butterfly]
+  # transport
+  - bicycles: [a bicycle, a cyclist, parked bicycles, a rickshaw]
+  - scooters and motorbikes: [a scooter, a motorbike, an electric scooter, a moped, a motorcycle rider]
+  - cars and traffic: [a car, traffic, parked cars, a taxi, a traffic jam]
+  - buses and trucks: [a bus, a truck, a van, a delivery tricycle, a lorry]
+  - trains: [a train, a railway, a metro train, railway tracks, a tram]
+  - boats: [a boat, a ship, a ferry, a fishing boat, a sampan, a sailboat]
+  - aircraft: [an airplane, a plane in the sky, a helicopter]
+  - tractors and machinery: [a tractor, farm machinery, an excavator, industrial machinery]
+  # built environment
+  - a temple or pagoda: [a temple, a pagoda, a buddha statue, incense burning, a shrine]
+  - a church: [a church, a cathedral, a chapel, a church spire]
+  - traditional houses: [traditional houses, old tiled roofs, a courtyard house, a wooden house, a thatched cottage]
+  - high-rise buildings: [skyscrapers, apartment blocks, a tower block, modern high-rise buildings]
+  - a bridge: [a bridge, a stone bridge, a footbridge, an arched bridge]
+  - doors and windows: [a doorway, a window, a gate, window shutters, an entrance]
+  - stairs: [a staircase, steps, a stairwell, stone steps]
+  - construction work: [scaffolding, a construction crane, a building under construction, roadworks]
+  - signs and written characters: [a sign with writing, chinese characters, a shop sign, neon signs, a poster, a billboard]
+  - lanterns: [red lanterns, paper lanterns, hanging lanterns]
+  - laundry hanging outside: [laundry drying on a line, clothes hanging from a window]
+  - umbrellas: [an umbrella, people with umbrellas, a parasol]
+  - flags and decorations: [flags, bunting, festive decorations, banners, red couplets on a door]
+  - statues and monuments: [a statue, a monument, a sculpture, a memorial]
+  - power lines: [power lines, electricity poles, overhead cables, a transmission tower]
+  - fences and walls: [a fence, a wire fence, a brick wall, a stone wall, graffiti on a wall]
+  - furniture: [chairs, a table, a bench, a sofa, a bed]
+  - screens and phones: [a mobile phone, a person using a smartphone, a television, a computer screen]
+  # nature
+  - trees: [a tree, trees, a forest, bamboo, a tree trunk]
+  - flowers: [flowers, a flower bed, blossoms, cherry blossoms, potted plants]
+  - grass: [grass, a meadow, tall grass, a lawn]
+  - water: [a river, a lake, the sea, a water surface, reflections in water, a pond]
+  - mountains: [mountains, hills, a mountain peak, a cliff, rocks]
+  - sky and clouds: [clouds, a dramatic sky, a cloudy sky, a blue sky]
+  - snow and ice: [snow, ice, snowy ground, icicles]
+
+scene:
+  - a busy street: [a busy street, a crowded shopping street, a city street with traffic, a pedestrian street]
+  - a quiet alley: [a quiet alley, a narrow lane, a hutong, an empty backstreet]
+  - a market: [a market, a street market, a wet market, a night market, a bazaar]
+  - a shop interior: [inside a shop, a store interior, a supermarket aisle, a shop counter]
+  - a restaurant or cafe: [a restaurant, a cafe, a teahouse, people eating at tables, a bar]
+  - a home interior: [a living room, a kitchen, a bedroom, inside a house]
+  - a workplace: [an office, a workshop, a factory floor, a craftsman's workshop]
+  - a train station or metro: [a train station, a metro station, a subway platform, a railway platform]
+  - an airport: [an airport terminal, an airport, a departure hall]
+  - inside a vehicle: [inside a train carriage, inside a bus, inside a car, the cabin of a boat]
+  - a highway or overpass: [a highway, an overpass, a motorway, an elevated road, a flyover]
+  - a country road: [a country road, a road through the countryside, a dirt track, a gravel path]
+  - a construction site: [a construction site, a demolition site, building works]
+  - an industrial area: [a factory, an industrial area, warehouses, a container port, a power plant]
+  - a residential neighbourhood: [apartment buildings, a residential street, housing blocks, a housing estate]
+  - a park or garden: [a park, a garden, a classical chinese garden, a playground, a botanical garden]
+  - a riverside or waterfront: [a riverside, a waterfront promenade, a harbour, a canal, a pier]
+  - a beach or coast: [a beach, the coast, a seaside, waves on the shore, a rocky coastline]
+  - a lake: [a lake, a lakeside, a reservoir, a calm lake]
+  - a rural village: [a rural village, a farming village, village houses, a small hamlet]
+  - farmland: [farmland, rice paddies, crop fields, a farm, a vegetable plot]
+  - a pasture: [a pasture with grazing animals, grazing land, a field with sheep, a paddock]
+  - a forest: [a forest, woods, a bamboo forest, a path through trees]
+  - mountain landscape: [a mountain landscape, a valley, terraced hills, a mountain view, a gorge]
+  - a desert: [a desert, sand dunes, an arid landscape, a dry plain]
+  - a snowy landscape: [a snowy landscape, a winter landscape, snow covered fields]
+  - a city skyline: [a city skyline, a cityscape from above, skyscrapers in the distance]
+  - a temple courtyard: [a temple courtyard, temple grounds, inside a temple, a monastery]
+  - a public square: [a public square, a plaza, a large open square, a town square]
+  - a museum or gallery: [a museum, a gallery, exhibits in display cases, an exhibition]
+  - a rooftop or balcony: [a rooftop, a view from a rooftop, a balcony, a terrace]
+  - a tunnel or underpass: [a tunnel, an underpass, a pedestrian subway, a covered walkway]
+  - a stadium or sports ground: [a stadium, a sports ground, a basketball court, a running track]
+  - other: [an abstract image, a blurry photo, a close-up texture, a plain background]
+
+look:
+  - black and white: [a black and white photo, a monochrome photograph, a grayscale image]
+  - night: [a photo taken at night, night lights, a dark night scene, street lights at night]
+  - golden hour: [sunset light, sunrise, warm golden hour light, a sunset]
+  - fog or mist: [fog, mist, haze, a misty morning]
+  - rain: [rain, wet streets, rainy weather, raindrops]
+  - close-up: [a close-up, a macro photo, a detail shot]
+  - wide view: [a wide landscape view, a panorama, a view from a high point]
+  - motion blur: [motion blur, a blurry moving subject, a long exposure]
+  - silhouette: [a silhouette, backlit figures, figures against the light]
+  - vivid colour: [a colourful scene, vivid colours, bright saturated colours]
+  - shallow depth of field: [a blurred background, bokeh, shallow depth of field]
+  - ordinary daylight: [an ordinary daytime photo, a photo in plain daylight]

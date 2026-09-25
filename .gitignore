@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Photo Archive
+data/
+examples/
+/config.yaml
+web/node_modules/
+web/dist/

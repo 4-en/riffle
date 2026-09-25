@@ -2,7 +2,7 @@
 
 A local tool for searching and browsing a large photo archive by what is in the pictures. It uses CLIP embeddings for text and similar-image search, and zero-shot subject and scene tags for grouping. There's no training, no labelling, and nothing leaves your machine.
 
-> **Status:** early development. See [`China_Photo_Archive_MVP_Plan.md`](China_Photo_Archive_MVP_Plan.md) for the design.
+> **Status:** early development. See [`development_plan`](development_plan) for the design.
 
 ## Features
 
@@ -17,14 +17,15 @@ Your originals are never modified. All derived data lives in `data/` and can be 
 
 ## Requirements
 
-- Python 3.12+ and [uv](https://docs.astral.sh/uv/)
+- Python 3.12+
 - Node.js 20+ (to build the UI)
 - A GPU or Apple Silicon is recommended but not required
 
 ## Setup
 
 ```sh
-uv sync
+python3.12 -m venv venv            # or reuse the existing venv/
+venv/bin/pip install -e ".[dev]"   # add ,heic for HEIC support: ".[dev,heic]"
 cd web && npm install && npm run build && cd ..
 cp config.example.yaml config.yaml   # then set your photo folders
 ```
@@ -32,14 +33,16 @@ cp config.example.yaml config.yaml   # then set your photo folders
 ## Usage
 
 ```sh
-uv run archive index    # scan, thumbnail, embed, tag, and group duplicates (incremental)
-uv run archive serve    # open http://localhost:8000
+venv/bin/archive index    # scan, thumbnail, embed, tag, and group duplicates (incremental)
+venv/bin/archive serve    # open http://localhost:8000
 ```
+
+You can also manage folders from the UI: **Library** (top right) lets you browse the disk, add or remove photo folders, and run indexing in the background with progress. Added folders are saved to `sources` in `config.yaml`. The folder browser can list any directory the server can read, so keep `serve` bound to `127.0.0.1` (the default).
 
 To change tags, edit `vocabulary.yaml` and thresholds in `config.yaml`, then run:
 
 ```sh
-uv run archive tag      # re-tags using stored embeddings; takes seconds
+venv/bin/archive tag      # re-tags using stored embeddings; takes seconds
 ```
 
 ## Development
@@ -47,11 +50,11 @@ uv run archive tag      # re-tags using stored embeddings; takes seconds
 Run the API and the Vite dev server side by side; Vite proxies `/api`, `/thumbs` and `/previews` to port 8000.
 
 ```sh
-uv run archive serve --reload
+venv/bin/archive serve --reload
 cd web && npm run dev
 ```
 
-Run tests with `uv run pytest`.
+Run tests with `venv/bin/pytest`. They use synthetic images and a fake encoder, so no model download is needed.
 
 ## Layout
 
