@@ -213,8 +213,9 @@
         <details class="mt-2 text-xs text-neutral-500">
           <summary class="cursor-pointer hover:text-neutral-300">How to export it from your phone</summary>
           <p class="mt-1">
-            Google Maps on the phone: tap your profile picture → <em>Your Timeline</em> → ⋮ → <em>Location and privacy settings</em>
-            → <em>Export Timeline data</em>, and copy the file to this computer. Older Google Takeout exports (Records.json) and GPX
+            On an Android phone: <em>Settings</em> → <em>Location</em> → <em>Timeline</em> → <em>Export Timeline data</em>, and copy
+            the file to this computer. (Depending on the version, Google Maps' Timeline settings may offer the same export.) Older
+            Google Takeout exports (Records.json) and GPX
             tracks from logging apps work too.
           </p>
         </details>

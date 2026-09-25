@@ -90,7 +90,7 @@ Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike 
 
 Camera files rarely have GPS, but your phone usually knew where you were. In **Library → Location history**, add an export of your location history:
 
-- **Google Maps Timeline** (current format): on the phone, Google Maps → your profile picture → *Your Timeline* → ⋮ → *Location and privacy settings* → *Export Timeline data*, then copy `Timeline.json` to this computer.
+- **Google Timeline** (current format): on an Android phone, *Settings* → *Location* → *Timeline* → *Export Timeline data*, then copy the exported `Timeline.json` to this computer. (Depending on the Android and Google Maps version, the same export may also be reachable from Google Maps' Timeline settings.)
 - Older **Google Takeout** `Records.json`, or **GPX** tracks from a logging app.
 
 The file stays where it is and is only read (its path is saved in `config.yaml` under `location_history`). Each photo's capture time, made absolute with its EXIF time zone (or the timeline's own for that day), is matched against the history:
