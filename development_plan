@@ -1,8 +1,8 @@
 # Computational Photo Archive — MVP Plan
 
-**Status:** Revised development plan (lightweight MVP)
-**Date:** 25 September 2026
-**Scope:** A local tool for browsing and searching several thousand photographs from China, using CLIP embeddings for text and image similarity search and zero-shot subject/scene tags for grouping.
+**Status:** MVP implemented (milestones 1–4); evaluation (milestone 5) pending
+**Date:** 25 September 2026 (updated after implementation)
+**Scope:** A local tool for browsing and searching several thousand photographs from China, using CLIP embeddings for text and image similarity search and zero-shot subject, scene, and look tags for grouping.
 
 ## 1. Goal
 
@@ -29,9 +29,10 @@ The MVP answers one question: **does CLIP-based search and tagging make this arc
 - Compute one CLIP embedding per image.
 - Text search ("red lanterns at night", "empty stairwell").
 - Similar-image search from any photo.
-- Zero-shot **subject** and **scene** tags from a vocabulary file.
+- Zero-shot **subject**, **scene**, and **look** tags from a vocabulary file, with alternative phrases per tag.
 - Exact and near-duplicate grouping via perceptual hash.
 - A simple local web UI: grid, tag filter sidebar, search bar, detail view.
+- Managing photo folders and running indexing from the UI (added during implementation).
 
 ### Explicitly out of scope for the MVP
 
@@ -44,13 +45,13 @@ The MVP answers one question: **does CLIP-based search and tagging make this arc
 - maps or reverse geocoding
 - multi-user or remote access
 
-These are listed in §12 as candidates for later phases.
+These are listed in §14 as candidates for later phases.
 
 ## 4. Architecture
 
 ```mermaid
 flowchart LR
-    A[Photo folders, read-only] --> B[Indexer CLI]
+    A[Photo folders, read-only] --> B[Indexer]
     B --> C[(SQLite)]
     B --> D[Thumbnails and previews]
     B --> E[Embeddings .npy]
@@ -58,11 +59,12 @@ flowchart LR
     D --> F
     E --> F
     F --> G[Svelte + Tailwind UI]
+    F -. background thread .-> B
 ```
 
-- **Indexer (Python CLI):** scans, extracts metadata, makes thumbnails, embeds, tags. Incremental and restartable.
-- **Server (FastAPI):** loads the embedding matrix and CLIP text encoder into memory at startup, serves a JSON API, thumbnails, and the built UI as static files.
-- **UI (Svelte + Tailwind, built with Vite, no SvelteKit):** a single-page app that talks to the API.
+- **Indexer:** scans, extracts metadata, makes thumbnails, embeds, tags, groups duplicates. Incremental and restartable. Runs from the CLI (`archive index`) or in a background thread of the server when started from the UI; both use the same pipeline (`index.run_index`), which reports progress through callbacks.
+- **Server (FastAPI):** loads the embedding matrix and CLIP text encoder into memory at startup, serves a JSON API, thumbnails, and the built UI as static files. It reloads the embedding matrix when the files change, so re-indexing does not need a restart.
+- **UI (Svelte + Tailwind, built with Vite, no SvelteKit):** a single-page app that talks to the API. After `npm run build`, the FastAPI server serves it from `web/dist` on the same port.
 
 There is no vector database. The whole embedding matrix is held in memory; a search is a single matrix–vector product.
 
@@ -71,15 +73,15 @@ There is no vector database. The whole embedding matrix is held in memory; a sea
 | Area | Choice | Notes |
 |---|---|---|
 | Language | Python 3.12+ | |
-| Packaging | `uv` | Locked dependencies |
-| Images | Pillow (+ `pillow-heif` if HEIC present) | EXIF, transpose, thumbnails |
+| Packaging | `pyproject.toml` + pip | Installed editable into a local `venv/` |
+| Images | Pillow (+ `pillow-heif` if HEIC present) | EXIF, transpose, ICC → sRGB, thumbnails |
 | Perceptual hash | `imagehash` (pHash) | Duplicate grouping |
 | Embeddings | `open_clip_torch` | Model configurable |
 | Maths | NumPy | In-memory similarity |
 | Database | `sqlite3` (stdlib) | Plain SQL, schema version via `PRAGMA user_version` |
 | Server | FastAPI + Uvicorn | |
 | Frontend | Svelte 5 + Tailwind CSS 4, built with Vite | No SvelteKit, no router library |
-| Tests | pytest | Indexer and API only |
+| Tests | pytest | Indexer and API only; synthetic images and a fake encoder |
 
 No SQLAlchemy, Alembic, FAISS, FiftyOne, OpenCV, pyvips, or ExifTool in the MVP.
 
@@ -87,8 +89,9 @@ No SQLAlchemy, Alembic, FAISS, FiftyOne, OpenCV, pyvips, or ExifTool in the MVP.
 
 ```text
 project/
-  config.yaml            # source folders, model, thresholds
-  vocabulary.yaml        # subject and scene tag lists
+  pyproject.toml
+  config.yaml            # source folders, model, thresholds (copy of config.example.yaml)
+  vocabulary.yaml        # tag families, tags, and alternative phrases
   data/                  # all derived data, safe to delete
     catalogue.sqlite3
     thumbs/              # 320 px long edge
@@ -97,16 +100,24 @@ project/
       <model_id>.npy     # float32, L2-normalised, shape (N, D)
       <model_id>.ids.npy # photo ids, row-aligned
   src/archive/
-    cli.py
-    scan.py
+    cli.py               # archive index | tag | serve
+    config.py            # config loading; rewriting the sources list
+    db.py                # schema and connections
+    scan.py              # walk, sha256, EXIF, identity rules
+    images.py            # shared loading: HEIC, orientation, sRGB
     raws.py
     thumbs.py
     embed.py
     tags.py
     dupes.py
+    index.py             # the index and tag pipelines
+    jobs.py              # background indexing for the server
     server.py
   web/                   # Vite + Svelte + Tailwind
     src/
+      App.svelte
+      lib/               # api.js, view state mirrored to the URL
+      components/        # TopBar, Sidebar, Grid, Detail, Library, UnmatchedRaws
     index.html
   tests/
 ```
@@ -123,6 +134,9 @@ image_extensions: [.jpg, .jpeg, .png, .tif, .tiff, .heic]
 raw_extensions: [.cr2, .cr3, .nef, .arw, .raf, .dng, .orf, .rw2]
 raw_search_dirs: [".", "RAW", "../RAW"]   # relative to each image's folder
 
+data_dir: data
+vocabulary: vocabulary.yaml
+
 model:
   name: ViT-B-16
   pretrained: laion2b_s34b_b88k
@@ -133,12 +147,17 @@ tags:
   softmax_scale: 100
   subject: { min_prob: 0.15, max_tags: 3 }
   scene:   { min_prob: 0.30, max_tags: 1 }
+  look:    { min_prob: 0.30, max_tags: 2 }
 
 dupes:
   phash_max_distance: 8
 ```
 
-The model is a config value. Changing it creates a new embedding file rather than overwriting the old one, so models can be compared side by side.
+Relative paths are resolved against the config file's folder. A tag family without thresholds uses `min_prob: 0.2, max_tags: 1`.
+
+The model is a config value. Changing it creates a new embedding file rather than overwriting the old one, so models can be compared side by side. The model id is `<name>__<pretrained>`.
+
+Folders added or removed in the UI are written back to `sources`. Only that block of the file is rewritten; comments and the rest of the file are kept.
 
 ## 8. Data model
 
@@ -147,32 +166,34 @@ All tables are rebuildable from originals plus config.
 ```sql
 CREATE TABLE photos (
   id          INTEGER PRIMARY KEY,
-  rel_path    TEXT UNIQUE NOT NULL,   -- relative to its source root
+  rel_path    TEXT NOT NULL,          -- relative to its source root
   source      TEXT NOT NULL,          -- which configured source
   sha256      TEXT NOT NULL,
   size_bytes  INTEGER, mtime REAL,
-  width INTEGER, height INTEGER,
+  width INTEGER, height INTEGER,      -- as displayed (after EXIF orientation)
   taken_at    TEXT,                   -- EXIF DateTimeOriginal, as written
   tz_offset   TEXT,                   -- EXIF OffsetTimeOriginal, if present
   camera TEXT, lens TEXT,
   lat REAL, lon REAL,
   phash       TEXT,
-  dupe_group  INTEGER,                -- NULL if unique
+  dupe_group  INTEGER,                -- lowest photo id in the group; NULL if unique
   status      TEXT NOT NULL DEFAULT 'ok',  -- ok | error | missing
-  error       TEXT
+  error       TEXT,
+  UNIQUE (source, rel_path)
 );
 
 CREATE TABLE raws (
   id        INTEGER PRIMARY KEY,
   photo_id  INTEGER REFERENCES photos(id),  -- NULL = unmatched RAW
-  rel_path  TEXT UNIQUE NOT NULL,
+  rel_path  TEXT NOT NULL,
   source    TEXT NOT NULL,
-  size_bytes INTEGER
+  size_bytes INTEGER,
+  UNIQUE (source, rel_path)
 );
 
 CREATE TABLE tags (
   id     INTEGER PRIMARY KEY,
-  family TEXT NOT NULL,     -- subject | scene
+  family TEXT NOT NULL,     -- subject | scene | look (any family in vocabulary.yaml)
   name   TEXT NOT NULL,
   UNIQUE (family, name)
 );
@@ -181,9 +202,17 @@ CREATE TABLE photo_tags (
   photo_id INTEGER REFERENCES photos(id),
   tag_id   INTEGER REFERENCES tags(id),
   prob     REAL NOT NULL,   -- softmax probability within family
-  sim      REAL NOT NULL,   -- raw cosine similarity
+  sim      REAL NOT NULL,   -- cosine similarity of the best-matching phrase
   model_id TEXT NOT NULL,
   PRIMARY KEY (photo_id, tag_id, model_id)
+);
+
+-- Which photo content (by sha256) is in each model's embedding file.
+CREATE TABLE embedded (
+  photo_id INTEGER REFERENCES photos(id),
+  model_id TEXT NOT NULL,
+  sha256   TEXT NOT NULL,
+  PRIMARY KEY (photo_id, model_id)
 );
 ```
 
@@ -192,19 +221,21 @@ CREATE TABLE photo_tags (
 Photos are keyed by `(source, rel_path)`. On rescan:
 
 - same path, same size and mtime → skip;
-- same path, changed file → recompute derived data;
+- same path, changed file → recompute derived data (thumbnails, phash, embedding, and tags are invalidated if the content hash changed);
 - path gone but its `sha256` appears at a new path → treat as a move and keep the id;
 - otherwise → mark `missing`.
 
 Because the MVP has no human-entered data, identity mistakes cost only recomputation. The scheme is still stable enough to build on later.
 
+Removing a folder from the sources marks its photos `missing` on the next index. Adding a parent of existing sources replaces them, and their photos keep their ids through move detection.
+
 ## 9. Pipeline
 
-One command runs all steps incrementally: `archive index`. Each step only processes photos that need it.
+One command runs all steps incrementally: `archive index` (or **Index now** in the UI). Each step only processes photos that need it; the CLIP model is only loaded when something needs embedding or tagging.
 
 ### 9.1 Scan
 
-1. Walk sources, skipping excludes.
+1. Walk sources, skipping excludes, hidden `._*` files, and the archive's own `data_dir`.
 2. For each image, record path, size, mtime, and sha256.
 3. Read EXIF with Pillow: `DateTimeOriginal`, `OffsetTimeOriginal`, make/model, lens, GPS, orientation.
 4. Record unreadable files as `status = error` with the message and continue.
@@ -213,7 +244,7 @@ Capture times are stored as written by the camera. No timezone correction in the
 
 ### 9.2 RAW matching
 
-For each RAW file found under `raw_search_dirs`:
+For each RAW file found in the sources:
 
 1. Take its stem, case-insensitive (`IMG_1234.CR3` → `img_1234`).
 2. Look for an image with the same stem in the same folder, then in each configured search dir.
@@ -221,98 +252,79 @@ For each RAW file found under `raw_search_dirs`:
 
 RAW files are never opened; only their name and size are read. The UI shows a RAW badge and the RAW path for matched photos. An "Unmatched RAWs" count links to a plain list.
 
+Only RAWs inside the configured sources are found; a `../RAW` folder outside every source is not scanned.
+
 ### 9.3 Thumbnails and previews
 
-Apply `ImageOps.exif_transpose`, convert to sRGB, and save a 320 px thumbnail and a 1600 px preview as JPEG, named by photo id.
+Apply `ImageOps.exif_transpose`, convert to 8-bit sRGB (using the embedded ICC profile when present), and save a 320 px thumbnail and a 1600 px preview as JPEG, named by photo id. Images are never upscaled. Work runs in a process pool.
 
 ### 9.4 Embeddings
 
 1. Load the configured OpenCLIP model.
 2. Embed the previews in batches (not the full originals).
 3. L2-normalise and write `<model_id>.npy` plus the aligned id array.
-4. On incremental runs, embed only new or changed photos and rewrite both files. At this archive size, a full rewrite takes well under a second.
+4. On incremental runs, embed only new or changed photos (tracked in the `embedded` table), drop removed ones, and rewrite both files. At this archive size, a full rewrite takes well under a second.
 
 ### 9.5 Tags
 
 Tags are zero-shot and require no training or labelled data.
 
-1. Load `vocabulary.yaml` (§10).
-2. For each label, encode several prompt templates and average them into one normalised text vector.
-3. For each family (subject, scene), compute `sims = E @ T.T` for all photos at once.
-4. Apply a softmax over the family's labels with `softmax_scale`.
-5. Keep labels with `prob ≥ min_prob`, up to `max_tags`, highest first.
-6. Replace that model's rows in `photo_tags`.
+1. Load `vocabulary.yaml` (§10). Each tag has a name and optional alternative phrases.
+2. For each phrase, encode every prompt template and average them into one normalised text vector.
+3. For each family, compute photo–phrase similarities for all photos at once, and score each tag by its **best-matching phrase** (max similarity).
+4. Apply a softmax over the family's **tags** with `softmax_scale`, so a tag's own phrases never compete with each other.
+5. Keep tags with `prob ≥ min_prob`, up to `max_tags`, highest first.
+6. Replace that model's rows in `photo_tags`, and remove tags that are no longer in the vocabulary.
 
 Thresholds are tuned by eye in the UI and edited in `config.yaml`. Rerunning `archive tag` takes seconds, because it reuses stored embeddings.
 
 **Known limitations:**
 
-- The softmax is relative, so every photo gets at least its best scene even when nothing fits well. An `other` scene label absorbs some of this.
+- The softmax is relative, so every photo gets at least its best tag in each family even when nothing fits well. Catch-all labels (`other` for scene, `ordinary daylight` for look) absorb some of this.
+- Tags within a family that overlap (e.g. "cats" and "animals") split probability between them. The vocabulary uses non-overlapping main tags with specific phrases underneath instead.
 - Visible signage can pull tags toward what the text says.
 - Abstract concepts ("waiting", "tension") do not work well as text labels, so the vocabulary sticks to concrete, visible things.
+- Observed on a first real library: birds against the sky are sometimes also tagged as aircraft.
 
 ### 9.6 Duplicates
 
 1. Compute pHash on each preview.
-2. Compare all pairs by Hamming distance. At a few thousand images, a NumPy brute-force comparison is fine.
+2. Compare all pairs by Hamming distance. At a few thousand images, a NumPy brute-force comparison (in chunks) is fine.
 3. Link pairs within `phash_max_distance` into groups (union–find), stored in `dupe_group`.
 
 The grid shows one representative per group with a count badge. Burst shots with reframing are not caught by pHash. They still surface naturally through similar-image search.
 
 ## 10. Vocabulary
 
+Families are top-level keys (any number; the MVP uses `subject`, `scene`, and `look`). An entry is either a plain tag name or a tag with alternative phrases; the tag name itself is always one of its phrases.
+
 ```yaml
-# vocabulary.yaml
+# vocabulary.yaml (excerpt; the full file has ~110 tags)
 templates:
   - "a photo of {}"
   - "a photograph of {}"
   - "a street photo of {}"
 
 subject:
-  - people
-  - a crowd
-  - a single person
-  - children
-  - elderly people
-  - street vendors
-  - food
-  - bicycles or scooters
-  - cars and traffic
-  - trains
-  - boats
-  - animals
-  - architecture
-  - a temple or pagoda
-  - high-rise buildings
-  - traditional houses
-  - construction work
-  - signs and written characters
-  - lanterns
-  - laundry hanging outside
-  - plants and trees
-  - water
-  - mountains
+  - people: [a person, a man, a woman, people walking, pedestrians, a couple]
+  - street vendors: [a street vendor, a food stall, a hawker selling goods, a fruit seller]
+  - cats: [a cat, a kitten, a cat sleeping]
+  - livestock: [sheep, cows, horses, goats, pigs, a herd of animals, a water buffalo]
+  - a temple or pagoda: [a temple, a pagoda, a buddha statue, incense burning, a shrine]
+  - lanterns: [red lanterns, paper lanterns, hanging lanterns]
+  - mountains: [mountains, hills, a mountain peak, a cliff, rocks]
 
 scene:
-  - a busy street
-  - a quiet alley
-  - a market
-  - a shop interior
-  - a restaurant
-  - a home interior
-  - a train station or metro
-  - a highway or overpass
-  - a construction site
-  - a park or garden
-  - a riverside or waterfront
-  - a rural village
-  - farmland
-  - mountain landscape
-  - a city skyline
-  - a temple courtyard
-  - a public square
-  - night scene
-  - other
+  - a quiet alley: [a quiet alley, a narrow lane, a hutong, an empty backstreet]
+  - a market: [a market, a street market, a wet market, a night market, a bazaar]
+  - farmland: [farmland, rice paddies, crop fields, a farm, a vegetable plot]
+  - other: [an abstract image, a blurry photo, a close-up texture, a plain background]
+
+look:
+  - black and white: [a black and white photo, a monochrome photograph]
+  - night: [a photo taken at night, night lights, street lights at night]
+  - fog or mist: [fog, mist, haze, a misty morning]
+  - ordinary daylight: [an ordinary daytime photo, a photo in plain daylight]
 ```
 
 Editing this file and rerunning `archive tag` is the whole workflow for changing tags.
@@ -323,40 +335,49 @@ Editing this file and rerunning `archive tag` is the whole workflow for changing
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/photos?tags=&dupes=collapse&sort=taken_at&offset=&limit=` | Paged grid listing, AND-filtered by tags |
-| GET | `/api/photos/{id}` | Detail: metadata, tags with probabilities, RAW path, duplicate group |
-| GET | `/api/search/text?q=&tags=&limit=` | Text search, optionally within a tag filter |
-| GET | `/api/search/similar/{id}?tags=&limit=` | Similar images |
-| GET | `/api/tags` | Tags grouped by family, with counts |
+| GET | `/api/photos?tags=&dupes=collapse&sort=taken_at&offset=&limit=` | Paged grid listing, AND-filtered by tag ids. `sort`: `taken_at`, `-taken_at`, `path`, `id` |
+| GET | `/api/photos/{id}` | Detail: metadata, tags with probabilities, RAW paths, duplicate group |
+| GET | `/api/search/text?q=&tags=&dupes=&offset=&limit=` | Text search, optionally within a tag filter |
+| GET | `/api/search/similar/{id}?tags=&dupes=&offset=&limit=` | Similar images (the query photo and, when collapsing, its duplicates are excluded) |
+| GET | `/api/tags?tags=` | Tags grouped by family, with counts **within the given tag filter**; tags no matching photo carries are omitted (selected tags are always included). Also total photos, unmatched RAW count, model id |
 | GET | `/api/raws/unmatched` | Unmatched RAW list |
+| GET | `/api/sources` | Configured folders with photo counts |
+| POST / DELETE | `/api/sources` `{path}` | Add or remove a folder (written to `config.yaml`), then start indexing |
+| GET | `/api/fs?path=` | Server-side folder browser: subfolders and image count (defaults to the home folder) |
+| GET / POST | `/api/index` | Indexing status (step, progress, log, error) / start a background run; a request during a run queues one more run |
 | GET | `/thumbs/{id}.jpg`, `/previews/{id}.jpg` | Static images |
 | GET | `/` | Built Svelte app |
 
-At startup the server loads the embedding matrix and the CLIP text encoder only; the image encoder is not needed at serve time. Tag filters on search are applied as a boolean mask over the matrix before ranking.
+At startup the server loads the embedding matrix and the CLIP text encoder only; the image encoder is not needed at serve time (background indexing loads its own model). Tag filters on search are applied as a boolean mask over the matrix before ranking.
+
+Mutating endpoints accept only JSON bodies, so other websites cannot trigger them from the browser without a CORS preflight (which the server does not grant). The folder browser can list any directory the server can read, so the server binds to `127.0.0.1` by default.
 
 ### 11.2 UI
 
-A single page with no router; view state lives in a small Svelte store and is mirrored into the URL query string so views can be bookmarked.
+A single page with no router; view state lives in a small Svelte store and is mirrored into the URL query string (`q`, `similar`, `tags`, `photo`) so views can be bookmarked.
 
-- **Top bar:** search input (Enter runs text search), result count, clear button.
-- **Left sidebar:** Subject and Scene tag lists with counts. Click a tag to filter, click again to remove. Filters combine with search.
-- **Grid:** responsive thumbnail grid with infinite scroll. Badges show RAW and duplicate count.
-- **Detail panel:** opens on click. It shows a large preview, capture date, camera and lens, source path, RAW path, tags with probabilities, and GPS coordinates as text. Buttons: **Find similar**, **Copy path**, **Previous/Next**.
-- **Keyboard:** arrow keys move between photos, Esc closes the detail panel, `/` focuses search.
+- **Top bar:** search input (Enter runs text search), "similar to" chip, result count, **Library** button (shows indexing progress), clear button.
+- **Left sidebar:** one section per tag family, in vocabulary order, with counts within the current filter. Tags with no matching photos are hidden. Click a tag to filter, click again to remove. Filters combine with search.
+- **Grid:** responsive thumbnail grid with infinite scroll. Badges show RAW and duplicate count; search results show their score on hover.
+- **Detail panel:** opens on click. It shows a large preview, capture date, camera and lens, source path, RAW path, tags with probabilities (click to filter), duplicates, and GPS coordinates as text. Buttons: **Find similar**, **Copy path**, **Previous/Next**.
+- **Library dialog:** configured folders with photo counts and **Remove**; a server-side folder browser with a path box and **Add this folder and index**; **Index now** with a progress bar and step log. Opens automatically when no folders are configured; an empty library shows an "Add a photo folder" prompt.
+- **Keyboard:** arrow keys move between photos, Esc closes the detail panel or dialog, `/` focuses search.
 
 Tailwind only; no component library.
 
 ## 12. Milestones
 
-| # | Milestone | Estimate | Done when |
-|---|---|---|---|
-| 1 | Scan, EXIF, RAW matching, thumbnails | 2–3 days | Every image is catalogued with thumbnails; RAW links are correct on a spot check |
-| 2 | Embeddings, text and similar search API | 2 days | Search results look sensible for 20 test queries |
-| 3 | Zero-shot tags and duplicates | 1–2 days | Tag counts look plausible; duplicate groups are correct on a spot check |
-| 4 | Svelte UI | 3–4 days | All features in §11.2 work against the full archive |
-| 5 | Polish and evaluation | 1–2 days | Evaluation note written (§13) |
+| # | Milestone | Estimate | Done when | Status |
+|---|---|---|---|---|
+| 1 | Scan, EXIF, RAW matching, thumbnails | 2–3 days | Every image is catalogued with thumbnails; RAW links are correct on a spot check | Done |
+| 2 | Embeddings, text and similar search API | 2 days | Search results look sensible for 20 test queries | Done; 20-query check pending (§13) |
+| 3 | Zero-shot tags and duplicates | 1–2 days | Tag counts look plausible; duplicate groups are correct on a spot check | Done |
+| 4 | Svelte UI | 3–4 days | All features in §11.2 work against the full archive | Done; needs a hands-on pass in a browser |
+| 5 | Polish and evaluation | 1–2 days | Evaluation note written (§13) | Open |
 
-Total: roughly two to three weeks. The full archive is processed from the start; there is no separate pilot.
+The full archive is processed from the start; there is no separate pilot.
+
+First measurements on the development machine (RTX 3090): 37 large 16-bit PNGs (1.5 GB) indexed in about 7–17 s including model load; a no-change re-index finishes instantly; re-tagging about 1,150 photos takes about 4 s; a text search takes about 10 ms.
 
 ## 13. Evaluation
 
@@ -380,9 +401,9 @@ In rough order of expected value:
 6. A 2D embedding map (UMAP) for exploration.
 7. Captions and OCR through a local vision-language model.
 
-## 15. Decisions before coding
+## 15. Decisions before coding (resolved)
 
-1. Development machine: OS, RAM, and GPU or Apple Silicon.
-2. Image formats present, especially whether HEIC needs support.
-3. Where RAW files live relative to their JPEGs, to set `raw_search_dirs`.
-4. Default CLIP model; `ViT-B-16` is a reasonable start, and a larger model can be tried in milestone 2.
+1. Development machine: Linux, NVIDIA RTX 3090 (CUDA).
+2. Image formats: JPEG/PNG/TIFF supported; test data includes large 16-bit PNGs. HEIC is an optional extra (`pip install -e ".[heic]"`).
+3. RAW location: defaults `.`, `RAW`, `../RAW` relative to each image's folder; adjust `raw_search_dirs` per archive.
+4. Default CLIP model: `ViT-B-16` / `laion2b_s34b_b88k`; a larger model can be compared later (§14).
