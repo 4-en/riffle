@@ -207,7 +207,8 @@ def invalidate_derived(conn: sqlite3.Connection, cfg: Config, photo_id: int) -> 
     for d in (cfg.thumbs_dir, cfg.previews_dir):
         (d / f"{photo_id}.jpg").unlink(missing_ok=True)
     conn.execute(
-        "UPDATE photos SET phash = NULL, dupe_group = NULL, sharpness = NULL, stack_id = NULL WHERE id = ?",
+        """UPDATE photos SET phash = NULL, dupe_group = NULL, sharpness = NULL, stack_id = NULL,
+           clip_highlights = NULL, clip_shadows = NULL WHERE id = ?""",
         (photo_id,),
     )
     conn.execute("DELETE FROM embedded WHERE photo_id = ?", (photo_id,))

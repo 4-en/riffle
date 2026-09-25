@@ -185,6 +185,15 @@
             <dt class="text-neutral-500">Exposure</dt>
             <dd>{exposure(photo)}</dd>
           {/if}
+          {#if photo.clip_highlights != null}
+            {@const hi = photo.clip_highlights * 100}
+            {@const lo = photo.clip_shadows * 100}
+            <dt class="text-neutral-500">Clipping</dt>
+            <dd>
+              <span class={hi > 2 ? 'text-amber-400' : ''}>{hi < 0.1 ? 'no' : `${hi.toFixed(1)}%`} blown highlights</span>
+              · <span class={lo > 5 ? 'text-amber-400' : ''}>{lo < 0.1 ? 'no' : `${lo.toFixed(1)}%`} crushed shadows</span>
+            </dd>
+          {/if}
           <dt class="text-neutral-500">Size</dt>
           <dd>{photo.width} × {photo.height} · {size(photo.size_bytes)}</dd>
           {#if photo.location}

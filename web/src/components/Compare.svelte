@@ -3,7 +3,7 @@
   // grid selection, or every unreviewed stack in turn ("review").
   import { SvelteSet } from 'svelte/reactivity';
   import { view } from '../lib/state.svelte.js';
-  import { fetchStack, fetchStacks, fetchPhoto } from '../lib/api.js';
+  import { fetchStack, fetchStacks, fetchPhoto, fetchSuggestion } from '../lib/api.js';
   import { applyFlags, setFlag, flagOf, undo } from '../lib/culling.svelte.js';
 
   // context: {kind: 'stack', id} | {kind: 'ids', ids} | {kind: 'review'}
@@ -17,6 +17,8 @@
   let focus = $state(0);
   let zoom = $state(false);
   let origin = $state({ x: 50, y: 50 });
+  // Suggested keeper: {suggested: id, scores: {id: {sharpness, exposure, quality?, total}}}.
+  let suggestion = $state(null);
 
   // Review mode walks the stacks that still have unflagged photos (within the filters).
   let queue = $state([]);
@@ -40,6 +42,15 @@
       keep.clear();
       for (const m of members) if (flagOf(m) === 'pick') keep.add(m.id);
       focus = 0;
+      suggestion = null;
+      if (members.length > 1) {
+        const shown = members;
+        fetchSuggestion(members.map((m) => m.id))
+          .then((s) => {
+            if (members === shown) suggestion = s;
+          })
+          .catch(() => {}); // a hint only
+      }
     } catch (e) {
       error = e.message;
     } finally {
@@ -90,6 +101,21 @@
     next();
   }
 
+  function keepSuggested() {
+    if (!suggestion?.suggested) return;
+    keep.clear();
+    keep.add(suggestion.suggested);
+    focus = Math.max(0, members.findIndex((m) => m.id === suggestion.suggested));
+    hint = '';
+  }
+
+  const why = (id) => {
+    const s = suggestion?.scores?.[id];
+    if (!s) return '';
+    const pct = (v) => `${Math.round(v * 100)}%`;
+    return `Suggested: sharpness ${pct(s.sharpness)}, exposure ${pct(s.exposure)}${s.quality != null ? `, overall look ${pct(s.quality)}` : ''} (relative to the others here)`;
+  };
+
   function toggle(i) {
     const m = members[i];
     if (!m) return;
@@ -130,6 +156,7 @@
       const m = members[focus];
       if (m) setFlag([m.id], { p: 'pick', x: 'reject', u: null }[k]);
     } else if (k === 'z') zoom = !zoom;
+    else if (k === 'a') keepSuggested();
     else if (k === 'n') next(1);
     else if (k === 'b') next(-1);
     else return;
@@ -159,7 +186,7 @@
     <h2 class="font-semibold">{title}</h2>
     <span class="text-xs text-neutral-400">{members.length} photos · {keep.size} to keep</span>
     <span class="hidden text-xs text-neutral-500 lg:inline">
-      Click or 1–9: keep · Enter: pick kept, reject rest · Shift+X: reject all · Shift+U: unflag all · Z: zoom · P/X/U: flag focused
+      Click or 1–9: keep · A: keep suggested · Enter: pick kept, reject rest · Shift+X: reject all · Shift+U: unflag all · Z: zoom · P/X/U: flag focused
       {context.kind === 'review' ? '· N/B: next/back' : ''}
     </span>
     <div class="ml-auto flex items-center gap-2">
@@ -177,6 +204,12 @@
       {#if context.kind === 'review'}
         <button class="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-300 hover:bg-neutral-800" onclick={() => next(1)}>Skip (N)</button>
       {/if}
+      <button
+        class="rounded border border-sky-700 px-2.5 py-1 text-xs text-sky-200 hover:bg-sky-950 disabled:opacity-40"
+        title={suggestion?.suggested ? why(suggestion.suggested) : 'No suggestion'}
+        disabled={!suggestion?.suggested}
+        onclick={keepSuggested}>Keep suggested (A)</button
+      >
       <button class="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-black hover:bg-emerald-500 disabled:opacity-40" disabled={!keep.size} onclick={applyKeep}>
         Keep {keep.size || ''} &amp; reject rest (Enter)
       </button>
@@ -228,6 +261,9 @@
           {:else if flag === 'reject'}
             <span class="absolute right-2 top-2 rounded bg-red-700 px-1.5 text-xs text-white">rejected</span>
           {/if}
+          {#if suggestion?.suggested === m.id}
+            <span class="absolute right-2 top-8 rounded bg-sky-600 px-1.5 text-xs font-semibold text-white" title={why(m.id)}>★ suggested</span>
+          {/if}
           <div class="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-4 text-[11px] text-neutral-300">
             {#if m.sharpness != null && maxSharp > 0}
               <span class="w-16 shrink-0">Sharpness</span>
@@ -235,6 +271,12 @@
                 <div class="h-1.5 rounded {m.sharpness === maxSharp ? 'bg-emerald-400' : 'bg-neutral-300'}" style="width: {(100 * m.sharpness) / maxSharp}%"></div>
               </div>
               {#if m.sharpness === maxSharp && members.length > 1}<span class="text-emerald-300">sharpest</span>{/if}
+            {/if}
+            {#if m.clip_highlights > 0.02}
+              <span class="text-amber-300" title="Share of the frame near-white">▲ {(m.clip_highlights * 100).toFixed(0)}% blown</span>
+            {/if}
+            {#if m.clip_shadows > 0.05}
+              <span class="text-sky-300" title="Share of the frame near-black">▼ {(m.clip_shadows * 100).toFixed(0)}% crushed</span>
             {/if}
             <span class="ml-auto truncate">{m.rel_path}</span>
           </div>

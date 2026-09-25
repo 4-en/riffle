@@ -201,3 +201,55 @@ def test_reset_flags_all_or_filtered(client, conn):
     assert client.get("/api/facets").json()["flag"] == {"pick": 0, "reject": 0, "none": 4}
     assert client.post("/api/flags/reset", json={"scope": "everything"}).status_code == 400
     assert client.post("/api/flags/reset", content="{}").status_code == 415
+
+
+# ---- exposure clipping and suggested keeper ----------------------------------------------
+
+
+def test_clipping_counts_near_white_and_near_black_only():
+    from archive.quality import clipping
+
+    im = Image.new("RGB", (100, 100), (128, 128, 128))
+    im.paste((255, 255, 255), (0, 0, 100, 30))  # 30% blown
+    im.paste((0, 0, 0), (0, 90, 100, 100))  # 10% crushed
+    im.paste((255, 230, 0), (0, 30, 100, 60))  # saturated yellow: channels at 255, but not blown
+    assert clipping(im) == pytest.approx((0.30, 0.10))
+
+
+def test_exposure_filter_and_facet(client, conn):
+    a, b = ids_of(conn, "IMG_0001.jpg", "IMG_0002.jpg")
+    conn.execute("UPDATE photos SET clip_highlights = 0.2 WHERE id = ?", (a,))
+    conn.execute("UPDATE photos SET clip_shadows = 0.3 WHERE id = ?", (b,))
+    conn.commit()
+    assert client.get("/api/facets").json()["exposure"] == {"highlights": 1, "shadows": 1, "ok": 2}
+    assert names(client, exposure="highlights") == ["IMG_0001.jpg"]
+    assert names(client, exposure=["highlights", "shadows"]) == ["IMG_0001.jpg", "IMG_0002.jpg"]
+    assert len(names(client, exposure="ok")) == 2
+    assert client.get("/api/photos", params={"exposure": "dark"}).status_code == 400
+
+
+def test_keeper_scores_prefer_sharp_well_exposed():
+    from archive.quality import keeper_scores
+
+    photos = [
+        {"id": 1, "sharpness": 100, "clip_highlights": 0.0, "clip_shadows": 0.0},
+        {"id": 2, "sharpness": 110, "clip_highlights": 0.12, "clip_shadows": 0.0},  # sharper but blown
+        {"id": 3, "sharpness": 30, "clip_highlights": 0.0, "clip_shadows": 0.0},  # soft
+    ]
+    best, scores = keeper_scores(photos)
+    assert best == 1 and scores[2]["exposure"] == 0 and scores[3]["sharpness"] == pytest.approx(30 / 110)
+    # The CLIP quality score can tip a close call.
+    best, scores = keeper_scores(photos[:1] + [dict(photos[0], id=4, sharpness=98)], {1: 0.2, 4: 0.9})
+    assert best == 4 and scores[4]["quality"] == 1 and scores[1]["quality"] == 0
+    assert keeper_scores([]) == (None, {})
+
+
+def test_suggest_endpoint(client, conn):
+    a, b, c = ids_of(conn, "IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.png")
+    conn.execute("UPDATE photos SET sharpness = 50, clip_highlights = 0, clip_shadows = 0 WHERE id IN (?, ?, ?)", (a, b, c))
+    conn.execute("UPDATE photos SET sharpness = 500 WHERE id = ?", (b,))
+    conn.commit()
+    res = client.get("/api/suggest", params={"ids": f"{a},{b},{c}"}).json()
+    assert res["suggested"] == b
+    assert set(res["scores"][str(b)]) == {"sharpness", "exposure", "quality", "total"}
+    assert client.get("/api/suggest", params={"ids": "x"}).status_code == 400

@@ -27,6 +27,14 @@
     facets?.loc_source ? SOURCE_LABELS.filter(([v]) => facets.loc_source[v] > 0 || f.loc_source.includes(v)) : []
   );
   const showSources = $derived(sources.length > 1 || f.loc_source.length > 0);
+  const EXPOSURE_LABELS = [
+    ['highlights', 'Blown highlights'],
+    ['shadows', 'Crushed shadows'],
+    ['ok', 'Well exposed'],
+  ];
+  const showExposure = $derived(
+    (facets?.exposure && facets.exposure.highlights + facets.exposure.shadows > 0) || f.exposure.length > 0
+  );
   const PLACES_SHOWN = 15;
   let allPlaces = $state(false);
   const places = $derived(
@@ -88,6 +96,15 @@
       <ul>
         {#each flagOptions as [value, label] (value)}
           {@render option('flag', value, label, facets.flag[value])}
+        {/each}
+      </ul>
+    {/if}
+
+    {#if showExposure}
+      {@render heading('Exposure')}
+      <ul title="Blown: over 2% of the frame near-white. Crushed: over 5% near-black.">
+        {#each EXPOSURE_LABELS as [value, label] (value)}
+          {@render option('exposure', value, label, facets.exposure[value])}
         {/each}
       </ul>
     {/if}

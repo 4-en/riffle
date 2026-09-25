@@ -47,6 +47,16 @@ ORIENTATIONS = {
 
 FLAG_VALUES = ("pick", "reject", "none")  # "none" = unflagged
 
+# Exposure: share of the frame near-white / near-black (quality.clipping). Measured on
+# the first real library: >2% blown in 8% of photos, >5% crushed in 3% (black
+# backgrounds are often intentional, hence the looser shadow threshold).
+BLOWN, CRUSHED = 0.02, 0.05
+EXPOSURE = {
+    "highlights": f"p.clip_highlights > {BLOWN}",
+    "shadows": f"p.clip_shadows > {CRUSHED}",
+    "ok": f"(p.clip_highlights <= {BLOWN} AND p.clip_shadows <= {CRUSHED})",
+}
+
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -65,6 +75,7 @@ class PhotoFilter:
     region: list[str] = field(default_factory=list)
     place: list[str] = field(default_factory=list)
     loc_source: list[str] = field(default_factory=list)
+    exposure: list[str] = field(default_factory=list)  # EXPOSURE keys, OR-combined
 
     def where(self, model_id: str, exclude: frozenset[str] = frozenset()) -> tuple[str, list]:
         """SQL condition over ``photos p`` (only status 'ok'). Facets named in
@@ -125,6 +136,9 @@ class PhotoFilter:
                 clauses.append(f"{expr} IN ({','.join('?' * len(keys))})")
                 params += keys
 
+        if self.exposure and "exposure" not in exclude:
+            clauses.append("(" + " OR ".join(EXPOSURE[e] for e in self.exposure) + ")")
+
         if self.loc_source and "loc_source" not in exclude:
             clauses.append(f"{LOCATION_SOURCE} IN ({','.join('?' * len(self.loc_source))})")
             params += self.loc_source
@@ -161,6 +175,7 @@ def photo_filter(
     region: list[str] = Query([]),
     place: list[str] = Query([]),
     loc_source: list[str] = Query([]),
+    exposure: list[str] = Query([]),
 ) -> PhotoFilter:
     """FastAPI dependency: the filter from query parameters."""
     try:
@@ -173,6 +188,8 @@ def photo_filter(
     bad = [o for o in orientation if o not in ORIENTATIONS]
     if bad:
         raise HTTPException(400, f"orientation must be one of {', '.join(ORIENTATIONS)}")
+    if any(e not in EXPOSURE for e in exposure):
+        raise HTTPException(400, f"exposure must be one of {', '.join(EXPOSURE)}")
     if any(s not in LOCATION_SOURCES for s in loc_source):
         raise HTTPException(400, f"loc_source must be one of {', '.join(LOCATION_SOURCES)}")
     if any(f not in FLAG_VALUES for f in flag):
@@ -200,6 +217,7 @@ def photo_filter(
         region=list(dict.fromkeys(region)),
         place=list(dict.fromkeys(place)),
         loc_source=list(dict.fromkeys(loc_source)),
+        exposure=list(dict.fromkeys(exposure)),
     )
 
 
@@ -258,6 +276,10 @@ def facets(conn: sqlite3.Connection, flt: PhotoFilter, model_id: str) -> dict:
         ).fetchall()
     )
     out["flag"] = {f: counts.get(f, 0) for f in FLAG_VALUES}
+
+    w, p = where("exposure")
+    sums = ", ".join(f"COALESCE(SUM({expr}), 0)" for expr in EXPOSURE.values())
+    out["exposure"] = dict(zip(EXPOSURE, conn.execute(f"SELECT {sums} FROM photos p WHERE {w}", p).fetchone()))
 
     w, p = where("loc_source")
     counts = dict(conn.execute(f"SELECT {LOCATION_SOURCE}, COUNT(*) FROM photos p WHERE {w} GROUP BY 1", p).fetchall())

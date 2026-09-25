@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS photos (
@@ -118,6 +118,11 @@ MIGRATIONS = [
       place        TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+    """,
+    # v5: exposure clipping of the preview (fractions of the frame), derived.
+    """
+    ALTER TABLE photos ADD COLUMN clip_highlights REAL;
+    ALTER TABLE photos ADD COLUMN clip_shadows REAL;
     """,
 ]
 

@@ -145,7 +145,7 @@ def create_app(
         marks = ",".join("?" * len(ids))
         rows = conn.execute(
             f"""SELECT p.id, p.source, p.rel_path, p.width, p.height, p.taken_at, p.dupe_group,
-                       p.stack_id, p.sharpness, {FLAG_EXPR} AS flag,
+                       p.stack_id, p.sharpness, p.clip_highlights, p.clip_shadows, {FLAG_EXPR} AS flag,
                        EXISTS (SELECT 1 FROM raws r WHERE r.photo_id = p.id) AS has_raw,
                        (SELECT COUNT(*) FROM photos d
                          WHERE d.dupe_group = p.dupe_group AND d.status = 'ok') AS dupe_count,
@@ -172,6 +172,8 @@ def create_app(
                 "stack_id": r["stack_id"],
                 "stack_count": r["stack_count"],
                 "sharpness": r["sharpness"],
+                "clip_highlights": r["clip_highlights"],
+                "clip_shadows": r["clip_shadows"],
                 "flag": r["flag"],
                 "thumb": f"/thumbs/{r['id']}.jpg",
             }
@@ -524,6 +526,42 @@ def create_app(
         if not ids:
             raise HTTPException(404, "stack not found")
         return {"id": stack_id, "items": items_for(conn, ids)}
+
+    # CLIP-IQA style prompt pairs (Wang et al., 2023): how much more a photo looks
+    # like the first than the second of each pair.
+    QUALITY_PROMPTS = [("Good photo.", "Bad photo."), ("Sharp photo.", "Blurry photo.")]
+
+    def clip_quality(index: Index, ids: list[int]) -> dict[int, float] | None:
+        encoder = state["encoder"]
+        if encoder is None or index.E.size == 0:
+            return None
+        if "quality_text" not in state:
+            state["quality_text"] = encoder([t for pair in QUALITY_PROMPTS for t in pair])
+        T = state["quality_text"]
+        out = {}
+        for pid in ids:
+            row = index.row.get(pid)
+            if row is None:
+                continue
+            sims = (T @ index.E[row]).reshape(len(QUALITY_PROMPTS), 2) * 100
+            good = np.exp(sims[:, 0] - sims.max(axis=1))
+            bad = np.exp(sims[:, 1] - sims.max(axis=1))
+            out[pid] = float((good / (good + bad)).mean())
+        return out
+
+    @app.get("/api/suggest")
+    def suggest_keeper(ids: str, conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """The suggested keeper among similar photos (e.g. a stack), with the scores
+        behind it: sharpness, exposure (clipping) and a CLIP quality score."""
+        from .quality import keeper_scores
+
+        try:
+            wanted = [int(i) for i in ids.split(",") if i.strip()]
+        except ValueError:
+            raise HTTPException(400, "ids must be comma-separated photo ids")
+        photos = items_for(conn, wanted)
+        suggested, scores = keeper_scores(photos, clip_quality(index, wanted))
+        return {"suggested": suggested, "scores": {str(k): v for k, v in scores.items()}}
 
     # ---- export ------------------------------------------------------------------
 
