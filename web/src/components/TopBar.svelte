@@ -64,21 +64,29 @@
     </span>
   {/if}
 
-  <div
-    class="flex shrink-0 overflow-hidden rounded border border-neutral-700 text-xs {view.q || view.similar ? 'opacity-40' : ''}"
-    role="group"
-    aria-label="Group by date"
-    title={view.q || view.similar ? 'Grouping applies when browsing, not to search results' : 'Group by date'}
+  <label
+    class="flex shrink-0 items-center gap-1 text-xs text-neutral-400 {view.q || view.similar ? 'opacity-40' : ''}"
+    title={view.q || view.similar ? 'Grouping applies when browsing, not to search results' : 'Group the grid by date or place'}
   >
-    {#each [['', 'All'], ['day', 'Day'], ['month', 'Month'], ['year', 'Year']] as [value, label] (value)}
-      <button
-        class="px-2 py-1 {view.group === value ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:bg-neutral-800'}"
-        aria-pressed={view.group === value}
-        disabled={!!(view.q || view.similar)}
-        onclick={() => (view.group = value)}>{label}</button
-      >
-    {/each}
-  </div>
+    Group
+    <select
+      bind:value={view.group}
+      disabled={!!(view.q || view.similar)}
+      class="rounded border border-neutral-700 bg-neutral-900 px-1 py-1 text-neutral-200"
+    >
+      <option value="">None</option>
+      <optgroup label="Date">
+        <option value="day">Day</option>
+        <option value="month">Month</option>
+        <option value="year">Year</option>
+      </optgroup>
+      <optgroup label="Location">
+        <option value="place">Place</option>
+        <option value="region">Region</option>
+        <option value="country">Country</option>
+      </optgroup>
+    </select>
+  </label>
 
   <button
     class="shrink-0 rounded border px-2 py-1 text-xs {view.collapse === 'stacks'

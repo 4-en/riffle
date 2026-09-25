@@ -1,5 +1,5 @@
 <script>
-  import { view, groupLabel, filterToGroup } from '../lib/state.svelte.js';
+  import { view, groupLabel, filterToGroup, isLocationGroup, dateSpan } from '../lib/state.svelte.js';
   import { selection, cursor, flagOf } from '../lib/culling.svelte.js';
 
   // `groups`: the result's date groups (key, count) when the grid is grouped, else null.
@@ -50,7 +50,9 @@
     }
     return out;
   });
-  const counts = $derived(new Map((groups ?? []).map((g) => [g.key, g.count])));
+  const info = $derived(new Map((groups ?? []).map((g) => [g.key, g])));
+  const plural = { day: 'days', month: 'months', year: 'years', place: 'places', region: 'regions', country: 'countries' };
+  const labelOf = (key) => groupLabel(key, mode, info.get(key)?.label);
   const mode = $derived(view.group);
   const order = $derived(new Map(items.map((item, i) => [item.id, i])));
 
@@ -163,7 +165,7 @@
 
 {#if groups?.length > 1}
   <div class="flex items-center justify-end gap-2 px-2 pt-2 text-xs text-neutral-400">
-    <label for="jump">{groups.length} {mode === 'day' ? 'days' : mode === 'month' ? 'months' : 'years'}</label>
+    <label for="jump">{groups.length} {plural[mode]}</label>
     <select
       id="jump"
       class="rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-neutral-200"
@@ -174,7 +176,7 @@
     >
       <option value="" disabled selected>Jump to…</option>
       {#each groups as g (g.key)}
-        <option value={g.key}>{groupLabel(g.key, mode)} ({g.count})</option>
+        <option value={g.key}>{labelOf(g.key)} ({g.count})</option>
       {/each}
     </select>
   </div>
@@ -188,12 +190,15 @@
         id="group-{section.key || 'undated'}"
         class="sticky top-0 z-10 flex items-baseline gap-2 bg-neutral-950/90 px-2 pb-1.5 pt-3 backdrop-blur"
       >
-        <span class="text-sm font-medium text-neutral-100">{groupLabel(section.key, mode)}</span>
-        <span class="text-xs tabular-nums text-neutral-500">{counts.get(section.key) ?? section.items.length}</span>
+        <span class="text-sm font-medium text-neutral-100">{labelOf(section.key)}</span>
+        {#if isLocationGroup(mode) && info.get(section.key)?.first}
+          <span class="text-xs text-neutral-400">{dateSpan(info.get(section.key).first, info.get(section.key).last)}</span>
+        {/if}
+        <span class="text-xs tabular-nums text-neutral-500">{info.get(section.key)?.count ?? section.items.length}</span>
         {#if section.key}
           <button
             class="ml-auto text-xs text-neutral-500 hover:text-sky-400"
-            title="Set the date filter to this {mode}"
+            title={isLocationGroup(mode) ? `Show only this ${mode}` : `Set the date filter to this ${mode}`}
             onclick={() => filterToGroup(section.key, mode)}>Only this {mode}</button
           >
         {/if}

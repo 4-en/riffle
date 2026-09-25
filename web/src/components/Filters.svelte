@@ -15,7 +15,23 @@
   const showDate = $derived(
     (facets?.date.count > 0 && facets.date.min !== facets.date.max) || f.date_from !== '' || f.date_to !== ''
   );
-  const showGps = $derived((facets?.gps.with > 0 && facets.gps.without > 0) || f.gps !== '');
+  // Location: where the position came from, then countries and places (like lenses).
+  const SOURCE_LABELS = [
+    ['exif', 'Camera GPS'],
+    ['visit', 'Timeline: stayed'],
+    ['route', 'Timeline: on the move'],
+    ['nearby', 'Timeline: nearby'],
+    ['none', 'Unknown'],
+  ];
+  const sources = $derived(
+    facets?.loc_source ? SOURCE_LABELS.filter(([v]) => facets.loc_source[v] > 0 || f.loc_source.includes(v)) : []
+  );
+  const showSources = $derived(sources.length > 1 || f.loc_source.length > 0);
+  const PLACES_SHOWN = 15;
+  let allPlaces = $state(false);
+  const places = $derived(
+    facets?.place ? (allPlaces ? facets.place : facets.place.slice(0, PLACES_SHOWN)) : []
+  );
   const flagOptions = [
     ['pick', 'Picked'],
     ['reject', 'Rejected'],
@@ -150,21 +166,36 @@
       </ul>
     {/if}
 
-    {#if showGps}
+    {#if showSources || showList('country') || showList('place')}
       {@render heading('Location')}
-      <div class="grid grid-cols-2 gap-1 px-2">
-        {#each [['true', 'With GPS', facets.gps.with], ['false', 'Without', facets.gps.without]] as [value, label, count] (value)}
-          <button
-            class="rounded border px-1 py-0.5 text-xs {f.gps === value
-              ? 'border-sky-700 bg-sky-700 text-white'
-              : 'border-neutral-700 text-neutral-300 hover:bg-neutral-800'}"
-            aria-pressed={f.gps === value}
-            onclick={() => (view.filters.gps = f.gps === value ? '' : value)}
-          >
-            {label} <span class="tabular-nums opacity-70">{count}</span>
+      {#if showSources}
+        <ul>
+          {#each sources as [value, label] (value)}
+            {@render option('loc_source', value, label, facets.loc_source[value])}
+          {/each}
+        </ul>
+      {/if}
+      {#if showList('country')}
+        <p class="mt-1.5 px-2 text-[11px] text-neutral-600">Country</p>
+        <ul>
+          {#each facets.country as c (c.value)}
+            {@render option('country', c.value, c.label, c.count)}
+          {/each}
+        </ul>
+      {/if}
+      {#if showList('place')}
+        <p class="mt-1.5 px-2 text-[11px] text-neutral-600">Place</p>
+        <ul>
+          {#each places as pl (pl.value)}
+            {@render option('place', pl.value, pl.label, pl.count)}
+          {/each}
+        </ul>
+        {#if facets.place.length > PLACES_SHOWN}
+          <button class="px-2 text-xs text-sky-400 hover:underline" onclick={() => (allPlaces = !allPlaces)}>
+            {allPlaces ? 'Fewer' : `All ${facets.place.length} places`}
           </button>
-        {/each}
-      </div>
+        {/if}
+      {/if}
     {/if}
   </section>
 {/if}

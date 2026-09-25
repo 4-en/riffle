@@ -14,6 +14,7 @@ from .dupes import compute_phashes, group_duplicates
 from .embed import Clip, embed_photos, load_embeddings
 from .raws import match_raws
 from .scan import scan
+from .locate import locate_photos
 from .stacks import compute_stacks
 from .tags import tag_photos
 from .thumbs import build_thumbnails
@@ -76,6 +77,11 @@ def _index_steps(conn, cfg: Config, progress, report: Callable[[str], None]) -> 
 
     stacks, stacked = compute_stacks(conn, cfg)
     report(f"stacks: {stacks} stacks covering {stacked} photos")
+
+    located = locate_photos(conn, cfg)
+    if located is not None:
+        placed = ", ".join(f"{n} {source}" for source, n in sorted(located.items())) or "none"
+        report(f"locations: {sum(located.values())} photos placed ({placed})")
 
 
 def _needs_embedding(conn, cfg: Config) -> bool:

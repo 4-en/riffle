@@ -4,14 +4,15 @@
   import { untrack } from 'svelte';
   import { browse } from '../lib/api.js';
 
-  let { dir = $bindable(null), start = null, footer } = $props();
+  // files: also list files of that kind ('history': location exports) and call onpick(file).
+  let { dir = $bindable(null), start = null, footer, files = null, onpick = null } = $props();
 
   let pathInput = $state('');
   let error = $state('');
 
   export async function open(path) {
     try {
-      dir = await browse(path);
+      dir = await browse(path, files);
       pathInput = dir.path;
       error = '';
     } catch (e) {
@@ -56,7 +57,13 @@
         <span class="text-neutral-500">▸</span><span class="truncate">{d.name}</span>
       </button>
     {:else}
-      <p class="px-3 py-2 text-xs text-neutral-500">No subfolders</p>
+      {#if !dir.files?.length}<p class="px-3 py-2 text-xs text-neutral-500">No subfolders</p>{/if}
+    {/each}
+    {#each dir.files ?? [] as file (file.path)}
+      <button class="flex w-full items-center gap-2 px-3 py-1 text-left hover:bg-neutral-800" onclick={() => onpick?.(file)}>
+        <span class="text-sky-400">◆</span><span class="truncate">{file.name}</span>
+        <span class="ml-auto shrink-0 text-xs text-neutral-500">{(file.size / 1e6).toFixed(1)} MB</span>
+      </button>
     {/each}
   </div>
   {@render footer?.(dir)}

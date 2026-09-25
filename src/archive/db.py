@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS photos (
@@ -102,6 +102,22 @@ MIGRATIONS = [
     ALTER TABLE photos ADD COLUMN stack_id INTEGER;
     ALTER TABLE photos ADD COLUMN sharpness REAL;
     CREATE INDEX IF NOT EXISTS photos_stack ON photos(stack_id);
+    """,
+    # v4: where each photo was taken (camera GPS or phone location history), with
+    # offline place names. Derived; rebuilt by the locate step. meta holds step signatures.
+    """
+    CREATE TABLE IF NOT EXISTS photo_locations (
+      photo_id     INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+      lat REAL NOT NULL, lon REAL NOT NULL,
+      source       TEXT NOT NULL,   -- exif | visit | route | nearby
+      accuracy_m   REAL,
+      gap_s        REAL,            -- time to the nearest timeline evidence
+      country_code TEXT NOT NULL DEFAULT '',
+      country      TEXT NOT NULL DEFAULT '',
+      region       TEXT NOT NULL DEFAULT '',
+      place        TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
     """,
 ]
 

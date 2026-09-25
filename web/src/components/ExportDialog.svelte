@@ -5,7 +5,8 @@
   import FolderBrowser from './FolderBrowser.svelte';
 
   // picksTotal: all picks; picksFiltered: picks within the current filters.
-  let { picksTotal = 0, picksFiltered = 0 } = $props();
+  // hasHistory: a location history is configured (enables adding GPS to the copies).
+  let { picksTotal = 0, picksFiltered = 0, hasHistory = false } = $props();
 
   function setting(key, fallback) {
     try {
@@ -22,6 +23,7 @@
   let content = $state(setting('content', 'images'));
   let rawFallback = $state(setting('rawFallback', true));
   let structure = $state(setting('structure', 'flat'));
+  let addLocation = $state(setting('addLocation', true));
   const filtered = view.tags.length > 0 || activeFilterCount(view.filters) > 0;
   let scope = $state(filtered ? 'filtered' : 'all');
   let status = $state(null);
@@ -34,9 +36,17 @@
 
   async function start() {
     error = '';
-    for (const [k, v] of Object.entries({ content, rawFallback, structure, folder: dir.path })) saveSetting(`export.${k}`, v);
+    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, folder: dir.path })) saveSetting(`export.${k}`, v);
     try {
-      status = await startExport(view, { folder: dir.path, name, content, raw_fallback: rawFallback, structure, scope });
+      status = await startExport(view, {
+        folder: dir.path,
+        name,
+        content,
+        raw_fallback: rawFallback,
+        structure,
+        scope,
+        add_location: hasHistory && addLocation,
+      });
       while (status.running) {
         await new Promise((r) => setTimeout(r, 500));
         status = await fetchExportStatus();
@@ -101,6 +111,22 @@
         <label class={radio}><input type="radio" bind:group={structure} value="folders" class="mt-0.5" /> Keep the source folders</label>
       </fieldset>
 
+      {#if hasHistory}
+        <fieldset disabled={running}>
+          <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Location</legend>
+          <label class={radio}>
+            <input type="checkbox" bind:checked={addLocation} class="mt-0.5" />
+            <span>
+              Add the location from your timeline to photos without GPS
+              <span class="block text-xs text-neutral-500">
+                Written into the exported JPEG/PNG copies (nothing else in them changes); RAWs and other files get an .xmp
+                sidecar. Photos that already have GPS are left as they are.
+              </span>
+            </span>
+          </label>
+        </fieldset>
+      {/if}
+
       <section>
         <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">Destination</h3>
         <FolderBrowser bind:dir start={setting('folder', null)} />
@@ -139,7 +165,7 @@
           <p>
             Exported {r.photos} photos: {r.copied} files copied{r.skipped ? `, ${r.skipped} already there` : ''}{r.without_raw
               ? `, ${r.without_raw} without RAW`
-              : ''}.
+              : ''}{r.geotagged ? `, location added to ${r.geotagged}${r.sidecars ? ` (${r.sidecars} as .xmp sidecars)` : ''}` : ''}.
           </p>
           <p class="mt-1 flex items-center gap-2 break-all font-mono text-[11px] text-emerald-300/80">
             {r.folder}

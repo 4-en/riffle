@@ -222,5 +222,10 @@ data/
 examples/
 /config.yaml
 /selections.sqlite3*
+# Location history exports are private: never commit them
+example_timeline.json
+Timeline.json
+Records.json
+*.gpx
 web/node_modules/
 web/dist/

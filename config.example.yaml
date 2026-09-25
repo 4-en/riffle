@@ -33,3 +33,11 @@ stacks:
 
 # Your pick/reject flags. User data: keep it outside data/ and back it up.
 selections: selections.sqlite3
+
+# Where you were, from your phone: Google Timeline exports (Timeline.json), old
+# Takeout Records.json, or GPX tracks. Read in place, never uploaded; add them in
+# the UI (Library) or here. Photos without camera GPS are placed by capture time.
+location:
+  max_gap_minutes: 30   # outside visits and routes, use a position at most this far in time
+  min_population: 0     # place names: nearest town/village with at least this many inhabitants
+location_history: []

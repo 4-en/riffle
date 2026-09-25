@@ -17,13 +17,14 @@ A local tool for finding the best photos in a large archive and exporting them f
 - EXIF: date, camera, lens, focal length, aperture, shutter speed, ISO, GPS
 - Filters for date range, camera, lens, focal length, aperture, ISO, orientation, and GPS; like tags, options are counted within the other active filters, and filters that can't narrow the results are hidden
 - Timeline view: group the grid by day, month, or year (only groups with matching photos appear), jump between groups, and go from any photo to its day
+- **Location from your phone:** add a Google Timeline export (or Records.json / GPX) and photos without GPS are placed by capture time; group by place, region, or country, filter by where you were, and optionally write the position into exported copies
 - Simple local web UI, including adding photo folders and running indexing from the browser
 
 Your originals are never modified. All derived data lives in `data/` and can be deleted and regenerated at any time. Your pick/reject flags are the one thing you create by hand: they live separately in `selections.sqlite3` (next to `config.yaml`), survive deleting `data/`, re-indexing, and moving files, and are worth backing up.
 
 ## Planned
 
-Next is a short evaluation of search and tag quality (see `development_plan` §13). After that, the most promising addition is **location from phone location history**: camera files rarely carry GPS, but your phone usually recorded where you were. Matching capture times against an exported history (Google Maps Timeline, or GPX tracks from a logging app) would place most photos automatically and enable location groups, place filters, and a map. It will work fully offline, and coordinates will never be written into your originals. Details and other candidates are in `development_plan` §14.
+Next is a short evaluation of search and tag quality (see `development_plan` §13). Other candidates, such as per-camera clock correction (which also sharpens location matching), finer "spots" within a town, and a map, are in `development_plan` §14.
 
 ## Requirements
 
@@ -70,6 +71,8 @@ A typical pass:
 
 To start over, the compare view's **Unflag all** resets the stack you're looking at, and the **Flags** section at the bottom of **Library** unflags every photo (or only those in the current filters). Both can be undone with Ctrl+Z.
 
+With a location history, the export can also **add the location to photos without GPS** (on by default). It goes into the exported JPEG and PNG copies only, appended to their EXIF so nothing already in the file moves or changes (image data, MakerNote, embedded thumbnail). RAW and other files are never modified; they get an `.xmp` sidecar with the position instead, which Lightroom, Capture One, and darktable read.
+
 Exports never overwrite anything: identical files already in the destination are skipped (so an interrupted export can simply be run again), and other name clashes get a `-1` suffix, with an image and its RAW keeping matching names. Each export writes an `export-manifest.csv`. The destination can't be inside a photo folder, where the copies would be indexed again.
 
 Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike (`stacks.min_similarity`) in `config.yaml`; adjust and re-run `archive index` (fast, no re-embedding) if they are too eager or too strict.
@@ -82,6 +85,26 @@ Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike 
 | Grid | click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected · `R` review stacks |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag (and go to the next photo) |
 | Compare | click or `1`–`9` keep · `Enter` pick kept, reject rest · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag the focused photo · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
+
+## Location
+
+Camera files rarely have GPS, but your phone usually knew where you were. In **Library → Location history**, add an export of your location history:
+
+- **Google Maps Timeline** (current format): on the phone, Google Maps → your profile picture → *Your Timeline* → ⋮ → *Location and privacy settings* → *Export Timeline data*, then copy `Timeline.json` to this computer.
+- Older **Google Takeout** `Records.json`, or **GPX** tracks from a logging app.
+
+The file stays where it is and is only read (its path is saved in `config.yaml` under `location_history`). Each photo's capture time, made absolute with its EXIF time zone (or the timeline's own for that day), is matched against the history:
+
+| Source | When | Typical accuracy |
+|---|---|---|
+| Camera GPS | the photo has GPS in its EXIF | a few metres |
+| Timeline: stayed | the phone recorded a visit at that time | ~50 m |
+| Timeline: on the move | taken while travelling; interpolated along the route | tens of metres to a few km |
+| Timeline: nearby | a recorded position within 15 minutes | depends on the gap |
+
+Places are named offline from a bundled GeoNames dataset: the nearest town or village, its region, and its country. Group the grid by **Place / Region / Country** (groups are in trip order), filter by country, place, or source in the sidebar, and use **Show place** in the photo view. `location.max_gap_minutes` and `location.min_population` in `config.yaml` tune matching and naming.
+
+Photos are matched by the camera's clock, so a camera set to the wrong time places photos wrongly. Location history is sensitive: it never leaves your machine, the derived positions live in `data/`, and nothing is written into your originals. Keep the export out of any shared or synced folder (the repository's `.gitignore` excludes `Timeline.json`, `Records.json`, and `*.gpx`).
 
 ## Tags
 

@@ -46,6 +46,12 @@ class StackConfig:
 
 
 @dataclass
+class LocationConfig:
+    max_gap_minutes: float = 30.0  # outside visits/routes, use timeline points at most this far in time
+    min_population: int = 0  # place names: nearest town/village with at least this many inhabitants
+
+
+@dataclass
 class Config:
     root: Path
     sources: list[Path]
@@ -61,6 +67,9 @@ class Config:
     stacks: StackConfig = field(default_factory=StackConfig)
     # Pick/reject flags: user data, deliberately outside data_dir (which stays disposable).
     selections_path: Path | None = None
+    # Phone location history exports (Google Timeline JSON, Records.json, GPX): input, referenced in place.
+    location_history: list[Path] = field(default_factory=list)
+    location: LocationConfig = field(default_factory=LocationConfig)
     path: Path | None = None  # the config file, when loaded from one
 
     @property
@@ -140,32 +149,37 @@ def config_from_dict(raw: dict, root: Path) -> Config:
             min_similarity=float((raw.get("stacks") or {}).get("min_similarity", 0.90)),
         ),
         selections_path=resolve(raw.get("selections", "selections.sqlite3")),
+        location_history=[resolve(p) for p in raw.get("location_history") or []],
+        location=LocationConfig(
+            max_gap_minutes=float((raw.get("location") or {}).get("max_gap_minutes", 30)),
+            min_population=int((raw.get("location") or {}).get("min_population", 0)),
+        ),
     )
 
 
-def set_sources(cfg: Config, sources: list[Path]) -> None:
-    """Rewrite the ``sources`` list in the config file and update ``cfg``.
+def _write_path_list(cfg: Config, key: str, paths: list[Path]) -> None:
+    """Rewrite the top-level ``key:`` list of paths in the config file.
 
-    Only the ``sources:`` block is replaced, so comments and formatting elsewhere
-    in the file are kept. Entries that are unchanged keep their original spelling
-    (e.g. relative paths)."""
+    Only that block is replaced, so comments and formatting elsewhere in the file
+    are kept. Entries that are unchanged keep their original spelling (e.g.
+    relative paths). A missing key is added at the end."""
     if cfg.path is None:
         raise ValueError("config was not loaded from a file")
     text = cfg.path.read_text()
     raw = yaml.safe_load(text) or {}
     original = {
         (Path(p).expanduser() if Path(p).expanduser().is_absolute() else cfg.root / p).resolve(): p
-        for p in raw.get("sources") or []
+        for p in raw.get(key) or []
     }
-    entries = [original.get(s, str(s)) for s in sources]
-    block = "sources:\n" + "".join(f"  - {json.dumps(str(e))}\n" for e in entries)
+    entries = [original.get(p, str(p)) for p in paths]
+    block = f"{key}:\n" + "".join(f"  - {json.dumps(str(e))}\n" for e in entries)
     if not entries:
-        block = "sources: []\n"
+        block = f"{key}: []\n"
 
     lines = text.splitlines(keepends=True)
-    start = next((i for i, l in enumerate(lines) if re.match(r"sources\s*:", l)), None)
+    start = next((i for i, l in enumerate(lines) if re.match(rf"{re.escape(key)}\s*:", l)), None)
     if start is None:
-        new_text = block + text
+        new_text = text + ("" if text.endswith("\n") or not text else "\n") + "\n" + block
     else:
         end = start + 1
         while end < len(lines) and (lines[end][:1] in (" ", "\t", "-") or not lines[end].strip()):
@@ -178,4 +192,15 @@ def set_sources(cfg: Config, sources: list[Path]) -> None:
     tmp = cfg.path.with_suffix(".tmp")
     tmp.write_text(new_text)
     tmp.replace(cfg.path)
+
+
+def set_sources(cfg: Config, sources: list[Path]) -> None:
+    """Rewrite the ``sources`` list in the config file and update ``cfg``."""
+    _write_path_list(cfg, "sources", sources)
     cfg.sources = list(sources)
+
+
+def set_location_history(cfg: Config, files: list[Path]) -> None:
+    """Rewrite the ``location_history`` list in the config file and update ``cfg``."""
+    _write_path_list(cfg, "location_history", files)
+    cfg.location_history = list(files)

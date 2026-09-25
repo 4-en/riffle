@@ -19,9 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import db
-from .config import Config, load_config, set_sources
+from .config import Config, load_config, set_location_history, set_sources
 from .embed import embedding_paths, load_embeddings
-from .filters import GROUP_KEYS, PhotoFilter, facets, photo_filter
+from .filters import GROUP_KEYS, LOCATION_KEYS, PhotoFilter, facets, location_labels, photo_filter
 from . import selections
 from .export import CONTENT, STRUCTURE, ExportError, check_destination, run_export
 from .jobs import BackgroundJob, index_job
@@ -84,6 +84,7 @@ class ExportIn(BaseModel):
     raw_fallback: bool = True  # with "raws": copy the image when a photo has no RAW
     structure: str = "flat"  # flat | folders
     scope: str = "all"  # all picks, or "filtered": picks within the query-string filters
+    add_location: bool = True  # write timeline positions into copies of photos without GPS
 
 
 COLLAPSE = ("dupes", "stacks", "none")
@@ -268,6 +269,11 @@ def create_app(
         cte, shown, order, params = listing(flt, collapse_mode(collapse, dupes), sort, group)
         key = GROUP_KEYS[group] if group else "NULL"
         total = conn.execute(f"{cte} SELECT COUNT(*) {shown}", params).fetchone()[0]
+        direction = "DESC" if sort == "-taken_at" else ""
+        by_location = group in LOCATION_KEYS
+        if by_location:
+            # Location groups in trip order: by each group's first photo, unknown last.
+            order = f"grp IS NULL, MIN(p.taken_at) OVER (PARTITION BY grp) {direction}, grp, {order}"
         rows = conn.execute(
             f"{cte} SELECT p.id, {key} AS grp {shown} ORDER BY {order} LIMIT ? OFFSET ?",
             [*params, limit, offset],
@@ -278,12 +284,15 @@ def create_app(
             keys = {r[0]: r[1] or "" for r in rows}
             for item in items:
                 item["group"] = keys[item["id"]]
-            direction = "DESC" if sort == "-taken_at" else ""
+            group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else f"grp {direction}"
+            labels = location_labels(conn)[group] if by_location else {}
             result["groups"] = [
                 {"key": k or "", "count": n}
-                for k, n in conn.execute(
-                    f"""{cte} SELECT {key} AS grp, COUNT(*) {shown}
-                        GROUP BY grp ORDER BY grp IS NULL, grp {direction}""",
+                | ({"label": labels.get(k, "Unknown location") if k else "Unknown location",
+                    "first": first, "last": last} if by_location else {})
+                for k, n, first, last in conn.execute(
+                    f"""{cte} SELECT {key} AS grp, COUNT(*), MIN(p.taken_at), MAX(p.taken_at) {shown}
+                        GROUP BY grp ORDER BY grp IS NULL, {group_order}""",
                     params,
                 )
             ]
@@ -325,6 +334,23 @@ def create_app(
                 )
             ]
             photo["duplicates"] = items_for(conn, ids)
+        loc = conn.execute("SELECT * FROM photo_locations WHERE photo_id = ?", (photo_id,)).fetchone()
+        if loc is None:
+            photo["location"] = None
+        else:
+            labels = location_labels(conn)
+            cc, region, place = loc["country_code"], loc["region"], loc["place"]
+            photo["location"] = {
+                "lat": loc["lat"],
+                "lon": loc["lon"],
+                "source": loc["source"],
+                "accuracy_m": loc["accuracy_m"],
+                "gap_s": loc["gap_s"],
+                "label": labels["place"].get(f"{cc}|{region}|{place}", ""),
+                "place_key": f"{cc}|{region}|{place}",
+                "region_key": f"{cc}|{region}",
+                "country_key": cc,
+            }
         photo["flag"] = conn.execute(
             f"SELECT {FLAG_EXPR} FROM photos p WHERE p.id = ?", (photo_id,)
         ).fetchone()[0]
@@ -409,6 +435,7 @@ def create_app(
             "photos": photos,
             "picks": picks,
             "rejects": rejects,
+            "location_history": bool(cfg.location_history),
             "unmatched_raws": unmatched,
             "model_id": model_id,
             "text_search": state["encoder"] is not None,
@@ -536,6 +563,7 @@ def create_app(
             content=body.content,
             raw_fallback=body.raw_fallback,
             structure=body.structure,
+            add_location=body.add_location and bool(cfg.location_history),
         )
         if not started:
             raise HTTPException(409, "an export is already running")
@@ -607,12 +635,64 @@ def create_app(
         job.start()  # marks its photos missing
         return {"ok": True}
 
+    # ---- location history ------------------------------------------------------
+
+    @app.get("/api/location-history")
+    def list_location_history(conn=Depends(get_conn)):
+        """The referenced history files with what they contain, and how many photos
+        are placed by each kind of evidence."""
+        from .timeline import HistoryError, load
+
+        files = []
+        for p in cfg.location_history:
+            entry = {"path": str(p), "exists": p.is_file()}
+            if entry["exists"]:
+                try:
+                    entry |= load([p]).summary()
+                except (HistoryError, OSError) as e:
+                    entry["error"] = str(e)
+            files.append(entry)
+        placed = dict(conn.execute("SELECT source, COUNT(*) FROM photo_locations GROUP BY source").fetchall())
+        photos = conn.execute("SELECT COUNT(*) FROM photos WHERE status = 'ok'").fetchone()[0]
+        return {"files": files, "placed": placed, "photos": photos, "editable": cfg.path is not None}
+
+    @app.post("/api/location-history", dependencies=[Depends(require_json)])
+    def add_location_history(body: FolderIn):
+        from .timeline import HistoryError, load_file
+
+        if cfg.path is None:
+            raise HTTPException(409, "config was not loaded from a file")
+        path = folder_path(body.path)
+        if not path.is_file():
+            raise HTTPException(400, f"not a file: {path}")
+        if path in cfg.location_history:
+            raise HTTPException(409, "this file is already used")
+        try:
+            summary = load_file(path).summary()  # validates the format
+        except HistoryError as e:
+            raise HTTPException(400, str(e))
+        set_location_history(cfg, [*cfg.location_history, path])
+        job.start()
+        return {"ok": True, "path": str(path)} | summary
+
+    @app.delete("/api/location-history", dependencies=[Depends(require_json)])
+    def remove_location_history(body: FolderIn):
+        if cfg.path is None:
+            raise HTTPException(409, "config was not loaded from a file")
+        path = folder_path(body.path)
+        if path not in cfg.location_history:
+            raise HTTPException(404, "not a configured location history file")
+        set_location_history(cfg, [p for p in cfg.location_history if p != path])
+        job.start()
+        return {"ok": True}
+
     @app.get("/api/fs")
-    def browse(path: str | None = None):
+    def browse(path: str | None = None, files: str | None = None):
         p = folder_path(path) if path else Path.home()
         if not p.is_dir():
             raise HTTPException(404, f"not a folder: {p}")
-        dirs, images = [], 0
+        dirs, images, listed = [], 0, []
+        wanted = {"history": (".json", ".gpx")}.get(files or "", ())
         try:
             entries = sorted(os.scandir(p), key=lambda e: e.name.lower())
         except PermissionError:
@@ -623,8 +703,12 @@ def create_app(
             try:
                 if e.is_dir():
                     dirs.append({"name": e.name, "path": str(Path(e.path))})
-                elif os.path.splitext(e.name)[1].lower() in cfg.image_extensions:
-                    images += 1
+                else:
+                    ext = os.path.splitext(e.name)[1].lower()
+                    if ext in cfg.image_extensions:
+                        images += 1
+                    if ext in wanted:
+                        listed.append({"name": e.name, "path": str(Path(e.path)), "size": e.stat().st_size})
             except OSError:
                 continue
         within = next((str(s) for s in cfg.sources if p == s or p.is_relative_to(s)), None)
@@ -633,6 +717,7 @@ def create_app(
             "parent": str(p.parent) if p.parent != p else None,
             "dirs": dirs,
             "images": images,
+            "files": listed,
             "source": within,
         }
 

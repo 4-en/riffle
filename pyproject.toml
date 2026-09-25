@@ -19,6 +19,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "tqdm>=4.66",
+    "reverse_geocode>=1.6",
 ]
 
 [project.optional-dependencies]

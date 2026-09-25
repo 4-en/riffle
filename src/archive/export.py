@@ -4,6 +4,11 @@ Originals are only read. Nothing in the destination is overwritten: a file that
 is already there with the same size and modification time is skipped (so an
 interrupted export can be resumed), any other name clash gets a ``-1``, ``-2``…
 suffix, the same one for a photo's image and RAW so they still pair up.
+
+With ``add_location``, photos without camera GPS that were placed from the
+location history get their position written into the *copies* (see geotag.py):
+into the metadata of JPEG and PNG copies, or as an XMP sidecar for RAW and
+other formats.
 """
 
 from __future__ import annotations
@@ -16,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Config
+from .geotag import Tagged, tag, xmp_packet
+from .locate import TIMELINE_SOURCES
 
 CONTENT = ("images", "images_raws", "raws")
 STRUCTURE = ("flat", "folders")
@@ -24,12 +31,37 @@ STRUCTURE = ("flat", "folders")
 @dataclass
 class _File:
     photo_id: int
-    kind: str  # image | raw
-    src: Path
+    kind: str  # image | raw | sidecar
+    src: Path  # for a sidecar: the name it takes (the paired file with .xmp)
     size: int
     rel_dir: Path  # its folder relative to the sources' parent, e.g. "Trip/RAW"
     target: Path | None = None
     status: str = ""  # copied | skipped
+    tagged: Tagged | None = None  # new metadata head for a geotagged copy
+    content: bytes | None = None  # a sidecar's content
+    location: str = ""  # exif | xmp | sidecar: how the position was added
+
+    @property
+    def out_size(self) -> int:
+        if self.content is not None:
+            return len(self.content)
+        if self.tagged is not None:
+            return len(self.tagged.head) + self.size - self.tagged.rest
+        return self.size
+
+    def already_at(self, target: Path) -> bool:
+        """The destination file is what this export would write (resume)."""
+        try:
+            st = target.stat()
+        except OSError:
+            return False
+        if self.content is not None:
+            return st.st_size == len(self.content) and target.read_bytes() == self.content
+        try:
+            src_mtime = self.src.stat().st_mtime
+        except OSError:
+            return False
+        return st.st_size == self.out_size and int(st.st_mtime) == int(src_mtime)
 
 
 class ExportError(ValueError):
@@ -87,12 +119,40 @@ def plan_files(
     return files, without_raw
 
 
-def _same_file(a: Path, b: Path) -> bool:
-    try:
-        sa, sb = a.stat(), b.stat()
-    except OSError:
-        return False
-    return sa.st_size == sb.st_size and int(sa.st_mtime) == int(sb.st_mtime)
+def add_locations(conn: sqlite3.Connection, files: list[_File]) -> None:
+    """Geotag copies of photos placed from the location history (not camera GPS):
+    JPEG/PNG copies get it in their metadata, other files an XMP sidecar."""
+    ids = sorted({f.photo_id for f in files})
+    if not ids:
+        return
+    marks = ",".join("?" * len(ids))
+    where = ",".join("?" * len(TIMELINE_SOURCES))
+    locations = {
+        r[0]: (r[1], r[2], r[3])
+        for r in conn.execute(
+            f"""SELECT l.photo_id, l.lat, l.lon, l.accuracy_m FROM photo_locations l
+                JOIN photos p ON p.id = l.photo_id
+                WHERE l.photo_id IN ({marks}) AND l.source IN ({where}) AND p.lat IS NULL""",
+            [*ids, *TIMELINE_SOURCES],
+        )
+    }
+    sidecars: list[_File] = []
+    seen: set[tuple[int, Path, str]] = set()
+    for f in files:
+        loc = locations.get(f.photo_id)
+        if loc is None:
+            continue
+        tagged = tag(f.src, *loc) if f.kind == "image" else None
+        if tagged is not None:
+            f.tagged, f.location = tagged, tagged.method
+            continue
+        key = (f.photo_id, f.rel_dir, f.src.stem)
+        if key in seen:
+            continue
+        seen.add(key)
+        content = xmp_packet(*loc)
+        sidecars.append(_File(f.photo_id, "sidecar", f.src.with_suffix(".xmp"), len(content), f.rel_dir, content=content, location="sidecar"))
+    files.extend(sidecars)
 
 
 def assign_targets(files: list[_File], folder: Path, structure: str) -> None:
@@ -113,7 +173,7 @@ def assign_targets(files: list[_File], folder: Path, structure: str) -> None:
                 for f in group
             ]
             fits = all(
-                t not in claimed and (not t.exists() or _same_file(f.src, t))
+                t not in claimed and (not t.exists() or f.already_at(t))
                 for f, t in zip(group, targets)
             )
             if fits and len(set(targets)) == len(targets):
@@ -143,6 +203,7 @@ def run_export(
     content: str = "images",
     raw_fallback: bool = True,
     structure: str = "flat",
+    add_location: bool = False,
 ) -> dict:
     """Copy the files. Runs as a BackgroundJob; returns the summary."""
     from . import db
@@ -152,6 +213,8 @@ def run_export(
     conn = db.connect(cfg.db_path)
     try:
         files, without_raw = plan_files(conn, photo_ids, content, raw_fallback)
+        if add_location:
+            add_locations(conn, files)
     finally:
         conn.close()
 
@@ -161,7 +224,7 @@ def run_export(
     for f in files:
         if f.target.exists():
             f.status = "skipped"
-    needed = sum(f.size for f in todo)
+    needed = sum(f.out_size for f in todo)
     free = shutil.disk_usage(dest).free
     if needed > free:
         raise ExportError(f"not enough space: need {needed / 1e9:.2f} GB, {free / 1e9:.2f} GB free")
@@ -171,7 +234,17 @@ def run_export(
     for f in todo:
         f.target.parent.mkdir(parents=True, exist_ok=True)
         tmp = f.target.with_name(f".{f.target.name}.partial")
-        shutil.copy2(f.src, tmp)
+        if f.content is not None:
+            tmp.write_bytes(f.content)
+        elif f.tagged is not None:
+            with open(f.src, "rb") as src, open(tmp, "wb") as out:
+                out.write(f.tagged.head)
+                src.seek(f.tagged.rest)
+                shutil.copyfileobj(src, out, 1 << 20)
+            st = f.src.stat()
+            os.utime(tmp, (st.st_atime, st.st_mtime))  # keep the capture file's date, like copy2
+        else:
+            shutil.copy2(f.src, tmp)
         os.replace(tmp, f.target)
         f.status = "copied"
         if bar:
@@ -180,9 +253,10 @@ def run_export(
     manifest = _unique(dest / "export-manifest.csv")
     with open(manifest, "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["photo_id", "kind", "source", "exported", "status"])
+        w.writerow(["photo_id", "kind", "source", "exported", "status", "location"])
         for f in files:
-            w.writerow([f.photo_id, f.kind, str(f.src), str(f.target), f.status])
+            src = "" if f.kind == "sidecar" else str(f.src)
+            w.writerow([f.photo_id, f.kind, src, str(f.target), f.status, f.location])
 
     summary = {
         "folder": str(dest),
@@ -191,11 +265,14 @@ def run_export(
         "skipped": sum(f.status == "skipped" for f in files),
         "bytes": needed,
         "without_raw": without_raw if content != "images" else 0,
+        "geotagged": len({f.photo_id for f in files if f.location}),
+        "sidecars": sum(f.kind == "sidecar" for f in files),
         "manifest": str(manifest),
     }
     report(
         f"exported {summary['photos']} photos: {summary['copied']} files copied, "
         f"{summary['skipped']} already there"
         + (f", {summary['without_raw']} without RAW" if summary["without_raw"] else "")
+        + (f", location added to {summary['geotagged']}" if summary["geotagged"] else "")
     )
     return summary

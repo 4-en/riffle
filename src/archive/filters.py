@@ -18,10 +18,23 @@ from .selections import FLAG_EXPR
 DATE_EXPR = "replace(substr(p.taken_at, 1, 10), ':', '-')"
 
 # Group keys for the grouped listing: "2026-03-12", "2026-03", "2026"; NULL = undated.
+# Location keys from photo_locations: "SE", "SE|Gotland", "SE|Gotland|Visby"; NULL = unknown.
+_LOC = "(SELECT {expr} FROM photo_locations l WHERE l.photo_id = p.id)"
+LOCATION_KEYS = {
+    "country": _LOC.format(expr="l.country_code"),
+    "region": _LOC.format(expr="l.country_code || '|' || l.region"),
+    "place": _LOC.format(expr="l.country_code || '|' || l.region || '|' || l.place"),
+}
+LOCATION_SOURCE = f"COALESCE({_LOC.format(expr='l.source')}, 'none')"
+LOCATION_SOURCES = ("exif", "visit", "route", "nearby", "none")
+
+# Group keys for the grouped listing. Dates: "2026-03-12", "2026-03", "2026";
+# locations: see LOCATION_KEYS. NULL = undated / unknown location.
 GROUP_KEYS = {
     "day": DATE_EXPR,
     "month": f"substr({DATE_EXPR}, 1, 7)",
     "year": f"substr({DATE_EXPR}, 1, 4)",
+    **LOCATION_KEYS,
 }
 
 RANGE_COLUMNS = {"focal": "p.focal_length", "aperture": "p.aperture", "iso": "p.iso"}
@@ -48,6 +61,10 @@ class PhotoFilter:
     orientation: list[str] = field(default_factory=list)
     gps: bool | None = None
     flag: list[str] = field(default_factory=list)  # needs the selections DB attached as "sel"
+    country: list[str] = field(default_factory=list)  # location keys (LOCATION_KEYS)
+    region: list[str] = field(default_factory=list)
+    place: list[str] = field(default_factory=list)
+    loc_source: list[str] = field(default_factory=list)
 
     def where(self, model_id: str, exclude: frozenset[str] = frozenset()) -> tuple[str, list]:
         """SQL condition over ``photos p`` (only status 'ok'). Facets named in
@@ -102,6 +119,16 @@ class PhotoFilter:
         if self.gps is not None and "gps" not in exclude:
             clauses.append("p.lat IS NOT NULL" if self.gps else "p.lat IS NULL")
 
+        for level, expr in LOCATION_KEYS.items():
+            keys = getattr(self, level)
+            if keys and level not in exclude:
+                clauses.append(f"{expr} IN ({','.join('?' * len(keys))})")
+                params += keys
+
+        if self.loc_source and "loc_source" not in exclude:
+            clauses.append(f"{LOCATION_SOURCE} IN ({','.join('?' * len(self.loc_source))})")
+            params += self.loc_source
+
         if self.flag and "flag" not in exclude:
             parts = []
             named = [f for f in self.flag if f != "none"]
@@ -130,6 +157,10 @@ def photo_filter(
     orientation: list[str] = Query([]),
     gps: bool | None = None,
     flag: list[str] = Query([]),
+    country: list[str] = Query([]),
+    region: list[str] = Query([]),
+    place: list[str] = Query([]),
+    loc_source: list[str] = Query([]),
 ) -> PhotoFilter:
     """FastAPI dependency: the filter from query parameters."""
     try:
@@ -142,6 +173,8 @@ def photo_filter(
     bad = [o for o in orientation if o not in ORIENTATIONS]
     if bad:
         raise HTTPException(400, f"orientation must be one of {', '.join(ORIENTATIONS)}")
+    if any(s not in LOCATION_SOURCES for s in loc_source):
+        raise HTTPException(400, f"loc_source must be one of {', '.join(LOCATION_SOURCES)}")
     if any(f not in FLAG_VALUES for f in flag):
         raise HTTPException(400, f"flag must be one of {', '.join(FLAG_VALUES)}")
     ranges = {
@@ -163,6 +196,10 @@ def photo_filter(
         orientation=list(dict.fromkeys(orientation)),
         gps=gps,
         flag=list(dict.fromkeys(flag)),
+        country=list(dict.fromkeys(country)),
+        region=list(dict.fromkeys(region)),
+        place=list(dict.fromkeys(place)),
+        loc_source=list(dict.fromkeys(loc_source)),
     )
 
 
@@ -221,4 +258,41 @@ def facets(conn: sqlite3.Connection, flt: PhotoFilter, model_id: str) -> dict:
         ).fetchall()
     )
     out["flag"] = {f: counts.get(f, 0) for f in FLAG_VALUES}
+
+    w, p = where("loc_source")
+    counts = dict(conn.execute(f"SELECT {LOCATION_SOURCE}, COUNT(*) FROM photos p WHERE {w} GROUP BY 1", p).fetchall())
+    out["loc_source"] = {s: counts.get(s, 0) for s in LOCATION_SOURCES}
+
+    labels = location_labels(conn)
+    for level, expr in LOCATION_KEYS.items():
+        w, p = where(level)
+        out[level] = [
+            {"value": key, "label": labels[level].get(key, key), "count": n}
+            for key, n in conn.execute(
+                f"""SELECT {expr} AS k, COUNT(*) FROM photos p WHERE {w} AND k IS NOT NULL
+                    GROUP BY k ORDER BY COUNT(*) DESC, k""",
+                p,
+            )
+        ]
+    return out
+
+
+def location_labels(conn: sqlite3.Connection) -> dict[str, dict[str, str]]:
+    """Display names for location keys, per level: place "Visby, Gotland", region
+    "Gotland, Sweden", country "Sweden". Parts that repeat are left out."""
+    out: dict[str, dict[str, str]] = {"country": {}, "region": {}, "place": {}}
+    rows = conn.execute(
+        "SELECT DISTINCT country_code, country, region, place FROM photo_locations"
+    ).fetchall()
+    for cc, country, region, place in rows:
+        def join(*parts):
+            seen = []
+            for part in parts:
+                if part and part not in seen:
+                    seen.append(part)
+            return ", ".join(seen) or "Unknown"
+
+        out["country"][cc] = country or cc
+        out["region"][f"{cc}|{region}"] = join(region, country)
+        out["place"][f"{cc}|{region}|{place}"] = join(place, region, country)
     return out

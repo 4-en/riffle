@@ -1,6 +1,6 @@
 <script>
   import { tick, untrack } from 'svelte';
-  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected } from './lib/state.svelte.js';
+  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, DATE_GROUPS, LOCATION_GROUPS } from './lib/state.svelte.js';
   import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds } from './lib/api.js';
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import TopBar from './components/TopBar.svelte';
@@ -173,10 +173,12 @@
     }
   }
 
-  /** From the detail view: browse the photo's date group in the grouped grid. */
-  function showInTimeline(photo) {
-    const mode = view.group || 'day';
-    const key = groupKey(photo.taken_at, mode);
+  /** From the detail view: browse the photo's date group ('date') or place ('location')
+   * in the grouped grid, keeping the current level of that kind if one is active. */
+  function showInTimeline(photo, kind = 'date') {
+    const levels = kind === 'location' ? LOCATION_GROUPS : DATE_GROUPS;
+    const mode = levels.includes(view.group) ? view.group : levels[0];
+    const key = groupKey(photo, mode);
     const requery = view.q || view.similar || view.group !== mode;
     view.photo = null;
     if (requery) {
@@ -386,7 +388,7 @@
 {/if}
 
 {#if view.exporting}
-  <ExportDialog picksTotal={tags?.picks ?? 0} picksFiltered={facets?.flag?.pick ?? 0} />
+  <ExportDialog picksTotal={tags?.picks ?? 0} picksFiltered={facets?.flag?.pick ?? 0} hasHistory={tags?.location_history ?? false} />
 {/if}
 
 {#if view.raws}

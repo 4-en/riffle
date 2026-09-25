@@ -1,5 +1,5 @@
 <script>
-  import { view, findSimilar } from '../lib/state.svelte.js';
+  import { view, findSimilar, DATE_GROUPS, LOCATION_GROUPS } from '../lib/state.svelte.js';
   import { fetchPhoto } from '../lib/api.js';
   import { culling, flagOf, saveSetting } from '../lib/culling.svelte.js';
 
@@ -8,6 +8,16 @@
 
   let photo = $state(null);
   const flag = $derived(photo ? flagOf(photo) : null);
+  // The grouping level each "Show" button uses: the current one of that kind, or the finest.
+  const dateMode = $derived(DATE_GROUPS.includes(view.group) ? view.group : 'day');
+  const placeMode = $derived(LOCATION_GROUPS.includes(view.group) ? view.group : 'place');
+  const SOURCES = {
+    exif: 'camera GPS',
+    visit: 'timeline: stayed here',
+    route: 'timeline: estimated along the route',
+    nearby: 'timeline: nearest position',
+  };
+  const accuracy = (m) => (m == null ? '' : m >= 1000 ? `±${(m / 1000).toFixed(1)} km` : `±${Math.round(m)} m`);
   let error = $state('');
   let copied = $state(false);
 
@@ -141,11 +151,18 @@
           </button>
           <button
             class="rounded border border-neutral-700 px-3 py-1.5 text-xs hover:bg-neutral-800"
-            title="Browse this photo's {view.group || 'day'} in the grouped grid"
-            onclick={() => ontimeline(photo)}
+            title="Browse this photo's {dateMode} in the grouped grid"
+            onclick={() => ontimeline(photo, 'date')}
           >
-            {photo.taken_at ? `Show ${view.group || 'day'}` : 'Show undated'}
+            {photo.taken_at ? `Show ${dateMode}` : 'Show undated'}
           </button>
+          {#if photo.location}
+            <button
+              class="rounded border border-neutral-700 px-3 py-1.5 text-xs hover:bg-neutral-800"
+              title="Browse this photo's {placeMode} in the grouped grid"
+              onclick={() => ontimeline(photo, 'location')}>Show {placeMode}</button
+            >
+          {/if}
           <button class="rounded border border-neutral-700 px-3 py-1.5 text-xs hover:bg-neutral-800" onclick={copyPath}>
             {copied ? 'Copied' : 'Copy path'}
           </button>
@@ -170,9 +187,16 @@
           {/if}
           <dt class="text-neutral-500">Size</dt>
           <dd>{photo.width} × {photo.height} · {size(photo.size_bytes)}</dd>
-          {#if photo.lat != null}
-            <dt class="text-neutral-500">GPS</dt>
-            <dd class="tabular-nums">{photo.lat.toFixed(5)}, {photo.lon.toFixed(5)}</dd>
+          {#if photo.location}
+            {@const loc = photo.location}
+            <dt class="text-neutral-500">Location</dt>
+            <dd>
+              {loc.label || 'Unknown place'}
+              <span class="block tabular-nums text-neutral-400">{loc.lat.toFixed(5)}, {loc.lon.toFixed(5)}</span>
+              <span class="block text-[11px] {loc.source === 'exif' || loc.source === 'visit' ? 'text-neutral-500' : 'text-amber-400/80'}">
+                {SOURCES[loc.source] ?? loc.source}{loc.source !== 'exif' ? ` · ${accuracy(loc.accuracy_m)}` : ''}
+              </span>
+            </dd>
           {/if}
           <dt class="text-neutral-500">Path</dt>
           <dd class="break-all font-mono text-[11px] text-neutral-300">{photo.path}</dd>
