@@ -1,7 +1,7 @@
 <script>
-  import { view, search, clearSearch, clearFilters, activeFilterCount } from '../lib/state.svelte.js';
+  import { view, search, clearSearch, clearFilters, activeFilterCount, hidingRejected, toggleHideRejected } from '../lib/state.svelte.js';
 
-  let { total, loading, indexStatus = null, textSearch = true } = $props();
+  let { total, loading, indexStatus = null, textSearch = true, picks = 0 } = $props();
 
   const indexPct = $derived(
     indexStatus?.running && indexStatus.total ? Math.round((100 * indexStatus.done) / indexStatus.total) : null
@@ -80,9 +80,39 @@
     {/each}
   </div>
 
+  <button
+    class="shrink-0 rounded border px-2 py-1 text-xs {view.collapse === 'stacks'
+      ? 'border-sky-700 bg-sky-800 text-white'
+      : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
+    aria-pressed={view.collapse === 'stacks'}
+    title="Show one tile per stack of similar shots (S)"
+    onclick={() => (view.collapse = view.collapse === 'stacks' ? 'dupes' : 'stacks')}>Stacks</button
+  >
+  <button
+    class="shrink-0 rounded border px-2 py-1 text-xs {hidingRejected()
+      ? 'border-red-800 bg-red-900 text-white'
+      : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
+    aria-pressed={hidingRejected()}
+    title="Hide rejected photos (H)"
+    onclick={toggleHideRejected}>Hide rejected</button
+  >
+
   <span class="shrink-0 text-xs tabular-nums text-neutral-400">
     {#if loading && !total}Loading…{:else}{total.toLocaleString()} {total === 1 ? 'photo' : 'photos'}{/if}
   </span>
+
+  <button
+    class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+    title="Go through the stacks that still have unflagged photos, in the current filters (R)"
+    onclick={() => (view.compare = { kind: 'review' })}>Review stacks</button
+  >
+  <button
+    class="shrink-0 rounded px-2.5 py-1 text-xs font-medium {picks
+      ? 'bg-emerald-600 text-black hover:bg-emerald-500'
+      : 'border border-neutral-700 text-neutral-500'}"
+    title="Copy the picked photos to a folder"
+    onclick={() => (view.exporting = true)}>Export{picks ? ` ${picks}` : ''}</button
+  >
 
   <button
     class="flex shrink-0 items-center gap-2 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"

@@ -221,5 +221,6 @@ __marimo__/
 data/
 examples/
 /config.yaml
+/selections.sqlite3*
 web/node_modules/
 web/dist/

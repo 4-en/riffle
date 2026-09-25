@@ -1,10 +1,13 @@
 <script>
   import { view, findSimilar } from '../lib/state.svelte.js';
   import { fetchPhoto } from '../lib/api.js';
+  import { culling, flagOf, saveSetting } from '../lib/culling.svelte.js';
 
-  let { id, hasPrev, hasNext, onstep, ontimeline } = $props();
+  // onflag(flag): flag this photo (App handles auto-advance).
+  let { id, hasPrev, hasNext, onstep, ontimeline, onflag } = $props();
 
   let photo = $state(null);
+  const flag = $derived(photo ? flagOf(photo) : null);
   let error = $state('');
   let copied = $state(false);
 
@@ -98,7 +101,41 @@
       <p class="p-4 text-red-400">{error}</p>
     {:else if photo}
       <div class="space-y-4 p-4">
+        <div class="flex items-center gap-1">
+          <button
+            class="flex-1 rounded px-2 py-1.5 text-xs font-medium {flag === 'pick' ? 'bg-emerald-500 text-black' : 'border border-neutral-700 text-emerald-300 hover:bg-emerald-950'}"
+            title="Pick (P)"
+            onclick={() => onflag(flag === 'pick' ? null : 'pick')}>✓ Pick</button
+          >
+          <button
+            class="flex-1 rounded px-2 py-1.5 text-xs font-medium {flag === 'reject' ? 'bg-red-600 text-white' : 'border border-neutral-700 text-red-300 hover:bg-red-950'}"
+            title="Reject (X)"
+            onclick={() => onflag(flag === 'reject' ? null : 'reject')}>✕ Reject</button
+          >
+        </div>
+        <label class="flex items-center gap-2 text-xs text-neutral-400" title="After P / X / U, go to the next photo">
+          <input
+            type="checkbox"
+            checked={culling.autoAdvance}
+            onchange={(e) => {
+              culling.autoAdvance = e.currentTarget.checked;
+              saveSetting('autoAdvance', culling.autoAdvance);
+            }}
+          />
+          Next photo after flagging
+        </label>
+
         <div class="flex flex-wrap gap-2">
+          {#if photo.stack.length > 1}
+            <button
+              class="rounded border border-sky-800 px-3 py-1.5 text-xs text-sky-200 hover:bg-sky-950"
+              title="Compare the similar shots in this stack"
+              onclick={() => {
+                view.photo = null;
+                view.compare = { kind: 'stack', id: photo.stack_id };
+              }}>Stack ({photo.stack.length})</button
+            >
+          {/if}
           <button class="rounded bg-sky-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-600" onclick={() => findSimilar(photo.id)}>
             Find similar
           </button>

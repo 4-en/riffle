@@ -10,13 +10,15 @@ import numpy as np
 from PIL import Image
 
 from .config import Config
+from .quality import sharpness
 
 log = logging.getLogger(__name__)
 
 
 def compute_phashes(conn: sqlite3.Connection, cfg: Config, progress=None) -> int:
+    """pHash (for duplicates) and sharpness (for culling) of each preview that lacks them."""
     rows = conn.execute(
-        "SELECT id FROM photos WHERE status = 'ok' AND phash IS NULL ORDER BY id"
+        "SELECT id FROM photos WHERE status = 'ok' AND (phash IS NULL OR sharpness IS NULL) ORDER BY id"
     ).fetchall()
     it = progress(rows, desc="phash") if progress and rows else rows
     n = 0
@@ -26,7 +28,8 @@ def compute_phashes(conn: sqlite3.Connection, cfg: Config, progress=None) -> int
             continue
         with Image.open(path) as im:
             h = str(imagehash.phash(im))
-        conn.execute("UPDATE photos SET phash = ? WHERE id = ?", (h, r["id"]))
+            s = sharpness(im)
+        conn.execute("UPDATE photos SET phash = ?, sharpness = ? WHERE id = ?", (h, s, r["id"]))
         n += 1
     conn.commit()
     return n

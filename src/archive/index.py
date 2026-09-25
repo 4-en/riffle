@@ -14,6 +14,7 @@ from .dupes import compute_phashes, group_duplicates
 from .embed import Clip, embed_photos, load_embeddings
 from .raws import match_raws
 from .scan import scan
+from .stacks import compute_stacks
 from .tags import tag_photos
 from .thumbs import build_thumbnails
 
@@ -72,6 +73,9 @@ def _index_steps(conn, cfg: Config, progress, report: Callable[[str], None]) -> 
     hashed = compute_phashes(conn, cfg, progress=progress)
     groups = group_duplicates(conn, cfg)
     report(f"duplicates: {hashed} hashed, {groups} groups")
+
+    stacks, stacked = compute_stacks(conn, cfg)
+    report(f"stacks: {stacks} stacks covering {stacked} photos")
 
 
 def _needs_embedding(conn, cfg: Config) -> bool:

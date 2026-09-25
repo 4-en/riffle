@@ -124,6 +124,7 @@ def fake_index(cfg, progress=None, report=print):
     from archive.embed import embed_photos, load_embeddings
     from archive.raws import match_raws
     from archive.scan import scan
+    from archive.stacks import compute_stacks
     from archive.tags import tag_photos
     from archive.thumbs import build_thumbnails
 
@@ -138,6 +139,7 @@ def fake_index(cfg, progress=None, report=print):
         tag_photos(conn, cfg, E, ids, clip.encode_text)
         compute_phashes(conn, cfg, progress=progress)
         group_duplicates(conn, cfg)
+        compute_stacks(conn, cfg)
         report(f"indexed {len(result.images)} images")
     finally:
         conn.close()

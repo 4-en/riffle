@@ -16,6 +16,14 @@
     (facets?.date.count > 0 && facets.date.min !== facets.date.max) || f.date_from !== '' || f.date_to !== ''
   );
   const showGps = $derived((facets?.gps.with > 0 && facets.gps.without > 0) || f.gps !== '');
+  const flagOptions = [
+    ['pick', 'Picked'],
+    ['reject', 'Rejected'],
+    ['none', 'Unflagged'],
+  ];
+  const showFlag = $derived(
+    (facets?.flag && facets.flag.pick + facets.flag.reject > 0) || f.flag.length > 0
+  );
 
   const ranges = [
     { key: 'focal', label: 'Focal length', step: 1, span: (a, b) => `${a}–${b} mm` },
@@ -58,6 +66,15 @@
         <button class="text-xs text-sky-400 hover:underline" onclick={clearFilters}>Reset ({active})</button>
       {/if}
     </div>
+
+    {#if showFlag}
+      {@render heading('Flag')}
+      <ul>
+        {#each flagOptions as [value, label] (value)}
+          {@render option('flag', value, label, facets.flag[value])}
+        {/each}
+      </ul>
+    {/if}
 
     {#if showDate}
       {@render heading('Date taken')}

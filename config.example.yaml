@@ -24,3 +24,12 @@ tags:
 
 dupes:
   phash_max_distance: 8
+
+# Stacks: bursts and near-identical shots, for choosing the best of several.
+# Consecutive photos at most max_gap_seconds apart with CLIP similarity >= min_similarity.
+stacks:
+  max_gap_seconds: 30
+  min_similarity: 0.90
+
+# Your pick/reject flags. User data: keep it outside data/ and back it up.
+selections: selections.sqlite3

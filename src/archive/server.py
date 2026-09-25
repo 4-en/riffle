@@ -22,7 +22,10 @@ from . import db
 from .config import Config, load_config, set_sources
 from .embed import embedding_paths, load_embeddings
 from .filters import GROUP_KEYS, PhotoFilter, facets, photo_filter
-from .jobs import IndexJob
+from . import selections
+from .export import CONTENT, STRUCTURE, ExportError, check_destination, run_export
+from .jobs import BackgroundJob, index_job
+from .selections import FLAG_EXPR, flag_expr
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +64,27 @@ class FolderIn(BaseModel):
     path: str
 
 
+class FlagOp(BaseModel):
+    ids: list[int]
+    flag: str | None  # "pick", "reject", or null to clear
+
+
+class FlagsIn(BaseModel):
+    ops: list[FlagOp]
+
+
+class ExportIn(BaseModel):
+    folder: str  # parent folder
+    name: str = ""  # subfolder to create in it (optional)
+    content: str = "images"  # images | images_raws | raws
+    raw_fallback: bool = True  # with "raws": copy the image when a photo has no RAW
+    structure: str = "flat"  # flat | folders
+    scope: str = "all"  # all picks, or "filtered": picks within the query-string filters
+
+
+COLLAPSE = ("dupes", "stacks", "none")
+
+
 def require_json(request: Request) -> None:
     # Mutating endpoints only accept JSON, which a cross-site form post cannot send
     # without a CORS preflight (and this server grants none).
@@ -76,12 +100,14 @@ def create_app(
     cfg = cfg or load_config(os.environ.get("ARCHIVE_CONFIG", "config.yaml"))
     model_id = cfg.model.model_id
     state: dict = {"encoder": text_encoder}
-    job = IndexJob(cfg, run=index_runner)
+    job = index_job(cfg, run=index_runner)
+    export_job = BackgroundJob(cfg, run_export)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Make sure the catalogue exists so read-only connections work before the first index.
         db.connect(cfg.db_path).close()
+        selections.ensure(cfg.selections_path)
         state["index"] = Index(cfg)
         if state["encoder"] is None:
             try:
@@ -95,7 +121,7 @@ def create_app(
     app = FastAPI(title="Photo Archive", lifespan=lifespan)
 
     def get_conn():
-        conn = db.connect_readonly(cfg.db_path)
+        conn = db.connect_readonly(cfg.db_path, cfg.selections_path)
         try:
             yield conn
         finally:
@@ -114,9 +140,12 @@ def create_app(
         marks = ",".join("?" * len(ids))
         rows = conn.execute(
             f"""SELECT p.id, p.source, p.rel_path, p.width, p.height, p.taken_at, p.dupe_group,
+                       p.stack_id, p.sharpness, {FLAG_EXPR} AS flag,
                        EXISTS (SELECT 1 FROM raws r WHERE r.photo_id = p.id) AS has_raw,
                        (SELECT COUNT(*) FROM photos d
-                         WHERE d.dupe_group = p.dupe_group AND d.status = 'ok') AS dupe_count
+                         WHERE d.dupe_group = p.dupe_group AND d.status = 'ok') AS dupe_count,
+                       (SELECT COUNT(*) FROM photos s
+                         WHERE s.stack_id = p.stack_id AND s.status = 'ok') AS stack_count
                 FROM photos p WHERE p.id IN ({marks})""",
             ids,
         )
@@ -135,6 +164,10 @@ def create_app(
                 "has_raw": bool(r["has_raw"]),
                 "dupe_group": r["dupe_group"],
                 "dupe_count": r["dupe_count"],
+                "stack_id": r["stack_id"],
+                "stack_count": r["stack_count"],
+                "sharpness": r["sharpness"],
+                "flag": r["flag"],
                 "thumb": f"/thumbs/{r['id']}.jpg",
             }
             if scores is not None:
@@ -142,8 +175,15 @@ def create_app(
             out.append(item)
         return out
 
+    def collapse_mode(collapse: str | None, dupes: str) -> str:
+        """``collapse`` (dupes, stacks, none); ``dupes=collapse|all`` is the older spelling."""
+        mode = collapse or ("dupes" if dupes == "collapse" else "none")
+        if mode not in COLLAPSE:
+            raise HTTPException(400, f"collapse must be one of {', '.join(COLLAPSE)}")
+        return mode
+
     def rank(conn, index: Index, query: np.ndarray, flt: PhotoFilter, exclude: int | None,
-             dupes: str, offset: int, limit: int) -> dict:
+             collapse: str, offset: int, limit: int) -> dict:
         if index.E.size == 0:
             return {"total": 0, "items": []}
         where, params = flt.where(model_id)
@@ -155,9 +195,10 @@ def create_app(
         order = np.argsort(-scores)[: int(mask.sum())]
         ranked = [int(index.ids[i]) for i in order]
 
-        if dupes == "collapse":
+        if collapse != "none":
+            column = "stack_id" if collapse == "stacks" else "dupe_group"
             groups = dict(conn.execute(
-                "SELECT id, dupe_group FROM photos WHERE dupe_group IS NOT NULL"
+                f"SELECT id, {column} FROM photos WHERE {column} IS NOT NULL"
             ).fetchall())
             # The query photo counts as shown, so its own duplicates are hidden too.
             seen, kept = {groups.get(exclude)} - {None}, []
@@ -176,10 +217,39 @@ def create_app(
 
     # ---- API -----------------------------------------------------------------
 
+    def listing(flt: PhotoFilter, collapse: str, sort: str, group: str | None):
+        """SQL pieces for the grid listing: (cte, shown, order, params).
+        ``{cte} SELECT ... {shown}`` selects the listed photos as ``p``."""
+        where, params = flt.where(model_id)
+        if group and group not in GROUP_KEYS:
+            raise HTTPException(400, f"group must be one of {', '.join(GROUP_KEYS)}")
+        order = {
+            "taken_at": "p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
+            "-taken_at": "p.taken_at IS NULL, p.taken_at DESC, p.source, p.rel_path",
+            "path": "p.source, p.rel_path",
+            "id": "p.id",
+        }.get(sort)
+        if order is None:
+            raise HTTPException(400, "sort must be taken_at, -taken_at, path or id")
+        condition = ""
+        if collapse == "dupes":
+            # One representative per duplicate group: its lowest id within the filtered set.
+            condition = """WHERE f.dupe_group IS NULL
+                OR f.id = (SELECT MIN(g.id) FROM filtered g WHERE g.dupe_group = f.dupe_group)"""
+        elif collapse == "stacks":
+            # One per stack: its pick if there is one (your choice shows), else the first.
+            condition = f"""WHERE f.stack_id IS NULL
+                OR f.id = (SELECT g.id FROM filtered g WHERE g.stack_id = f.stack_id
+                           ORDER BY {flag_expr('g')} = 'pick' DESC, g.taken_at, g.id LIMIT 1)"""
+        cte = f"WITH filtered AS (SELECT p.* FROM photos p WHERE {where})"
+        shown = f"FROM filtered p WHERE p.id IN (SELECT f.id FROM filtered f {condition})"
+        return cte, shown, order, params
+
     @app.get("/api/photos")
     def list_photos(
         flt: PhotoFilter = Depends(photo_filter),
         dupes: str = "collapse",
+        collapse: str | None = None,
         sort: str = "taken_at",
         group: str | None = None,
         offset: int = Query(0, ge=0),
@@ -189,28 +259,11 @@ def create_app(
         """Paged listing. With ``group`` (day, month, year) photos come in date
         order, each item carries its group key ("" = undated, last), and
         ``groups`` lists every non-empty group of the filtered set with its count."""
-        where, params = flt.where(model_id)
-        if group and group not in GROUP_KEYS:
-            raise HTTPException(400, f"group must be one of {', '.join(GROUP_KEYS)}")
         if group and sort not in ("taken_at", "-taken_at"):
             sort = "taken_at"  # groups must be contiguous
-        order = {
-            "taken_at": "p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
-            "-taken_at": "p.taken_at IS NULL, p.taken_at DESC, p.source, p.rel_path",
-            "path": "p.source, p.rel_path",
-            "id": "p.id",
-        }.get(sort)
-        if order is None:
-            raise HTTPException(400, "sort must be taken_at, -taken_at, path or id")
-        collapse = ""
-        if dupes == "collapse":
-            # One representative per duplicate group: its lowest id within the filtered set.
-            collapse = """WHERE f.dupe_group IS NULL
-                OR f.id = (SELECT MIN(g.id) FROM filtered g WHERE g.dupe_group = f.dupe_group)"""
-        cte = f"WITH filtered AS (SELECT p.* FROM photos p WHERE {where})"
-        shown = f"FROM filtered p WHERE p.id IN (SELECT f.id FROM filtered f {collapse})"
+        cte, shown, order, params = listing(flt, collapse_mode(collapse, dupes), sort, group)
         key = GROUP_KEYS[group] if group else "NULL"
-        total = conn.execute(f"{cte} SELECT COUNT(*) FROM filtered f {collapse}", params).fetchone()[0]
+        total = conn.execute(f"{cte} SELECT COUNT(*) {shown}", params).fetchone()[0]
         rows = conn.execute(
             f"{cte} SELECT p.id, {key} AS grp {shown} ORDER BY {order} LIMIT ? OFFSET ?",
             [*params, limit, offset],
@@ -268,6 +321,17 @@ def create_app(
                 )
             ]
             photo["duplicates"] = items_for(conn, ids)
+        photo["flag"] = conn.execute(
+            f"SELECT {FLAG_EXPR} FROM photos p WHERE p.id = ?", (photo_id,)
+        ).fetchone()[0]
+        photo["stack"] = [
+            x[0]
+            for x in conn.execute(
+                """SELECT id FROM photos WHERE stack_id = ? AND status = 'ok'
+                   ORDER BY taken_at IS NULL, taken_at, source, rel_path""",
+                (r["stack_id"],),
+            )
+        ] if r["stack_id"] is not None else []
         return photo
 
     @app.get("/api/search/text")
@@ -275,6 +339,7 @@ def create_app(
         q: str = Query(..., min_length=1),
         flt: PhotoFilter = Depends(photo_filter),
         dupes: str = "collapse",
+        collapse: str | None = None,
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
         conn=Depends(get_conn),
@@ -284,13 +349,14 @@ def create_app(
         if encoder is None:
             raise HTTPException(503, "text encoder not available")
         query = encoder([q])[0]
-        return rank(conn, index, query, flt, None, dupes, offset, limit)
+        return rank(conn, index, query, flt, None, collapse_mode(collapse, dupes), offset, limit)
 
     @app.get("/api/search/similar/{photo_id}")
     def search_similar(
         photo_id: int,
         flt: PhotoFilter = Depends(photo_filter),
         dupes: str = "collapse",
+        collapse: str | None = None,
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
         conn=Depends(get_conn),
@@ -299,7 +365,7 @@ def create_app(
         row = index.row.get(photo_id)
         if row is None:
             raise HTTPException(404, "photo has no embedding")
-        return rank(conn, index, index.E[row], flt, photo_id, dupes, offset, limit)
+        return rank(conn, index, index.E[row], flt, photo_id, collapse_mode(collapse, dupes), offset, limit)
 
     @app.get("/api/tags")
     def list_tags(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
@@ -328,9 +394,13 @@ def create_app(
             items.sort(key=lambda t: -t["count"])
         photos = conn.execute("SELECT COUNT(*) FROM photos WHERE status = 'ok'").fetchone()[0]
         unmatched = conn.execute("SELECT COUNT(*) FROM raws WHERE photo_id IS NULL").fetchone()[0]
+        picks = conn.execute(
+            f"SELECT COUNT(*) FROM photos p WHERE p.status = 'ok' AND {FLAG_EXPR} = 'pick'"
+        ).fetchone()[0]
         return {
             "families": families,
             "photos": photos,
+            "picks": picks,
             "unmatched_raws": unmatched,
             "model_id": model_id,
             "text_search": state["encoder"] is not None,
@@ -341,6 +411,117 @@ def create_app(
         """EXIF filter options (date range, cameras, lenses, focal length, aperture,
         ISO, orientation, GPS) within the other active filters."""
         return facets(conn, flt, model_id)
+
+    # ---- culling: flags, selection, stacks ---------------------------------------
+
+    @app.post("/api/flags", dependencies=[Depends(require_json)])
+    def set_flags(body: FlagsIn, conn=Depends(get_conn)):
+        """Apply flag changes in order, atomically. Returns the previous flag of
+        every affected photo, which the UI keeps for undo."""
+        try:
+            previous = selections.set_flags(
+                conn, cfg.selections_path, [(op.ids, op.flag) for op in body.ops]
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"previous": {str(k): v for k, v in previous.items()}}
+
+    @app.get("/api/ids")
+    def list_ids(
+        flt: PhotoFilter = Depends(photo_filter),
+        dupes: str = "collapse",
+        collapse: str | None = None,
+        sort: str = "taken_at",
+        conn=Depends(get_conn),
+    ):
+        """Every id of the listing, in order (for select-all)."""
+        cte, shown, order, params = listing(flt, collapse_mode(collapse, dupes), sort, None)
+        return {"ids": [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY {order}", params)]}
+
+    @app.get("/api/stacks")
+    def list_stacks(
+        flt: PhotoFilter = Depends(photo_filter),
+        unreviewed: bool = False,
+        conn=Depends(get_conn),
+    ):
+        """Stacks with at least one photo matching the filters, in date order.
+        ``unreviewed``: only stacks that still have an unflagged photo."""
+        where, params = flt.where(model_id)
+        having = f"HAVING SUM({flag_expr('s')} IS NULL) > 0" if unreviewed else ""
+        rows = conn.execute(
+            f"""SELECT s.stack_id, COUNT(*) AS size, MIN(s.taken_at) AS taken_at,
+                       SUM({flag_expr('s')} IS NULL) AS unflagged,
+                       SUM({flag_expr('s')} = 'pick') AS picked
+                FROM photos s
+                WHERE s.status = 'ok' AND s.stack_id IN (
+                    SELECT p.stack_id FROM photos p WHERE {where} AND p.stack_id IS NOT NULL)
+                GROUP BY s.stack_id {having}
+                ORDER BY taken_at IS NULL, taken_at, s.stack_id""",
+            params,
+        ).fetchall()
+        return {"stacks": [dict(r) | {"id": r["stack_id"]} for r in rows]}
+
+    @app.get("/api/stacks/{stack_id}")
+    def stack_detail(stack_id: int, conn=Depends(get_conn)):
+        """All photos of a stack (regardless of filters), in capture order."""
+        ids = [
+            r[0]
+            for r in conn.execute(
+                """SELECT id FROM photos WHERE stack_id = ? AND status = 'ok'
+                   ORDER BY taken_at IS NULL, taken_at, source, rel_path""",
+                (stack_id,),
+            )
+        ]
+        if not ids:
+            raise HTTPException(404, "stack not found")
+        return {"id": stack_id, "items": items_for(conn, ids)}
+
+    # ---- export ------------------------------------------------------------------
+
+    @app.post("/api/export", dependencies=[Depends(require_json)])
+    def start_export(body: ExportIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+        """Copy the picks (all, or those within the query-string filters) to a folder."""
+        if body.content not in CONTENT:
+            raise HTTPException(400, f"content must be one of {', '.join(CONTENT)}")
+        if body.structure not in STRUCTURE:
+            raise HTTPException(400, f"structure must be one of {', '.join(STRUCTURE)}")
+        name = body.name.strip()
+        if name and (Path(name).name != name or name in (".", "..")):
+            raise HTTPException(400, "the folder name must not contain slashes")
+        folder = Path(body.folder.strip()).expanduser()
+        if not folder.is_absolute():
+            raise HTTPException(400, "use an absolute destination path")
+        folder = (folder / name if name else folder).resolve()
+        try:
+            check_destination(cfg, folder)
+        except ExportError as e:
+            raise HTTPException(400, str(e))
+        scope = flt if body.scope == "filtered" else PhotoFilter()
+        where, params = scope.where(model_id)
+        ids = [
+            r[0]
+            for r in conn.execute(
+                f"""SELECT p.id FROM photos p WHERE {where} AND {FLAG_EXPR} = 'pick'
+                    ORDER BY p.taken_at IS NULL, p.taken_at, p.source, p.rel_path""",
+                params,
+            )
+        ]
+        if not ids:
+            raise HTTPException(400, "no picked photos to export")
+        started = export_job.start(
+            photo_ids=ids,
+            folder=str(folder),
+            content=body.content,
+            raw_fallback=body.raw_fallback,
+            structure=body.structure,
+        )
+        if not started:
+            raise HTTPException(409, "an export is already running")
+        return export_job.status()
+
+    @app.get("/api/export")
+    def export_status():
+        return export_job.status()
 
     @app.get("/api/raws/unmatched")
     def unmatched_raws(conn=Depends(get_conn)):

@@ -40,6 +40,12 @@ class TagConfig:
 
 
 @dataclass
+class StackConfig:
+    max_gap_seconds: float = 30.0
+    min_similarity: float = 0.90
+
+
+@dataclass
 class Config:
     root: Path
     sources: list[Path]
@@ -52,6 +58,9 @@ class Config:
     model: ModelConfig
     tags: TagConfig
     phash_max_distance: int = 8
+    stacks: StackConfig = field(default_factory=StackConfig)
+    # Pick/reject flags: user data, deliberately outside data_dir (which stays disposable).
+    selections_path: Path | None = None
     path: Path | None = None  # the config file, when loaded from one
 
     @property
@@ -126,6 +135,11 @@ def config_from_dict(raw: dict, root: Path) -> Config:
         model=model,
         tags=tags,
         phash_max_distance=int((raw.get("dupes") or {}).get("phash_max_distance", 8)),
+        stacks=StackConfig(
+            max_gap_seconds=float((raw.get("stacks") or {}).get("max_gap_seconds", 30)),
+            min_similarity=float((raw.get("stacks") or {}).get("min_similarity", 0.90)),
+        ),
+        selections_path=resolve(raw.get("selections", "selections.sqlite3")),
     )
 
 

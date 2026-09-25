@@ -1,12 +1,13 @@
 <script>
   import { view } from '../lib/state.svelte.js';
-  import { fetchSources, addSource, removeSource, browse, startIndex } from '../lib/api.js';
+  import { fetchSources, addSource, removeSource, startIndex } from '../lib/api.js';
+  import FolderBrowser from './FolderBrowser.svelte';
 
   let { status, onchange } = $props();
 
   let sources = $state(null);
   let dir = $state(null);
-  let pathInput = $state('');
+  let browser;
   let error = $state('');
   let busy = $state(false);
 
@@ -17,18 +18,6 @@
       error = e.message;
     }
   }
-
-  async function open(path) {
-    try {
-      dir = await browse(path);
-      pathInput = dir.path;
-      error = '';
-    } catch (e) {
-      error = e.message;
-    }
-  }
-
-  open(null);
 
   // Load now, and again as indexing progresses (photo counts change).
   $effect(() => {
@@ -43,7 +32,7 @@
     try {
       await fn();
       await loadSources();
-      if (dir) await open(dir.path);
+      if (dir) await browser.open(dir.path);
       onchange();
     } catch (e) {
       error = e.message;
@@ -109,39 +98,8 @@
       <!-- Folder browser -->
       <section>
         <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">Add a folder</h3>
-        <form
-          class="flex gap-2"
-          onsubmit={(e) => {
-            e.preventDefault();
-            open(pathInput);
-          }}
-        >
-          <button
-            type="button"
-            class="rounded border border-neutral-700 px-2 text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-            disabled={!dir?.parent}
-            title="Up one level"
-            onclick={() => open(dir.parent)}>↑</button
-          >
-          <input
-            bind:value={pathInput}
-            class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs outline-none focus:border-sky-600"
-            placeholder="/path/to/photos"
-            spellcheck="false"
-          />
-          <button type="submit" class="rounded border border-neutral-700 px-3 text-xs hover:bg-neutral-800">Go</button>
-        </form>
-
-        {#if dir}
-          <div class="mt-2 max-h-64 overflow-y-auto rounded border border-neutral-800">
-            {#each dir.dirs as d (d.path)}
-              <button class="flex w-full items-center gap-2 px-3 py-1 text-left hover:bg-neutral-800" onclick={() => open(d.path)}>
-                <span class="text-neutral-500">▸</span><span class="truncate">{d.name}</span>
-              </button>
-            {:else}
-              <p class="px-3 py-2 text-xs text-neutral-500">No subfolders</p>
-            {/each}
-          </div>
+        <FolderBrowser bind:this={browser} bind:dir>
+          {#snippet footer(dir)}
           <div class="mt-2 flex items-center justify-between gap-3">
             <span class="text-xs text-neutral-400">
               {dir.images} image{dir.images === 1 ? '' : 's'} directly in this folder; subfolders are included too.
@@ -156,7 +114,8 @@
               >
             {/if}
           </div>
-        {/if}
+          {/snippet}
+        </FolderBrowser>
       </section>
 
       <!-- Indexing -->

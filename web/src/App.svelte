@@ -1,13 +1,17 @@
 <script>
   import { tick, untrack } from 'svelte';
-  import { view, readUrl, urlFor, clearSearch, groupKey } from './lib/state.svelte.js';
-  import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources } from './lib/api.js';
+  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected } from './lib/state.svelte.js';
+  import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds } from './lib/api.js';
+  import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import TopBar from './components/TopBar.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import Grid from './components/Grid.svelte';
   import Detail from './components/Detail.svelte';
   import UnmatchedRaws from './components/UnmatchedRaws.svelte';
   import Library from './components/Library.svelte';
+  import SelectionBar from './components/SelectionBar.svelte';
+  import Compare from './components/Compare.svelte';
+  import ExportDialog from './components/ExportDialog.svelte';
 
   const PAGE = 120;
 
@@ -19,6 +23,7 @@
   let loading = $state(false);
   let error = $state('');
   let topBar;
+  let grid = $state(); // bound inside an {#if}
   let token = 0;
   let loaded = false; // first page of the current query has arrived
 
@@ -39,6 +44,14 @@
   $effect(() => {
     view.tags, JSON.stringify(view.filters);
     untrack(loadSidebar);
+  });
+
+  // Flag changes alter the flag counts and the Export total; refresh shortly after a burst of them.
+  let sidebarTimer;
+  $effect(() => {
+    if (!culling.version) return;
+    clearTimeout(sidebarTimer);
+    sidebarTimer = setTimeout(loadSidebar, 400);
   });
 
   // Background indexing: poll while a run is active, then refresh everything when it ends.
@@ -110,6 +123,7 @@
 
   async function reset() {
     token++;
+    clearSelection();
     items = [];
     total = 0;
     groups = [];
@@ -126,7 +140,7 @@
 
   // Re-query whenever the search, filters or grouping change.
   $effect(() => {
-    view.q, view.similar, view.tags, JSON.stringify(view.filters), view.group;
+    view.q, view.similar, view.tags, JSON.stringify(view.filters), view.group, view.collapse;
     untrack(reset);
   });
 
@@ -194,31 +208,119 @@
   }
 
   const hasMore = $derived(items.length < total);
-  const index = $derived(items.findIndex((i) => i.id === view.photo));
+
+  // Flags change locally before the list is re-queried; with a flag filter active
+  // (e.g. Hide rejected), photos whose new flag no longer matches disappear at once.
+  const visibleItems = $derived.by(() => {
+    const wanted = view.filters.flag;
+    if (!wanted.length) return items;
+    return items.filter((item) => wanted.includes(flagOf(item) ?? 'none'));
+  });
+  const itemsById = $derived(new Map(items.map((i) => [i.id, i])));
+  const index = $derived(visibleItems.findIndex((i) => i.id === view.photo));
+  const shows = (flag) => !view.filters.flag.length || view.filters.flag.includes(flag ?? 'none');
 
   async function step(delta) {
     if (view.photo == null) return;
     let i = index + delta;
-    if (i >= items.length && hasMore) await loadMore();
-    if (i >= 0 && i < items.length) view.photo = items[i].id;
+    if (i >= visibleItems.length && hasMore) await loadMore();
+    if (i >= 0 && i < visibleItems.length) view.photo = visibleItems[i].id;
   }
 
+  /** P / X / U in the loupe: flag, then go on if auto-advance is on (or the photo just got hidden). */
+  async function flagInLoupe(flag) {
+    const id = view.photo;
+    const nextId = visibleItems[index + 1]?.id ?? null;
+    const prevId = visibleItems[index - 1]?.id ?? null;
+    setFlag([id], flag);
+    if (!culling.autoAdvance && shows(flag)) return;
+    if (nextId != null) view.photo = nextId;
+    else if (hasMore) {
+      await loadMore();
+      view.photo = visibleItems[visibleItems.findIndex((i) => i.id === prevId) + 1]?.id ?? prevId;
+    } else if (!shows(flag)) view.photo = prevId;
+  }
+
+  /** P / X / U in the grid: flag the selection (or the focused photo). If that hides
+   * them, move the selection to the next visible photo so you can keep going. */
+  function flagInGrid(flag) {
+    const targets = selection.size ? [...selection] : cursor.focus != null ? [cursor.focus] : [];
+    if (!targets.length) return;
+    const set = new Set(targets);
+    const last = Math.max(...targets.map((id) => visibleItems.findIndex((i) => i.id === id)));
+    const next = visibleItems.slice(last + 1).find((i) => !set.has(i.id)) ?? visibleItems.slice(0, last).reverse().find((i) => !set.has(i.id));
+    setFlag(targets, flag);
+    if (!shows(flag)) {
+      selection.clear();
+      if (next) {
+        selection.add(next.id);
+        cursor.focus = cursor.anchor = next.id;
+      }
+    }
+  }
+
+  async function selectAll() {
+    const ids = view.q || view.similar ? visibleItems.map((i) => i.id) : (await fetchIds(view)).ids;
+    selection.clear();
+    for (const id of ids) selection.add(id);
+  }
+
+  const ARROWS = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
+  const FLAG_KEYS = { p: 'pick', x: 'reject', u: null };
+
   function onkeydown(e) {
-    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-    if (e.key === '/' && !typing) {
+    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
+    if (view.compare) return; // the compare view handles its own keys
+    if (key === 'Escape') {
+      if (view.exporting) view.exporting = false;
+      else if (view.library) view.library = false;
+      else if (view.raws) view.raws = false;
+      else if (view.photo != null) view.photo = null;
+      else if (typing) e.target.blur();
+      else clearSelection();
+      return;
+    }
+    if (typing || view.exporting || view.library || view.raws) return;
+
+    if (mod && key === 'z') {
+      e.preventDefault();
+      undo();
+    } else if (mod && key === 'a' && view.photo == null) {
+      e.preventDefault();
+      selectAll();
+    } else if (mod || e.altKey) {
+      return;
+    } else if (key === '/') {
       e.preventDefault();
       topBar.focus();
-    } else if (e.key === 'Escape') {
-      if (view.library) view.library = false;
-      else if (view.photo != null) view.photo = null;
-      else if (view.raws) view.raws = false;
-      else if (typing) e.target.blur();
-    } else if (!typing && view.photo != null && (e.key === 'ArrowRight' || e.key === 'ArrowDown')) {
+    } else if (key in FLAG_KEYS) {
+      if (view.photo != null) flagInLoupe(FLAG_KEYS[key]);
+      else flagInGrid(FLAG_KEYS[key]);
+    } else if (view.photo != null) {
+      if (key === 'ArrowRight' || key === 'ArrowDown') {
+        e.preventDefault();
+        step(1);
+      } else if (key === 'ArrowLeft' || key === 'ArrowUp') {
+        e.preventDefault();
+        step(-1);
+      }
+    } else if (ARROWS[key]) {
       e.preventDefault();
-      step(1);
-    } else if (!typing && view.photo != null && (e.key === 'ArrowLeft' || e.key === 'ArrowUp')) {
+      grid?.moveFocus(ARROWS[key], e.shiftKey);
+    } else if ((key === 'Enter' || key === ' ') && cursor.focus != null && !(e.target instanceof HTMLButtonElement)) {
       e.preventDefault();
-      step(-1);
+      view.photo = cursor.focus;
+    } else if (key === 'c' && selection.size >= 2 && selection.size <= 30) {
+      view.compare = { kind: 'ids', ids: [...selection] };
+    } else if (key === 's') {
+      view.collapse = view.collapse === 'stacks' ? 'dupes' : 'stacks';
+    } else if (key === 'h') {
+      toggleHideRejected();
+    } else if (key === 'r') {
+      view.compare = { kind: 'review' };
     }
   }
 </script>
@@ -226,13 +328,13 @@
 <svelte:window {onkeydown} {onpopstate} />
 
 <div class="flex h-full flex-col">
-  <TopBar bind:this={topBar} {total} {loading} {indexStatus} textSearch={tags?.text_search ?? true} />
+  <TopBar bind:this={topBar} {total} {loading} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} />
   <div class="flex min-h-0 flex-1">
     <Sidebar {tags} {facets} />
     <main class="min-w-0 flex-1 overflow-y-auto">
-      {#if error}
+      {#if error || culling.error}
         <div class="m-4 rounded border border-red-900 bg-red-950/50 p-3 text-sm text-red-300">
-          {error}
+          {error || `Could not save flags: ${culling.error}`}
           {#if view.q || view.similar}
             <button class="ml-2 underline" onclick={clearSearch}>Clear search</button>
           {/if}
@@ -250,7 +352,17 @@
           {/if}
         </div>
       {:else}
-        <Grid {items} {loading} {hasMore} onmore={loadMore} groups={grouped ? groups : null} {highlight} onjump={jumpToGroup} />
+        <Grid
+          bind:this={grid}
+          items={visibleItems}
+          {loading}
+          {hasMore}
+          onmore={loadMore}
+          groups={grouped ? groups : null}
+          {highlight}
+          onjump={jumpToGroup}
+        />
+        <SelectionBar onselectall={selectAll} />
       {/if}
     </main>
   </div>
@@ -260,10 +372,21 @@
   <Detail
     id={view.photo}
     hasPrev={index > 0}
-    hasNext={index >= 0 && (index < items.length - 1 || hasMore)}
+    hasNext={index >= 0 && (index < visibleItems.length - 1 || hasMore)}
     onstep={step}
     ontimeline={showInTimeline}
+    onflag={flagInLoupe}
   />
+{/if}
+
+{#if view.compare}
+  {#key view.compare}
+    <Compare context={view.compare} {itemsById} />
+  {/key}
+{/if}
+
+{#if view.exporting}
+  <ExportDialog picksTotal={tags?.picks ?? 0} picksFiltered={facets?.flag?.pick ?? 0} />
 {/if}
 
 {#if view.raws}

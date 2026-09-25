@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Query
 
+from .selections import FLAG_EXPR
+
 # EXIF dates are stored as written ("2024:05:01 10:00:00"); compare as "2024-05-01".
 DATE_EXPR = "replace(substr(p.taken_at, 1, 10), ':', '-')"
 
@@ -30,6 +32,8 @@ ORIENTATIONS = {
     "square": "p.width = p.height",
 }
 
+FLAG_VALUES = ("pick", "reject", "none")  # "none" = unflagged
+
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -43,6 +47,7 @@ class PhotoFilter:
     ranges: dict[str, tuple[float | None, float | None]] = field(default_factory=dict)
     orientation: list[str] = field(default_factory=list)
     gps: bool | None = None
+    flag: list[str] = field(default_factory=list)  # needs the selections DB attached as "sel"
 
     def where(self, model_id: str, exclude: frozenset[str] = frozenset()) -> tuple[str, list]:
         """SQL condition over ``photos p`` (only status 'ok'). Facets named in
@@ -97,6 +102,16 @@ class PhotoFilter:
         if self.gps is not None and "gps" not in exclude:
             clauses.append("p.lat IS NOT NULL" if self.gps else "p.lat IS NULL")
 
+        if self.flag and "flag" not in exclude:
+            parts = []
+            named = [f for f in self.flag if f != "none"]
+            if named:
+                parts.append(f"{FLAG_EXPR} IN ({','.join('?' * len(named))})")
+                params += named
+            if "none" in self.flag:
+                parts.append(f"{FLAG_EXPR} IS NULL")
+            clauses.append("(" + " OR ".join(parts) + ")")
+
         return " AND ".join(clauses), params
 
 
@@ -114,6 +129,7 @@ def photo_filter(
     iso_max: float | None = None,
     orientation: list[str] = Query([]),
     gps: bool | None = None,
+    flag: list[str] = Query([]),
 ) -> PhotoFilter:
     """FastAPI dependency: the filter from query parameters."""
     try:
@@ -126,6 +142,8 @@ def photo_filter(
     bad = [o for o in orientation if o not in ORIENTATIONS]
     if bad:
         raise HTTPException(400, f"orientation must be one of {', '.join(ORIENTATIONS)}")
+    if any(f not in FLAG_VALUES for f in flag):
+        raise HTTPException(400, f"flag must be one of {', '.join(FLAG_VALUES)}")
     ranges = {
         name: (lo, hi)
         for name, lo, hi in (
@@ -144,6 +162,7 @@ def photo_filter(
         ranges=ranges,
         orientation=list(dict.fromkeys(orientation)),
         gps=gps,
+        flag=list(dict.fromkeys(flag)),
     )
 
 
@@ -194,4 +213,12 @@ def facets(conn: sqlite3.Connection, flt: PhotoFilter, model_id: str) -> dict:
         p,
     ).fetchone()
     out["gps"] = {"with": with_gps, "without": without}
+
+    w, p = where("flag")
+    counts = dict(
+        conn.execute(
+            f"SELECT COALESCE({FLAG_EXPR}, 'none'), COUNT(*) FROM photos p WHERE {w} GROUP BY 1", p
+        ).fetchall()
+    )
+    out["flag"] = {f: counts.get(f, 0) for f in FLAG_VALUES}
     return out

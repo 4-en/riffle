@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS photos (
@@ -66,7 +66,9 @@ CREATE INDEX IF NOT EXISTS raws_photo ON raws(photo_id);
 """
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
+def connect(path: str | Path, selections: str | Path | None = None) -> sqlite3.Connection:
+    """Open the catalogue (creating/migrating it). With ``selections``, the flags
+    DB is attached as ``sel`` so queries can use selections.FLAG_EXPR."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, check_same_thread=False)
@@ -74,6 +76,11 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     init_schema(conn)
+    if selections is not None:
+        from . import selections as sel
+
+        sel.ensure(selections)
+        conn.execute("ATTACH DATABASE ? AS sel", (str(selections),))
     return conn
 
 
@@ -88,6 +95,13 @@ MIGRATIONS = [
     ALTER TABLE photos ADD COLUMN exposure_time REAL;
     ALTER TABLE photos ADD COLUMN iso INTEGER;
     ALTER TABLE photos ADD COLUMN meta_version INTEGER NOT NULL DEFAULT 0;
+    """,
+    # v3: culling aids, both derived. stack_id = lowest photo id of a burst/near-duplicate
+    # stack (NULL if alone); sharpness = Laplacian variance of the preview.
+    """
+    ALTER TABLE photos ADD COLUMN stack_id INTEGER;
+    ALTER TABLE photos ADD COLUMN sharpness REAL;
+    CREATE INDEX IF NOT EXISTS photos_stack ON photos(stack_id);
     """,
 ]
 
@@ -108,7 +122,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def connect_readonly(path: str | Path) -> sqlite3.Connection:
+def connect_readonly(path: str | Path, selections: str | Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    if selections is not None:
+        conn.execute("ATTACH DATABASE ? AS sel", (f"file:{Path(selections)}?mode=ro",))
     return conn
