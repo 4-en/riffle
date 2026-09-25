@@ -93,20 +93,31 @@ No SQLAlchemy, Alembic, FAISS, FiftyOne, OpenCV, pyvips, or ExifTool in the MVP.
 
 ## 6. Project layout
 
+Per-user files follow the platform conventions (`paths.py`, via `platformdirs`; Linux shown, XDG variables honoured; `archive paths` prints them). Until 26 Sep 2026 they all lived in the repository root.
+
+```text
+~/.config/photo-archive/         # settings, created on first run from src/archive/defaults/
+  config.yaml                    # source folders, model, thresholds
+  vocabulary.yaml                # tag families, tags, and alternative phrases
+~/.local/share/photo-archive/
+  selections.sqlite3             # pick/reject flags: user data, NOT derived (§8.1)
+~/.cache/photo-archive/          # all derived data, safe to delete (config: data_dir)
+  catalogue.sqlite3
+  thumbs/                        # 320 px long edge
+  previews/                      # 1600 px long edge
+  embeddings/
+    <model_id>.npy               # float32, L2-normalised, shape (N, D)
+    <model_id>.ids.npy           # photo ids, row-aligned
+```
+
+The config is found as: `--config`, else `$ARCHIVE_CONFIG`, else `./config.yaml` in the working directory (a self-contained setup), else the user config above. `data_dir`, `selections`, and `vocabulary` in it override the defaults.
+
 ```text
 project/
   pyproject.toml
-  config.yaml            # source folders, model, thresholds (copy of config.example.yaml)
-  vocabulary.yaml        # tag families, tags, and alternative phrases
-  selections.sqlite3     # pick/reject flags: user data, NOT derived (§8.1)
-  data/                  # all derived data, safe to delete
-    catalogue.sqlite3
-    thumbs/              # 320 px long edge
-    previews/            # 1600 px long edge
-    embeddings/
-      <model_id>.npy     # float32, L2-normalised, shape (N, D)
-      <model_id>.ids.npy # photo ids, row-aligned
   src/archive/
+    paths.py             # per-user locations; finding / creating the config
+    defaults/            # config.yaml template, default vocabulary.yaml
     cli.py               # archive index | tag | serve
     config.py            # config loading; rewriting the sources list
     db.py                # schema and connections
@@ -281,7 +292,7 @@ Camera GPS stays in `photos.lat/lon`; `photo_locations` holds the evidence-tagge
 
 ### 8.1 Selections (user data)
 
-Pick/reject flags are the only data the user creates by hand, so they live in their own database, `selections.sqlite3` (next to `config.yaml`, configurable), not in `data/`:
+Pick/reject flags are the only data the user creates by hand, so they live in their own database, `selections.sqlite3` (in the user data folder, e.g. `~/.local/share/photo-archive`; configurable), not with the derived data:
 
 ```sql
 CREATE TABLE flags (

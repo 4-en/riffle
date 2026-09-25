@@ -12,7 +12,10 @@ from .config import load_config
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="archive", description="Local photo archive search.")
-    parser.add_argument("-c", "--config", default="config.yaml", help="path to config.yaml")
+    parser.add_argument(
+        "-c", "--config", default=None,
+        help="config file (default: ./config.yaml if present, else the user config; see `archive paths`)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("index", help="scan, thumbnail, embed, tag and group duplicates (incremental)")
@@ -21,6 +24,7 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--reload", action="store_true", help="auto-reload on code changes")
+    sub.add_parser("paths", help="show where the config, your flags and the derived data live")
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -33,6 +37,17 @@ def main(argv: list[str] | None = None) -> None:
     except FileNotFoundError as e:
         sys.exit(str(e))
 
+    if args.command == "paths":
+        rows = [
+            ("config", cfg.path),
+            ("vocabulary", cfg.vocabulary_path),
+            ("your flags", cfg.selections_path),
+            ("derived data", cfg.data_dir),
+        ]
+        for label, path in rows:
+            print(f"{label:13} {path}")
+        return
+
     if args.command == "index":
         from .index import run_index
 
@@ -44,7 +59,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "serve":
         import uvicorn
 
-        os.environ["ARCHIVE_CONFIG"] = os.path.abspath(args.config)
+        os.environ["ARCHIVE_CONFIG"] = str(cfg.path)
         print(f"Serving on http://{args.host}:{args.port}")
         uvicorn.run(
             "archive.server:create_app",

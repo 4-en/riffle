@@ -21,7 +21,7 @@ A local tool for finding the best photos in a large archive and exporting them f
 - **Location from your phone:** add a Google Timeline export (or Records.json / GPX) and photos without GPS are placed by capture time; group by place, region, or country, filter by where you were, and optionally write the position into exported copies
 - Simple local web UI, including adding photo folders and running indexing from the browser
 
-Your originals are never modified. All derived data lives in `data/` and can be deleted and regenerated at any time. Your pick/reject flags are the one thing you create by hand: they live separately in `selections.sqlite3` (next to `config.yaml`), survive deleting `data/`, re-indexing, and moving files, and are worth backing up.
+Your originals are never modified. All derived data lives in a cache folder and can be deleted and regenerated at any time. Your pick/reject flags are the one thing you create by hand: they live separately in `selections.sqlite3`, survive deleting the cache, re-indexing, and moving files, and are worth backing up. See [Where things live](#where-things-live).
 
 ## Planned
 
@@ -40,8 +40,9 @@ Next is a short evaluation of search and tag quality (see `development_plan.md` 
 python3.12 -m venv venv              # or reuse the existing venv/
 venv/bin/pip install -e ".[dev]"     # for HEIC support: ".[dev,heic]"
 cd web && npm install && npm run build && cd ..
-cp config.example.yaml config.yaml   # then set your photo folders, or add them in the UI
 ```
+
+The first run creates your settings (`~/.config/photo-archive/config.yaml` on Linux); add photo folders in the UI's **Library**, or edit that file.
 
 ## Usage
 
@@ -107,7 +108,7 @@ With a location grouping, **Map** (top bar, or `O`) shows your photos as cluster
 
 Places are named offline from a bundled GeoNames dataset: the nearest town or village, its region, and its country. Group the grid by **Place / Region / Country** (groups are in trip order), filter by country, place, or source in the sidebar, and use **Show place** in the photo view. `location.max_gap_minutes` and `location.min_population` in `config.yaml` tune matching and naming.
 
-Photos are matched by the camera's clock, so a camera set to the wrong time places photos wrongly. Location history is sensitive: it never leaves your machine, the derived positions live in `data/`, and nothing is written into your originals. Keep the export out of any shared or synced folder (the repository's `.gitignore` excludes `Timeline.json`, `Records.json`, and `*.gpx`).
+Photos are matched by the camera's clock, so a camera set to the wrong time places photos wrongly. Location history is sensitive: it never leaves your machine, the derived positions live in the cache folder, and nothing is written into your originals. Keep the export out of any shared or synced folder (the repository's `.gitignore` excludes `Timeline.json`, `Records.json`, and `*.gpx`).
 
 ## Model
 
@@ -123,7 +124,7 @@ Each model keeps its own embeddings and tags, so switching back and forth loses 
 
 ## Tags
 
-Tags live in `vocabulary.yaml`, grouped into families (`subject`, `scene`, `look`). An entry is a plain name, or a name with alternative phrases:
+Tags live in `vocabulary.yaml` (next to your config; created from the default on first run), grouped into families (`subject`, `scene`, `look`). An entry is a plain name, or a name with alternative phrases:
 
 ```yaml
 subject:
@@ -150,14 +151,24 @@ Without the dev server, run `npm run build` after changing anything in `web/src/
 
 Run tests with `venv/bin/pytest`. They use synthetic images and a fake encoder, so no model download is needed.
 
+## Where things live
+
+Following each platform's conventions (`archive paths` prints the exact locations):
+
+| What | Linux | Notes |
+|---|---|---|
+| Settings: `config.yaml`, `vocabulary.yaml` | `~/.config/photo-archive/` | Created on first run from the defaults in `src/archive/defaults/` |
+| Your flags: `selections.sqlite3` | `~/.local/share/photo-archive/` | User data: back it up |
+| Derived data: catalogue, thumbnails, previews, embeddings | `~/.cache/photo-archive/` | Safe to delete; `archive index` rebuilds it (re-embedding takes a while) |
+| CLIP model weights | `~/.cache/huggingface/` | Downloaded once |
+
+`$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, and `$XDG_CACHE_HOME` are honoured; macOS uses `~/Library/Application Support` and `~/Library/Caches`, Windows `%APPDATA%` and `%LOCALAPPDATA%`. To use a different config, pass `--config PATH` or set `ARCHIVE_CONFIG`; a `config.yaml` in the current directory is also picked up, for a self-contained setup. `data_dir`, `selections`, and `vocabulary` in the config override the locations.
+
 ## Layout
 
 ```text
-config.yaml        source folders, model, thresholds (from config.example.yaml)
-vocabulary.yaml    tag families, tags, and alternative phrases
-selections.sqlite3 your pick/reject flags (user data; back it up)
-data/              derived data (SQLite, thumbnails, embeddings); safe to delete
-src/archive/       indexer, CLI and API server
-web/               Svelte + Tailwind UI (Vite, no SvelteKit)
+src/archive/            indexer, CLI and API server
+src/archive/defaults/   default config.yaml and vocabulary.yaml
+web/                    Svelte + Tailwind UI (Vite, no SvelteKit)
 tests/
 ```

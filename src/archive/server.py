@@ -102,7 +102,7 @@ def create_app(
     text_encoder: TextEncoder | None = None,
     index_runner: Callable | None = None,
 ) -> FastAPI:
-    cfg = cfg or load_config(os.environ.get("ARCHIVE_CONFIG", "config.yaml"))
+    cfg = cfg or load_config()  # --config / $ARCHIVE_CONFIG / ./config.yaml / the user's config
     model_id = cfg.model.model_id
     state: dict = {"encoder": text_encoder}
     job = index_job(cfg, run=index_runner)
@@ -682,6 +682,8 @@ def create_app(
             ],
             "editable": cfg.path is not None,
             "config": str(cfg.path) if cfg.path else None,
+            "selections": str(cfg.selections_path),
+            "data_dir": str(cfg.data_dir),
         }
 
     @app.post("/api/sources", dependencies=[Depends(require_json)])

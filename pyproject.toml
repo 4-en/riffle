@@ -20,6 +20,7 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "tqdm>=4.66",
     "reverse_geocode>=1.6",
+    "platformdirs>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,9 @@ archive = "archive.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+archive = ["defaults/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

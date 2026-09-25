@@ -1,14 +1,22 @@
-# Copy to config.yaml and edit. Relative paths are resolved against this file's folder.
-sources:
-  - examples
+# Photo Archive settings. Created on first run; `archive paths` shows where this
+# and everything else lives. Relative paths are resolved against this file's folder.
+
+# Photo folders (read only). Easiest to manage in the UI: Library.
+sources: []
 exclude:
   - "**/.Trashes/**"
 image_extensions: [.jpg, .jpeg, .png, .tif, .tiff, .heic]
 raw_extensions: [.cr2, .cr3, .nef, .arw, .raf, .dng, .orf, .rw2]
 raw_search_dirs: [".", "RAW", "../RAW"]   # relative to each image's folder
 
-data_dir: data
-vocabulary: vocabulary.yaml
+# Storage. By default (Linux; macOS and Windows use their usual equivalents):
+#   derived data  ~/.cache/photo-archive          catalogue, thumbnails, embeddings: safe to delete
+#   your flags    ~/.local/share/photo-archive    selections.sqlite3: back it up
+#   this file     ~/.config/photo-archive         with vocabulary.yaml (tags; edit freely)
+# Uncomment to override:
+# data_dir: /path/to/derived-data
+# selections: /path/to/selections.sqlite3
+# vocabulary: vocabulary.yaml
 
 # CLIP model for search, tags, stacks, and the quality hint. Each model keeps its
 # own embeddings, so you can switch back and forth; after switching, run
@@ -38,9 +46,6 @@ dupes:
 stacks:
   max_gap_seconds: 30
   min_similarity: 0.92
-
-# Your pick/reject flags. User data: keep it outside data/ and back it up.
-selections: selections.sqlite3
 
 # Where you were, from your phone: Google Timeline exports (Timeline.json), old
 # Takeout Records.json, or GPX tracks. Read in place, never uploaded; add them in

@@ -225,7 +225,7 @@
       <section>
         <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">Flags</h3>
         <p class="text-xs text-neutral-400">
-          {tags?.picks ?? 0} picked, {tags?.rejects ?? 0} rejected. Flags are saved in <span class="font-mono">selections.sqlite3</span>; back it up to keep your selection.
+          {tags?.picks ?? 0} picked, {tags?.rejects ?? 0} rejected. Flags are saved in <span class="break-all font-mono">{sources?.selections ?? 'selections.sqlite3'}</span>; back it up to keep your selection.
         </p>
         <div class="mt-2 flex flex-wrap gap-2">
           {#if filtering}

@@ -20,6 +20,17 @@ scene: [indoors, outdoors, other]
 """
 
 
+@pytest.fixture(autouse=True)
+def isolated_user_dirs(tmp_path_factory, monkeypatch):
+    """Never touch the real ~/.config, ~/.local/share or ~/.cache (or a ./config.yaml)."""
+    home = tmp_path_factory.mktemp("home")
+    for var, sub in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "share"), ("XDG_CACHE_HOME", "cache")):
+        monkeypatch.setenv(var, str(home / sub))
+    monkeypatch.delenv("ARCHIVE_CONFIG", raising=False)
+    monkeypatch.chdir(home)
+    return home
+
+
 def _pattern(seed: int, size=(640, 480)) -> Image.Image:
     rng = np.random.default_rng(seed)
     small = rng.integers(0, 256, (6, 8, 3), dtype=np.uint8)
@@ -70,6 +81,8 @@ def cfg(archive_dir: Path):
     return config_from_dict(
         {
             "sources": ["photos"],
+            "data_dir": "data",
+            "selections": "selections.sqlite3",
             "exclude": ["**/.Trashes/**"],
             "model": {"name": "fake", "pretrained": "test", "batch_size": 2},
             "tags": {

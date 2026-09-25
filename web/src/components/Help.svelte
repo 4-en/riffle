@@ -75,8 +75,11 @@
       </ol>
 
       <div class="rounded border border-neutral-800 bg-neutral-950/50 p-3 text-xs text-neutral-400">
-        Your picks and rejects are saved in <span class="font-mono">selections.sqlite3</span> next to the config: back it up. Everything
-        in <span class="font-mono">data/</span> (thumbnails, embeddings, tags) can be deleted and is rebuilt by indexing.
+        Your picks and rejects are saved in <span class="font-mono">selections.sqlite3</span> in your user data folder
+        (<span class="font-mono">~/.local/share/photo-archive</span> on Linux): back it up. The derived data (thumbnails,
+        embeddings, tags) is in your cache folder (<span class="font-mono">~/.cache/photo-archive</span>) and can be deleted;
+        indexing rebuilds it. Settings: <span class="font-mono">~/.config/photo-archive</span>. The Library shows the exact
+        places, and so does <span class="font-mono">archive paths</span>.
       </div>
 
       <section>

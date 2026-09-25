@@ -9,6 +9,8 @@ from pathlib import Path
 
 import yaml
 
+from . import paths
+
 
 @dataclass
 class ModelConfig:
@@ -97,11 +99,20 @@ def _exts(values) -> set[str]:
     return {("." + v.lstrip(".")).lower() for v in values}
 
 
-def load_config(path: str | Path = "config.yaml") -> Config:
-    path = Path(path).resolve()
+def _vocabulary(raw: dict, root: Path, resolve) -> Path:
+    """``vocabulary`` from the config, else vocabulary.yaml next to it, else the default."""
+    if raw.get("vocabulary"):
+        return resolve(raw["vocabulary"])
+    local = root / "vocabulary.yaml"
+    return local if local.exists() else paths.default_file("vocabulary.yaml")
+
+
+def load_config(path: str | Path | None = None) -> Config:
+    """Load settings; without a path, the one ``paths.find_config`` picks."""
+    path = paths.find_config(path)
     if not path.exists():
         raise FileNotFoundError(
-            f"Config file not found: {path}. Copy config.example.yaml to config.yaml."
+            f"Config file not found: {path}. Run without --config to use (and create) the default one."
         )
     raw = yaml.safe_load(path.read_text()) or {}
     cfg = config_from_dict(raw, path.parent)
@@ -139,8 +150,8 @@ def config_from_dict(raw: dict, root: Path) -> Config:
         image_extensions=_exts(raw.get("image_extensions", DEFAULT_IMAGE_EXT)),
         raw_extensions=_exts(raw.get("raw_extensions", DEFAULT_RAW_EXT)),
         raw_search_dirs=list(raw.get("raw_search_dirs", [".", "RAW", "../RAW"])),
-        data_dir=resolve(raw.get("data_dir", "data")),
-        vocabulary_path=resolve(raw.get("vocabulary", "vocabulary.yaml")),
+        data_dir=resolve(raw["data_dir"]) if raw.get("data_dir") else paths.cache_dir(),
+        vocabulary_path=_vocabulary(raw, root, resolve),
         model=model,
         tags=tags,
         phash_max_distance=int((raw.get("dupes") or {}).get("phash_max_distance", 8)),
@@ -148,7 +159,7 @@ def config_from_dict(raw: dict, root: Path) -> Config:
             max_gap_seconds=float((raw.get("stacks") or {}).get("max_gap_seconds", 30)),
             min_similarity=float((raw.get("stacks") or {}).get("min_similarity", StackConfig.min_similarity)),
         ),
-        selections_path=resolve(raw.get("selections", "selections.sqlite3")),
+        selections_path=resolve(raw["selections"]) if raw.get("selections") else paths.data_dir() / "selections.sqlite3",
         location_history=[resolve(p) for p in raw.get("location_history") or []],
         location=LocationConfig(
             max_gap_minutes=float((raw.get("location") or {}).get("max_gap_minutes", 30)),
