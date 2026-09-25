@@ -11,7 +11,8 @@ A local tool for searching and browsing a large photo archive by what is in the 
 - Tag sidebar that narrows with your filter: only tags present in the current selection are shown, with counts
 - Duplicate grouping via perceptual hash
 - RAW files tracked by matching filenames (never read or modified)
-- Basic EXIF: date, camera, lens, GPS
+- EXIF: date, camera, lens, focal length, aperture, shutter speed, ISO, GPS
+- Filters for date range, camera, lens, focal length, aperture, ISO, orientation, and GPS; like tags, options are counted within the other active filters, and filters that can't narrow the results are hidden
 - Simple local web UI, including adding photo folders and running indexing from the browser
 
 Your originals are never modified. All derived data lives in `data/` and can be deleted and regenerated at any time.

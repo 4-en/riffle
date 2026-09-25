@@ -1,7 +1,8 @@
 <script>
   import { view, toggleTag } from '../lib/state.svelte.js';
+  import Filters from './Filters.svelte';
 
-  let { tags } = $props();
+  let { tags, facets } = $props();
 
   const titles = { subject: 'Subject', scene: 'Scene', look: 'Look' };
   // Server order follows vocabulary.yaml; only tags present in the current filter are listed.
@@ -12,6 +13,7 @@
   {#if !tags}
     <p class="px-2 text-neutral-500">Loading tags…</p>
   {:else}
+    <Filters {facets} />
     {#each families as [family, list] (family)}
       <h2 class="mb-1 mt-3 px-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 first:mt-0">
         {titles[family] ?? family}

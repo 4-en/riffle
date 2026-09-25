@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from . import db
 from .config import Config, load_config, set_sources
 from .embed import embedding_paths, load_embeddings
+from .filters import PhotoFilter, facets, photo_filter
 from .jobs import IndexJob
 
 log = logging.getLogger(__name__)
@@ -54,15 +55,6 @@ class Index:
             E, ids = load_embeddings(self.cfg)
             self.E, self.ids, self.stamp = E, ids, stamp
             self.row = {int(pid): i for i, pid in enumerate(ids)}
-
-
-def _parse_tags(tags: str | None) -> list[int]:
-    if not tags:
-        return []
-    try:
-        return sorted({int(t) for t in tags.split(",") if t.strip()})
-    except ValueError:
-        raise HTTPException(400, "tags must be comma-separated tag ids")
 
 
 class FolderIn(BaseModel):
@@ -116,18 +108,6 @@ def create_app(
 
     # ---- helpers -------------------------------------------------------------
 
-    def tag_filter_ids(conn, tag_ids: list[int]) -> set[int] | None:
-        if not tag_ids:
-            return None
-        marks = ",".join("?" * len(tag_ids))
-        rows = conn.execute(
-            f"""SELECT photo_id FROM photo_tags
-                WHERE model_id = ? AND tag_id IN ({marks})
-                GROUP BY photo_id HAVING COUNT(DISTINCT tag_id) = ?""",
-            [model_id, *tag_ids, len(tag_ids)],
-        )
-        return {r[0] for r in rows}
-
     def items_for(conn, ids: list[int], scores: dict[int, float] | None = None) -> list[dict]:
         if not ids:
             return []
@@ -162,17 +142,14 @@ def create_app(
             out.append(item)
         return out
 
-    def rank(conn, index: Index, query: np.ndarray, tag_ids: list[int], exclude: int | None,
+    def rank(conn, index: Index, query: np.ndarray, flt: PhotoFilter, exclude: int | None,
              dupes: str, offset: int, limit: int) -> dict:
         if index.E.size == 0:
             return {"total": 0, "items": []}
-        ok = {r[0] for r in conn.execute("SELECT id FROM photos WHERE status = 'ok'")}
-        allowed = tag_filter_ids(conn, tag_ids)
-        mask = np.array(
-            [int(p) in ok and (allowed is None or int(p) in allowed) and int(p) != exclude
-             for p in index.ids],
-            dtype=bool,
-        )
+        where, params = flt.where(model_id)
+        allowed = {r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)}
+        allowed.discard(exclude)
+        mask = np.array([int(p) in allowed for p in index.ids], dtype=bool)
         scores = index.E @ query
         scores[~mask] = -np.inf
         order = np.argsort(-scores)[: int(mask.sum())]
@@ -201,22 +178,14 @@ def create_app(
 
     @app.get("/api/photos")
     def list_photos(
-        tags: str | None = None,
+        flt: PhotoFilter = Depends(photo_filter),
         dupes: str = "collapse",
         sort: str = "taken_at",
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
         conn=Depends(get_conn),
     ):
-        tag_ids = _parse_tags(tags)
-        params: list = []
-        where = "p.status = 'ok'"
-        if tag_ids:
-            marks = ",".join("?" * len(tag_ids))
-            where += f""" AND p.id IN (
-                SELECT photo_id FROM photo_tags WHERE model_id = ? AND tag_id IN ({marks})
-                GROUP BY photo_id HAVING COUNT(DISTINCT tag_id) = ?)"""
-            params += [model_id, *tag_ids, len(tag_ids)]
+        where, params = flt.where(model_id)
         order = {
             "taken_at": "p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
             "-taken_at": "p.taken_at IS NULL, p.taken_at DESC, p.source, p.rel_path",
@@ -281,7 +250,7 @@ def create_app(
     @app.get("/api/search/text")
     def search_text(
         q: str = Query(..., min_length=1),
-        tags: str | None = None,
+        flt: PhotoFilter = Depends(photo_filter),
         dupes: str = "collapse",
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
@@ -292,12 +261,12 @@ def create_app(
         if encoder is None:
             raise HTTPException(503, "text encoder not available")
         query = encoder([q])[0]
-        return rank(conn, index, query, _parse_tags(tags), None, dupes, offset, limit)
+        return rank(conn, index, query, flt, None, dupes, offset, limit)
 
     @app.get("/api/search/similar/{photo_id}")
     def search_similar(
         photo_id: int,
-        tags: str | None = None,
+        flt: PhotoFilter = Depends(photo_filter),
         dupes: str = "collapse",
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
@@ -307,28 +276,21 @@ def create_app(
         row = index.row.get(photo_id)
         if row is None:
             raise HTTPException(404, "photo has no embedding")
-        return rank(conn, index, index.E[row], _parse_tags(tags), photo_id, dupes, offset, limit)
+        return rank(conn, index, index.E[row], flt, photo_id, dupes, offset, limit)
 
     @app.get("/api/tags")
-    def list_tags(tags: str | None = None, conn=Depends(get_conn)):
-        """Tags with photo counts within the current tag filter. Tags that no
-        matching photo carries are omitted, except the selected ones."""
-        selected = _parse_tags(tags)
-        params: list = [model_id]
-        where = "pt.model_id = ?"
-        if selected:
-            marks = ",".join("?" * len(selected))
-            where += f""" AND pt.photo_id IN (
-                SELECT photo_id FROM photo_tags WHERE model_id = ? AND tag_id IN ({marks})
-                GROUP BY photo_id HAVING COUNT(DISTINCT tag_id) = ?)"""
-            params += [model_id, *selected, len(selected)]
+    def list_tags(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+        """Tags with photo counts within the current filter (tags and EXIF).
+        Tags that no matching photo carries are omitted, except the selected ones."""
+        selected = flt.tags
+        where, params = flt.where(model_id)
         counts = {
             r[0]: r[1]
             for r in conn.execute(
                 f"""SELECT pt.tag_id, COUNT(*) FROM photo_tags pt
-                    JOIN photos p ON p.id = pt.photo_id AND p.status = 'ok'
-                    WHERE {where} GROUP BY pt.tag_id""",
-                params,
+                    WHERE pt.model_id = ? AND pt.photo_id IN (SELECT p.id FROM photos p WHERE {where})
+                    GROUP BY pt.tag_id""",
+                [model_id, *params],
             )
         }
         families: dict[str, list] = {}
@@ -350,6 +312,12 @@ def create_app(
             "model_id": model_id,
             "text_search": state["encoder"] is not None,
         }
+
+    @app.get("/api/facets")
+    def list_facets(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+        """EXIF filter options (date range, cameras, lenses, focal length, aperture,
+        ISO, orientation, GPS) within the other active filters."""
+        return facets(conn, flt, model_id)
 
     @app.get("/api/raws/unmatched")
     def unmatched_raws(conn=Depends(get_conn)):

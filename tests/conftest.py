@@ -36,6 +36,11 @@ def _exif_jpeg(path: Path) -> None:
     sub[0x9003] = "2024:05:01 10:00:00"
     sub[0x9011] = "+08:00"
     sub[0xA434] = "RF24-105mm F4 L IS USM"
+    sub[0x920A] = 50.0  # focal length
+    sub[0xA405] = 50  # 35 mm equivalent
+    sub[0x829D] = 4.0  # f-number
+    sub[0x829A] = 0.004  # 1/250 s
+    sub[0x8827] = 400  # ISO
     gps = exif.get_ifd(0x8825)
     gps.update({1: "N", 2: (39.0, 54.0, 0.0), 3: "E", 4: (116.0, 23.0, 0.0)})
     im.save(path, exif=exif, quality=92)

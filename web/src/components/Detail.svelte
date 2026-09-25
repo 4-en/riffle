@@ -35,6 +35,20 @@
   }
 
   const date = (s) => s?.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+  function exposure(p) {
+    const parts = [];
+    if (p.focal_length) {
+      const equiv = p.focal_length_35 && p.focal_length_35 !== p.focal_length ? ` (${Math.round(p.focal_length_35)} mm equiv.)` : '';
+      parts.push(`${+p.focal_length.toFixed(1)} mm${equiv}`);
+    }
+    if (p.aperture) parts.push(`f/${+p.aperture.toFixed(1)}`);
+    if (p.exposure_time) {
+      const t = p.exposure_time;
+      parts.push(t >= 1 ? `${+t.toFixed(1)} s` : `1/${Math.round(1 / t)} s`);
+    }
+    if (p.iso) parts.push(`ISO ${p.iso}`);
+    return parts.join(' · ');
+  }
   const size = (n) => (n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.round(n / 1e3)} kB`);
   const families = $derived.by(() => {
     const out = {};
@@ -106,6 +120,10 @@
           <dd>{photo.camera ?? '—'}</dd>
           <dt class="text-neutral-500">Lens</dt>
           <dd>{photo.lens ?? '—'}</dd>
+          {#if exposure(photo)}
+            <dt class="text-neutral-500">Exposure</dt>
+            <dd>{exposure(photo)}</dd>
+          {/if}
           <dt class="text-neutral-500">Size</dt>
           <dd>{photo.width} × {photo.height} · {size(photo.size_bytes)}</dd>
           {#if photo.lat != null}

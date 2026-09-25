@@ -1,5 +1,5 @@
 <script>
-  import { view, search, clearSearch } from '../lib/state.svelte.js';
+  import { view, search, clearSearch, clearFilters, activeFilterCount } from '../lib/state.svelte.js';
 
   let { total, loading, indexStatus = null, textSearch = true } = $props();
 
@@ -29,9 +29,10 @@
     text = '';
     clearSearch();
     view.tags = [];
+    clearFilters();
   }
 
-  const active = $derived(view.q || view.similar || view.tags.length);
+  const active = $derived(view.q || view.similar || view.tags.length || activeFilterCount(view.filters));
 </script>
 
 <header class="flex items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-4 py-2">

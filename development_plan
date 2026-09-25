@@ -24,7 +24,8 @@ The MVP answers one question: **does CLIP-based search and tagging make this arc
 
 - Scan configured folders for JPEG, PNG, TIFF, and (optionally) HEIC images.
 - Track RAW files by filename match only; never read them.
-- Extract basic EXIF: capture time, camera, lens, dimensions, orientation, GPS.
+- Extract basic EXIF: capture time, camera, lens, dimensions, orientation, GPS, and exposure (focal length, aperture, shutter speed, ISO).
+- EXIF filters: date range, camera, lens, focal length, aperture, ISO, orientation, GPS (added during implementation; "date and camera filters" moved forward from §14).
 - Generate orientation-correct thumbnails and previews.
 - Compute one CLIP embedding per image.
 - Text search ("red lanterns at night", "empty stairwell").
@@ -175,6 +176,10 @@ CREATE TABLE photos (
   tz_offset   TEXT,                   -- EXIF OffsetTimeOriginal, if present
   camera TEXT, lens TEXT,
   lat REAL, lon REAL,
+  focal_length REAL, focal_length_35 REAL,   -- mm; 35 mm equivalent if recorded
+  aperture REAL, exposure_time REAL,         -- f-number; seconds
+  iso INTEGER,
+  meta_version INTEGER NOT NULL DEFAULT 0,   -- EXIF extraction version (see §9.1)
   phash       TEXT,
   dupe_group  INTEGER,                -- lowest photo id in the group; NULL if unique
   status      TEXT NOT NULL DEFAULT 'ok',  -- ok | error | missing
@@ -237,8 +242,11 @@ One command runs all steps incrementally: `archive index` (or **Index now** in t
 
 1. Walk sources, skipping excludes, hidden `._*` files, and the archive's own `data_dir`.
 2. For each image, record path, size, mtime, and sha256.
-3. Read EXIF with Pillow: `DateTimeOriginal`, `OffsetTimeOriginal`, make/model, lens, GPS, orientation.
+3. Read EXIF with Pillow: `DateTimeOriginal`, `OffsetTimeOriginal`, make/model, lens, GPS, orientation, focal length (and 35 mm equivalent), f-number, exposure time, ISO.
 4. Record unreadable files as `status = error` with the message and continue.
+5. When EXIF extraction gains fields (`META_VERSION` in `scan.py`), unchanged files are re-read header-only on the next scan; no derived data is recomputed.
+
+Schema changes are applied as numbered migrations in `db.py` (v2 added the exposure columns).
 
 Capture times are stored as written by the camera. No timezone correction in the MVP.
 
@@ -335,11 +343,12 @@ Editing this file and rerunning `archive tag` is the whole workflow for changing
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/photos?tags=&dupes=collapse&sort=taken_at&offset=&limit=` | Paged grid listing, AND-filtered by tag ids. `sort`: `taken_at`, `-taken_at`, `path`, `id` |
+| GET | `/api/photos?<filters>&dupes=collapse&sort=taken_at&offset=&limit=` | Paged grid listing. `sort`: `taken_at`, `-taken_at`, `path`, `id` |
 | GET | `/api/photos/{id}` | Detail: metadata, tags with probabilities, RAW paths, duplicate group |
-| GET | `/api/search/text?q=&tags=&dupes=&offset=&limit=` | Text search, optionally within a tag filter |
-| GET | `/api/search/similar/{id}?tags=&dupes=&offset=&limit=` | Similar images (the query photo and, when collapsing, its duplicates are excluded) |
-| GET | `/api/tags?tags=` | Tags grouped by family, with counts **within the given tag filter**; tags no matching photo carries are omitted (selected tags are always included). Also total photos, unmatched RAW count, model id |
+| GET | `/api/search/text?q=&<filters>&dupes=&offset=&limit=` | Text search within the filters |
+| GET | `/api/search/similar/{id}?<filters>&dupes=&offset=&limit=` | Similar images (the query photo and, when collapsing, its duplicates are excluded) |
+| GET | `/api/tags?<filters>` | Tags grouped by family, with counts **within the filters**; tags no matching photo carries are omitted (selected tags are always included). Also total photos, unmatched RAW count, model id |
+| GET | `/api/facets?<filters>` | EXIF filter options: date range, cameras and lenses with counts, focal/aperture/ISO ranges, orientation and GPS counts. Each facet ignores its own filter so its options stay selectable |
 | GET | `/api/raws/unmatched` | Unmatched RAW list |
 | GET | `/api/sources` | Configured folders with photo counts |
 | POST / DELETE | `/api/sources` `{path}` | Add or remove a folder (written to `config.yaml`), then start indexing |
@@ -348,18 +357,21 @@ Editing this file and rerunning `archive tag` is the whole workflow for changing
 | GET | `/thumbs/{id}.jpg`, `/previews/{id}.jpg` | Static images |
 | GET | `/` | Built Svelte app |
 
+`<filters>` are shared by all these endpoints (`filters.py`): `tags=1,2` (AND), `date_from`/`date_to` (`YYYY-MM-DD`), repeated `camera=`/`lens=` (OR; empty value = unknown), `focal_min/max`, `aperture_min/max`, `iso_min/max`, repeated `orientation=` (`landscape`, `portrait`, `square`), and `gps=true|false`. Different filters combine with AND.
+
 At startup the server loads the embedding matrix and the CLIP text encoder only; the image encoder is not needed at serve time (background indexing loads its own model). Tag filters on search are applied as a boolean mask over the matrix before ranking.
 
 Mutating endpoints accept only JSON bodies, so other websites cannot trigger them from the browser without a CORS preflight (which the server does not grant). The folder browser can list any directory the server can read, so the server binds to `127.0.0.1` by default.
 
 ### 11.2 UI
 
-A single page with no router; view state lives in a small Svelte store and is mirrored into the URL query string (`q`, `similar`, `tags`, `photo`) so views can be bookmarked.
+A single page with no router; view state lives in a small Svelte store and is mirrored into the URL query string (`q`, `similar`, `tags`, the EXIF filters, `photo`) so views can be bookmarked.
 
 - **Top bar:** search input (Enter runs text search), "similar to" chip, result count, **Library** button (shows indexing progress), clear button.
-- **Left sidebar:** one section per tag family, in vocabulary order, with counts within the current filter. Tags with no matching photos are hidden. Click a tag to filter, click again to remove. Filters combine with search.
+- **Left sidebar, filters:** date range, camera, lens, focal length, aperture, ISO, orientation, GPS, with counts within the other active filters. A filter that cannot narrow the results (e.g. a single camera) is hidden unless in use. **Reset** clears them.
+- **Left sidebar, tags:** one section per tag family, in vocabulary order, with counts within the current filter. Tags with no matching photos are hidden. Click a tag to filter, click again to remove. Filters combine with search.
 - **Grid:** responsive thumbnail grid with infinite scroll. Badges show RAW and duplicate count; search results show their score on hover.
-- **Detail panel:** opens on click. It shows a large preview, capture date, camera and lens, source path, RAW path, tags with probabilities (click to filter), duplicates, and GPS coordinates as text. Buttons: **Find similar**, **Copy path**, **Previous/Next**.
+- **Detail panel:** opens on click. It shows a large preview, capture date, camera and lens, exposure (focal length, aperture, shutter speed, ISO), source path, RAW path, tags with probabilities (click to filter), duplicates, and GPS coordinates as text. Buttons: **Find similar**, **Copy path**, **Previous/Next**.
 - **Library dialog:** configured folders with photo counts and **Remove**; a server-side folder browser with a path box and **Add this folder and index**; **Index now** with a progress bar and step log. Opens automatically when no folders are configured; an empty library shows an "Add a photo folder" prompt.
 - **Keyboard:** arrow keys move between photos, Esc closes the detail panel or dialog, `/` focuses search.
 
@@ -397,7 +409,7 @@ In rough order of expected value:
 2. Collections, with export as a list of source paths.
 3. A second embedding model for comparison (e.g. a SigLIP-family or multilingual model).
 4. Image-prototype tags built from a few example photos, for concepts that text describes badly.
-5. Date and camera filters; per-camera clock offset correction.
+5. Per-camera clock offset correction (date and camera filters are done).
 6. A 2D embedding map (UMAP) for exploration.
 7. Captions and OCR through a local vision-language model.
 

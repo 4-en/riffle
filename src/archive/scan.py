@@ -27,6 +27,12 @@ MAKE, MODEL, DATETIME = 0x010F, 0x0110, 0x0132
 EXIF_IFD, GPS_IFD = 0x8769, 0x8825
 DATETIME_ORIGINAL, OFFSET_TIME_ORIGINAL = 0x9003, 0x9011
 LENS_MAKE, LENS_MODEL = 0xA433, 0xA434
+EXPOSURE_TIME, F_NUMBER, ISO = 0x829A, 0x829D, 0x8827
+FOCAL_LENGTH, FOCAL_LENGTH_35 = 0x920A, 0xA405
+
+# Bump when read_metadata extracts more fields; unchanged files are then re-read
+# (header only) on the next scan without recomputing any derived data.
+META_VERSION = 2
 
 
 @dataclass
@@ -48,6 +54,7 @@ class ScanResult:
     missing: int = 0
     errors: int = 0
     unchanged: int = 0
+    metadata_refreshed: int = 0
 
 
 def _excluded(path_posix: str, patterns: list[str]) -> bool:
@@ -127,6 +134,16 @@ def _dms_to_deg(dms, ref) -> float | None:
     return deg
 
 
+def _number(value) -> float | None:
+    if isinstance(value, (tuple, list)):
+        value = value[0] if value else None
+    try:
+        x = float(value)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return x if x > 0 and x == x else None  # drop 0, negatives and NaN (0/0 rationals)
+
+
 def read_metadata(path: Path) -> dict:
     """Header-level metadata via Pillow. Does not decode pixel data."""
     with Image.open(path) as im:
@@ -159,6 +176,11 @@ def read_metadata(path: Path) -> dict:
         "lens": _clean(sub.get(LENS_MODEL)),
         "lat": lat,
         "lon": lon,
+        "focal_length": _number(sub.get(FOCAL_LENGTH)),
+        "focal_length_35": _number(sub.get(FOCAL_LENGTH_35)),
+        "aperture": _number(sub.get(F_NUMBER)),
+        "exposure_time": _number(sub.get(EXPOSURE_TIME)),
+        "iso": int(n) if (n := _number(sub.get(ISO))) else None,
     }
 
 
@@ -174,7 +196,10 @@ def _inspect(f: FoundFile) -> tuple[str | None, dict | None, str | None]:
         return sha, None, f"{type(e).__name__}: {e}"
 
 
-META_COLS = ("width", "height", "taken_at", "tz_offset", "camera", "lens", "lat", "lon")
+META_COLS = (
+    "width", "height", "taken_at", "tz_offset", "camera", "lens", "lat", "lon",
+    "focal_length", "focal_length_35", "aperture", "exposure_time", "iso",
+)
 
 
 def invalidate_derived(conn: sqlite3.Connection, cfg: Config, photo_id: int) -> None:
@@ -195,6 +220,7 @@ def _write(conn, f: FoundFile, sha, meta, error, photo_id=None) -> int:
         "size_bytes": f.size,
         "mtime": f.mtime,
         **{c: meta.get(c) for c in META_COLS},
+        "meta_version": META_VERSION,
         "status": "error" if error else "ok",
         "error": error,
     }
@@ -214,11 +240,12 @@ def scan(conn: sqlite3.Connection, cfg: Config, workers: int = 8, progress=None)
 
     existing = {
         (r["source"], r["rel_path"]): r
-        for r in conn.execute("SELECT id, source, rel_path, sha256, size_bytes, mtime, status FROM photos")
+        for r in conn.execute("SELECT id, source, rel_path, sha256, size_bytes, mtime, status, meta_version FROM photos")
     }
     seen = {(f.source, f.rel_path) for f in images}
 
     todo: list[tuple[FoundFile, sqlite3.Row | None]] = []
+    stale_meta: list[tuple[FoundFile, int]] = []
     for f in images:
         row = existing.get((f.source, f.rel_path))
         if (
@@ -228,6 +255,8 @@ def scan(conn: sqlite3.Connection, cfg: Config, workers: int = 8, progress=None)
             and row["mtime"] == f.mtime
         ):
             result.unchanged += 1
+            if row["status"] == "ok" and row["meta_version"] < META_VERSION:
+                stale_meta.append((f, row["id"]))
             continue
         todo.append((f, row))
 
@@ -258,6 +287,10 @@ def scan(conn: sqlite3.Connection, cfg: Config, workers: int = 8, progress=None)
                 _write(conn, f, sha, meta, error)
                 result.added += 1
 
+    if stale_meta:
+        _refresh_metadata(conn, stale_meta, workers, progress)
+        result.metadata_refreshed = len(stale_meta)
+
     for rows in vanished.values():
         for row in rows:
             if row["status"] != "missing":
@@ -265,3 +298,27 @@ def scan(conn: sqlite3.Connection, cfg: Config, workers: int = 8, progress=None)
                 result.missing += 1
     conn.commit()
     return result
+
+
+def _refresh_metadata(conn, items: list[tuple[FoundFile, int]], workers: int, progress=None) -> None:
+    """Re-read EXIF for unchanged files catalogued by an older META_VERSION."""
+
+    def read(item):
+        f, _ = item
+        try:
+            return read_metadata(f.abs_path)
+        except Exception as e:  # noqa: BLE001 - keep the old metadata
+            log.warning("%s: %s", f.abs_path, e)
+            return None
+
+    sets = ", ".join(f"{c} = ?" for c in META_COLS)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = pool.map(read, items)
+        if progress:
+            results = progress(results, total=len(items), desc="metadata")
+        for (_, photo_id), meta in zip(items, results):
+            if meta is not None:
+                conn.execute(
+                    f"UPDATE photos SET {sets}, meta_version = ? WHERE id = ?",
+                    [*(meta.get(c) for c in META_COLS), META_VERSION, photo_id],
+                )

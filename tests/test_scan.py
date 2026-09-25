@@ -31,6 +31,9 @@ def test_exif_metadata(cfg, conn):
     assert p["lon"] == pytest.approx(116.3833, abs=1e-3)
     # Orientation 6: stored dimensions are as displayed.
     assert (p["width"], p["height"]) == (400, 600)
+    assert p["focal_length"] == 50 and p["focal_length_35"] == 50
+    assert p["aperture"] == 4 and p["iso"] == 400
+    assert p["exposure_time"] == pytest.approx(0.004)
     assert len(p["sha256"]) == 64
 
 
@@ -85,3 +88,35 @@ def test_changed_file_invalidates_derived_data(cfg, conn, archive_dir):
     assert q["sha256"] != p["sha256"]
     assert q["phash"] is None
     assert not thumb.exists()
+
+
+def test_v1_catalogue_is_migrated_and_metadata_backfilled(cfg, archive_dir):
+    """A catalogue from before the exposure columns existed gets them filled in
+    on the next scan, without invalidating derived data."""
+    import sqlite3
+
+    from archive import db
+
+    path = cfg.db_path
+    path.parent.mkdir(parents=True)
+    old = sqlite3.connect(path)
+    old.executescript(db.SCHEMA)
+    old.execute("PRAGMA user_version = 1")
+    old.commit()
+    old.close()
+
+    conn = db.connect(path)  # migrates to v2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    scan(conn, cfg)
+    # Simulate rows written by the old version: no exposure data, stale meta_version.
+    conn.execute("UPDATE photos SET iso = NULL, aperture = NULL, meta_version = 0, phash = 'keep'")
+    conn.commit()
+
+    result = scan(conn, cfg)
+    assert result.unchanged == 5 and result.changed == 0
+    assert result.metadata_refreshed == 4  # the broken file stays an error
+    p = photo(conn, "IMG_0001.jpg")
+    assert p["iso"] == 400 and p["aperture"] == 4
+    assert p["phash"] == "keep"  # derived data untouched
+    assert scan(conn, cfg).metadata_refreshed == 0
+    conn.close()

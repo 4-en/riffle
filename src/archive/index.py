@@ -42,6 +42,8 @@ def _index_steps(conn, cfg: Config, progress, report: Callable[[str], None]) -> 
         f"scan: {len(r.images)} images ({r.added} new, {r.changed} changed, {r.moved} moved, "
         f"{r.unchanged} unchanged, {r.missing} missing, {r.errors} errors)"
     )
+    if r.metadata_refreshed:
+        report(f"metadata: re-read EXIF for {r.metadata_refreshed} photos")
 
     matched, unmatched = match_raws(conn, cfg, r.raws)
     report(f"raws: {matched} matched, {unmatched} unmatched")

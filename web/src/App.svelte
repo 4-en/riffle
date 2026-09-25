@@ -1,7 +1,7 @@
 <script>
   import { untrack } from 'svelte';
   import { view, readUrl, urlFor, clearSearch } from './lib/state.svelte.js';
-  import { fetchResults, fetchTags, fetchIndexStatus, fetchSources } from './lib/api.js';
+  import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources } from './lib/api.js';
   import TopBar from './components/TopBar.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import Grid from './components/Grid.svelte';
@@ -22,20 +22,23 @@
   let token = 0;
   let loaded = false; // first page of the current query has arrived
 
-  let tagsToken = 0;
-  function loadTags() {
-    const mine = ++tagsToken;
-    fetchTags(view.tags)
-      .then((t) => {
-        if (mine === tagsToken) tags = t;
+  let facets = $state(null);
+  let sidebarToken = 0;
+  function loadSidebar() {
+    const mine = ++sidebarToken;
+    Promise.all([fetchTags(view), fetchFacets(view)])
+      .then(([t, f]) => {
+        if (mine !== sidebarToken) return;
+        tags = t;
+        facets = f;
       })
       .catch((e) => (error = e.message));
   }
 
-  // Tag counts are relative to the current tag filter.
+  // Tag counts and filter options are relative to the current filter.
   $effect(() => {
-    view.tags;
-    untrack(loadTags);
+    view.tags, JSON.stringify(view.filters);
+    untrack(loadSidebar);
   });
 
   // Background indexing: poll while a run is active, then refresh everything when it ends.
@@ -54,7 +57,7 @@
         indexStatus = s;
         if (refreshPending && !s.running) {
           refreshPending = false;
-          loadTags();
+          loadSidebar();
           reset();
         }
         if (!s.running) break;
@@ -102,9 +105,9 @@
     loadMore();
   }
 
-  // Re-query whenever the search or tag filter changes.
+  // Re-query whenever the search or filters change.
   $effect(() => {
-    view.q, view.similar, view.tags;
+    view.q, view.similar, view.tags, JSON.stringify(view.filters);
     untrack(reset);
   });
 
@@ -161,7 +164,7 @@
 <div class="flex h-full flex-col">
   <TopBar bind:this={topBar} {total} {loading} {indexStatus} textSearch={tags?.text_search ?? true} />
   <div class="flex min-h-0 flex-1">
-    <Sidebar {tags} />
+    <Sidebar {tags} {facets} />
     <main class="min-w-0 flex-1 overflow-y-auto">
       {#if error}
         <div class="m-4 rounded border border-red-900 bg-red-950/50 p-3 text-sm text-red-300">

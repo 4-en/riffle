@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS photos (
@@ -77,13 +77,33 @@ def connect(path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+# Applied in order to bring a catalogue from version (index + 1) to (index + 2).
+MIGRATIONS = [
+    # v2: exposure metadata. meta_version tells scan to re-read EXIF (header only)
+    # for photos catalogued by an older version, without touching derived data.
+    """
+    ALTER TABLE photos ADD COLUMN focal_length REAL;
+    ALTER TABLE photos ADD COLUMN focal_length_35 REAL;
+    ALTER TABLE photos ADD COLUMN aperture REAL;
+    ALTER TABLE photos ADD COLUMN exposure_time REAL;
+    ALTER TABLE photos ADD COLUMN iso INTEGER;
+    ALTER TABLE photos ADD COLUMN meta_version INTEGER NOT NULL DEFAULT 0;
+    """,
+]
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version > SCHEMA_VERSION:
         raise RuntimeError(
             f"Catalogue schema v{version} is newer than this tool (v{SCHEMA_VERSION})."
         )
-    conn.executescript(SCHEMA)
+    if version == SCHEMA_VERSION:
+        return
+    conn.executescript(SCHEMA)  # v1 tables; IF NOT EXISTS keeps existing data
+    for target, script in enumerate(MIGRATIONS[max(version, 1) - 1 :], start=max(version, 1) + 1):
+        conn.executescript(script)
+        conn.execute(f"PRAGMA user_version = {target}")
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
 
