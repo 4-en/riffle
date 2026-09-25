@@ -73,6 +73,10 @@ class FlagsIn(BaseModel):
     ops: list[FlagOp]
 
 
+class ResetIn(BaseModel):
+    scope: str = "filtered"  # "all": every flag; "filtered": photos within the query-string filters
+
+
 class ExportIn(BaseModel):
     folder: str  # parent folder
     name: str = ""  # subfolder to create in it (optional)
@@ -394,13 +398,17 @@ def create_app(
             items.sort(key=lambda t: -t["count"])
         photos = conn.execute("SELECT COUNT(*) FROM photos WHERE status = 'ok'").fetchone()[0]
         unmatched = conn.execute("SELECT COUNT(*) FROM raws WHERE photo_id IS NULL").fetchone()[0]
-        picks = conn.execute(
-            f"SELECT COUNT(*) FROM photos p WHERE p.status = 'ok' AND {FLAG_EXPR} = 'pick'"
-        ).fetchone()[0]
+        flag_counts = dict(
+            conn.execute(
+                f"SELECT {FLAG_EXPR}, COUNT(*) FROM photos p WHERE p.status = 'ok' GROUP BY 1"
+            ).fetchall()
+        )
+        picks, rejects = flag_counts.get("pick", 0), flag_counts.get("reject", 0)
         return {
             "families": families,
             "photos": photos,
             "picks": picks,
+            "rejects": rejects,
             "unmatched_raws": unmatched,
             "model_id": model_id,
             "text_search": state["encoder"] is not None,
@@ -424,6 +432,20 @@ def create_app(
             )
         except ValueError as e:
             raise HTTPException(400, str(e))
+        return {"previous": {str(k): v for k, v in previous.items()}}
+
+    @app.post("/api/flags/reset", dependencies=[Depends(require_json)])
+    def reset_flags(body: ResetIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+        """Unflag everything, or every photo within the filters. Returns the
+        previous flags, like /api/flags, so the reset can be undone."""
+        if body.scope == "all":
+            previous = selections.clear_flags(conn, cfg.selections_path)
+        elif body.scope == "filtered":
+            where, params = flt.where(model_id)
+            ids = [r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)]
+            previous = selections.clear_flags(conn, cfg.selections_path, ids)
+        else:
+            raise HTTPException(400, "scope must be all or filtered")
         return {"previous": {str(k): v for k, v in previous.items()}}
 
     @app.get("/api/ids")

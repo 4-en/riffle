@@ -183,3 +183,21 @@ def test_sharpness_scores_the_in_focus_region():
     full, local = sharpness(texture), sharpness(subject)
     assert local == pytest.approx(full, rel=0.3)
     assert local > 5 * sharpness(background)
+
+
+def test_reset_flags_all_or_filtered(client, conn):
+    a, b, c = ids_of(conn, "IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.png")
+    flag(client, [a, b], "pick")
+    flag(client, [c], "reject")
+    assert (client.get("/api/tags").json()["picks"], client.get("/api/tags").json()["rejects"]) == (2, 1)
+
+    # Only photos within the filters (here: the dated one) are unflagged.
+    res = client.post("/api/flags/reset", params={"date_from": "2024-01-01"}, json={"scope": "filtered"})
+    assert res.json()["previous"] == {str(a): "pick"}
+    assert names(client, flag="pick") == ["IMG_0002.jpg"]
+
+    res = client.post("/api/flags/reset", json={"scope": "all"})
+    assert res.json()["previous"] == {str(b): "pick", str(c): "reject"}
+    assert client.get("/api/facets").json()["flag"] == {"pick": 0, "reject": 0, "none": 4}
+    assert client.post("/api/flags/reset", json={"scope": "everything"}).status_code == 400
+    assert client.post("/api/flags/reset", content="{}").status_code == 415

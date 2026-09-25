@@ -1,9 +1,30 @@
 <script>
-  import { view } from '../lib/state.svelte.js';
+  import { view, activeFilterCount } from '../lib/state.svelte.js';
+  import { resetFlags } from '../lib/culling.svelte.js';
   import { fetchSources, addSource, removeSource, startIndex } from '../lib/api.js';
   import FolderBrowser from './FolderBrowser.svelte';
 
-  let { status, onchange } = $props();
+  // tags / facets: the app's current counts (global picks and rejects; flags within the filters).
+  let { status, onchange, tags = null, facets = null } = $props();
+
+  const flagged = $derived((tags?.picks ?? 0) + (tags?.rejects ?? 0));
+  const filtering = $derived(view.tags.length > 0 || activeFilterCount(view.filters) > 0);
+  const flaggedInFilters = $derived((facets?.flag?.pick ?? 0) + (facets?.flag?.reject ?? 0));
+  let resetNote = $state('');
+
+  async function reset(scope) {
+    const what = scope === 'all'
+      ? `all ${flagged} flagged photos (${tags.picks} picked, ${tags.rejects} rejected)`
+      : `the ${flaggedInFilters} flagged photos in the current filters`;
+    if (!confirm(`Unflag ${what}?\n\nThey become unflagged again. You can undo this with Ctrl+Z until you reload the page.`)) return;
+    try {
+      const n = await resetFlags(view, scope);
+      resetNote = `Unflagged ${n} photo${n === 1 ? '' : 's'}. Ctrl+Z undoes it.`;
+      error = '';
+    } catch (e) {
+      error = e.message;
+    }
+  }
 
   let sources = $state(null);
   let dir = $state(null);
@@ -116,6 +137,29 @@
           </div>
           {/snippet}
         </FolderBrowser>
+      </section>
+
+      <!-- Flags (deliberately low-key: a reset is rarely wanted) -->
+      <section>
+        <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">Flags</h3>
+        <p class="text-xs text-neutral-400">
+          {tags?.picks ?? 0} picked, {tags?.rejects ?? 0} rejected. Flags are saved in <span class="font-mono">selections.sqlite3</span>; back it up to keep your selection.
+        </p>
+        <div class="mt-2 flex flex-wrap gap-2">
+          {#if filtering}
+            <button
+              class="rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:border-red-800 hover:bg-red-950 disabled:opacity-40"
+              disabled={!flaggedInFilters}
+              onclick={() => reset('filtered')}>Unflag photos in the current filters ({flaggedInFilters})…</button
+            >
+          {/if}
+          <button
+            class="rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:border-red-800 hover:bg-red-950 disabled:opacity-40"
+            disabled={!flagged}
+            onclick={() => reset('all')}>Unflag all photos ({flagged})…</button
+          >
+        </div>
+        {#if resetNote}<p class="mt-1 text-xs text-emerald-400">{resetNote}</p>{/if}
       </section>
 
       <!-- Indexing -->

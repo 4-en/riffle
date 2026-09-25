@@ -394,5 +394,5 @@
 {/if}
 
 {#if view.library}
-  <Library status={indexStatus} onchange={() => pollIndex(true)} />
+  <Library status={indexStatus} onchange={() => pollIndex(true)} {tags} {facets} />
 {/if}

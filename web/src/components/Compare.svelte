@@ -79,6 +79,12 @@
     next();
   }
 
+  async function unflagAll() {
+    await setFlag(members.map((m) => m.id), null);
+    keep.clear();
+    hint = 'All photos here are unflagged again (Ctrl+Z undoes).';
+  }
+
   async function rejectAll() {
     await setFlag(members.map((m) => m.id), 'reject');
     next();
@@ -115,6 +121,7 @@
       e.preventDefault();
       applyKeep();
     } else if (k === 'X' && e.shiftKey) rejectAll();
+    else if (k === 'U' && e.shiftKey) unflagAll();
     else if (k === 'ArrowRight') focus = Math.min(members.length - 1, focus + 1);
     else if (k === 'ArrowLeft') focus = Math.max(0, focus - 1);
     else if (k === 'ArrowDown') focus = Math.min(members.length - 1, focus + cols);
@@ -152,13 +159,19 @@
     <h2 class="font-semibold">{title}</h2>
     <span class="text-xs text-neutral-400">{members.length} photos · {keep.size} to keep</span>
     <span class="hidden text-xs text-neutral-500 lg:inline">
-      Click or 1–9: keep · Enter: pick kept, reject rest · Shift+X: reject all · Z: zoom · P/X/U: flag focused
+      Click or 1–9: keep · Enter: pick kept, reject rest · Shift+X: reject all · Shift+U: unflag all · Z: zoom · P/X/U: flag focused
       {context.kind === 'review' ? '· N/B: next/back' : ''}
     </span>
     <div class="ml-auto flex items-center gap-2">
       <button
         class="rounded px-2.5 py-1 text-xs {zoom ? 'bg-sky-700 text-white' : 'border border-neutral-700 text-neutral-300 hover:bg-neutral-800'}"
         onclick={() => (zoom = !zoom)}>Zoom (Z)</button
+      >
+      <button
+        class="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+        title="Make every photo here unflagged again (Shift+U)"
+        disabled={!members.some((m) => flagOf(m))}
+        onclick={unflagAll}>Unflag all</button
       >
       <button class="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-300 hover:bg-red-900" onclick={rejectAll} disabled={!members.length}>Reject all</button>
       {#if context.kind === 'review'}

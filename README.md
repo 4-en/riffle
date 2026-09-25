@@ -68,6 +68,8 @@ A typical pass:
 3. Go through the rest in the grid or the loupe with P (pick), X (reject), U (unflag). In the loupe, the next photo comes up automatically.
 4. Filter by **Flag → Picked** to check the selection, then **Export** (top bar): choose the folder, the files (Images / Images + RAWs / RAWs only), and the layout (flat, or keeping the source folders).
 
+To start over, the compare view's **Unflag all** resets the stack you're looking at, and the **Flags** section at the bottom of **Library** unflags every photo (or only those in the current filters). Both can be undone with Ctrl+Z.
+
 Exports never overwrite anything: identical files already in the destination are skipped (so an interrupted export can simply be run again), and other name clashes get a `-1` suffix, with an image and its RAW keeping matching names. Each export writes an `export-manifest.csv`. The destination can't be inside a photo folder, where the copies would be indexed again.
 
 Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike (`stacks.min_similarity`) in `config.yaml`; adjust and re-run `archive index` (fast, no re-embedding) if they are too eager or too strict.
@@ -79,7 +81,7 @@ Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike 
 | Anywhere | `/` search · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
 | Grid | click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected · `R` review stacks |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag (and go to the next photo) |
-| Compare | click or `1`–`9` keep · `Enter` pick kept, reject rest · `Shift+X` reject all · `P` / `X` / `U` flag the focused photo · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
+| Compare | click or `1`–`9` keep · `Enter` pick kept, reject rest · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag the focused photo · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
 
 ## Tags
 

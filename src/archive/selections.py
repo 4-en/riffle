@@ -100,3 +100,29 @@ def set_flags(
         return previous
     finally:
         conn.close()
+
+
+def clear_flags(
+    catalogue: sqlite3.Connection, path: str | Path, photo_ids: list[int] | None = None
+) -> dict[int, str]:
+    """Unflag the given photos, or everything (including flags of files no longer
+    in the library) when ``photo_ids`` is None. Returns the previous flags of the
+    affected catalogue photos, for undo."""
+    conn = connect(path)
+    try:
+        flags = dict(conn.execute("SELECT sha256, flag FROM flags").fetchall())
+        rows = catalogue.execute("SELECT id, sha256 FROM photos WHERE sha256 != ''").fetchall()
+        if photo_ids is not None:
+            wanted = set(photo_ids)
+            rows = [r for r in rows if r["id"] in wanted]
+        previous = {r["id"]: flags[r["sha256"]] for r in rows if r["sha256"] in flags}
+        with conn:
+            if photo_ids is None:
+                conn.execute("DELETE FROM flags")
+            else:
+                conn.executemany(
+                    "DELETE FROM flags WHERE sha256 = ?", [(r["sha256"],) for r in rows]
+                )
+        return previous
+    finally:
+        conn.close()
