@@ -30,6 +30,7 @@
     loading = true;
     error = '';
     hint = '';
+    rejectArmed = false;
     try {
       if (context.kind === 'ids') {
         members = await Promise.all(
@@ -77,9 +78,14 @@
     loadMembers();
   }
 
+  // Enter with nothing kept asks first; a second Enter rejects them all.
+  let rejectArmed = $state(false);
+
   async function applyKeep() {
     if (!keep.size) {
-      hint = 'Choose the photo(s) to keep first (click or 1–9), or Shift+X to reject all.';
+      if (rejectArmed) return rejectAll();
+      rejectArmed = true;
+      hint = `Nothing is kept. Press Enter again to reject all ${members.length}, or choose keepers (click or 1–9).`;
       return;
     }
     const rest = members.filter((m) => !keep.has(m.id)).map((m) => m.id);
@@ -97,6 +103,7 @@
   }
 
   async function rejectAll() {
+    rejectArmed = false;
     await setFlag(members.map((m) => m.id), 'reject');
     next();
   }
@@ -119,6 +126,7 @@
   function toggle(i) {
     const m = members[i];
     if (!m) return;
+    rejectArmed = false;
     keep.has(m.id) ? keep.delete(m.id) : keep.add(m.id);
     focus = i;
     hint = '';
@@ -132,6 +140,10 @@
   function onkeydown(e) {
     if (e.target instanceof HTMLInputElement) return;
     const k = e.key;
+    if (k !== 'Enter' && k !== 'Shift' && rejectArmed) {
+      rejectArmed = false; // any other key cancels the pending "reject all"
+      hint = '';
+    }
     if (k === 'Escape') close();
     else if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'z') {
       e.preventDefault();
@@ -146,6 +158,7 @@
     } else if (k === 'Enter') {
       e.preventDefault();
       applyKeep();
+      return;
     } else if (k === 'X' && e.shiftKey) rejectAll();
     else if (k === 'U' && e.shiftKey) unflagAll();
     else if (k === 'ArrowRight') focus = Math.min(members.length - 1, focus + 1);
@@ -200,7 +213,7 @@
         disabled={!members.some((m) => flagOf(m))}
         onclick={unflagAll}>Unflag all</button
       >
-      <button class="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-300 hover:bg-red-900" onclick={rejectAll} disabled={!members.length}>Reject all</button>
+      <button class="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-300 hover:bg-red-900" onclick={rejectAll} disabled={!members.length} title="Reject every photo here (Shift+X)">Reject all (Shift+X)</button>
       {#if context.kind === 'review'}
         <button class="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-300 hover:bg-neutral-800" onclick={() => next(1)}>Skip (N)</button>
       {/if}

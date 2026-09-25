@@ -85,7 +85,7 @@ Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike 
 | Anywhere | `O` calendar / map overview (with a grouping) · `/` search · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
 | Grid | click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected · `R` review stacks |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag (and go to the next photo) |
-| Compare | click or `1`–`9` keep · `A` keep the suggested one · `Enter` pick kept, reject rest · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag the focused photo · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
+| Compare | click or `1`–`9` keep · `A` keep the suggested one · `Enter` pick kept, reject rest (with nothing kept: press twice to reject all) · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag the focused photo · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
 
 ## Location
 
