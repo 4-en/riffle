@@ -185,6 +185,14 @@
             <dt class="text-neutral-500">Exposure</dt>
             <dd>{exposure(photo)}</dd>
           {/if}
+          {#if photo.export}
+            <dt class="text-neutral-500">Exported</dt>
+            <dd>
+              {photo.export.times === 1 ? 'once' : `${photo.export.times}×`}, last on
+              {new Date(photo.export.last_at * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+              <span class="block break-all font-mono text-[11px] text-neutral-400">{photo.export.last_folder}</span>
+            </dd>
+          {/if}
           {#if photo.clip_highlights != null}
             {@const hi = photo.clip_highlights * 100}
             {@const lo = photo.clip_shadows * 100}

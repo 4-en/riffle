@@ -309,6 +309,7 @@ CREATE TABLE flags (
 - Keyed by content hash, so flags survive deleting `data/`, re-indexing, and moving or renaming files. Exact copies share a flag. Editing a file (new content) drops its flag.
 - Unflagged photos have no row.
 - Catalogue connections `ATTACH` it as `sel` (read-only in the server), so filters, counts, and listings join flags in plain SQL (`selections.flag_expr`).
+- **Export history** (selections schema v2): an `exported` table (sha256, first/last time, count, last folder), filled when an export has put a photo's files in place (copied, or already there). It is independent of the flag, so a photo can be picked (or rejected) and exported at once. Surfaced as a ↗ badge, the `exported=true|false` filter, the photo view, and the export option "only photos not exported before"; `POST /api/exported/reset` forgets it.
 - Not written as XMP sidecars, which would put files next to the originals (principle 1). Exporting flags to XMP for Lightroom or darktable is a candidate (§14).
 
 ## 9. Pipeline
@@ -457,7 +458,8 @@ Editing this file and rerunning `riffle tag` is the whole workflow for changing 
 | GET | `/api/stacks/{id}` | All photos of a stack, in capture order |
 | GET | `/api/groups?group=&<filters>` | Only the groups of a grouped listing, each with count, first/last capture, and a cover photo (a pick if any, else the first); location groups add a label and a centre (mean position). Used by the calendar and map overviews |
 | GET | `/api/suggest?ids=` | Suggested keeper among photos, with the sharpness / exposure / quality scores behind it |
-| POST / GET | `/api/export?<filters>` `{folder, name, content, raw_fallback, structure, scope}` | Start / status of an export of the picks (`scope`: `all`, or `filtered` by the query-string filters); runs in the background |
+| POST | `/api/exported/reset?<filters>` `{scope}` | Forget the export history (all, or within the filters) |
+| POST / GET | `/api/export?<filters>` `{folder, name, content, raw_fallback, structure, scope, add_location, only_new}` | Start / status of an export of the picks (`scope`: `all`, or `filtered` by the query-string filters); runs in the background |
 | GET | `/api/location-history` | Referenced history files (format, date span, counts, errors) and photos placed per source |
 | POST / DELETE | `/api/location-history` `{path}` | Add (validated by parsing) or remove a history file in `config.yaml`, then start indexing |
 | GET | `/api/raws/unmatched` | Unmatched RAW list |

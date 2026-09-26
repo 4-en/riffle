@@ -444,7 +444,15 @@
 {/if}
 
 {#if view.exporting}
-  <ExportDialog picksTotal={tags?.picks ?? 0} picksFiltered={facets?.flag?.pick ?? 0} hasHistory={tags?.location_history ?? false} />
+  <ExportDialog
+    picksTotal={tags?.picks ?? 0}
+    picksFiltered={facets?.flag?.pick ?? 0}
+    hasHistory={tags?.location_history ?? false}
+    ondone={() => {
+      loadSidebar();
+      reset();
+    }}
+  />
 {/if}
 
 {#if view.raws}

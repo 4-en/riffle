@@ -70,7 +70,8 @@
         <li>
           <strong class="text-neutral-100">Export.</strong> <em>Export</em> (top right) copies your picks into a new folder: images,
           images with their RAWs, or only the RAWs. With a location history, the copies can get the position added. Nothing
-          already in the destination is overwritten.
+          already in the destination is overwritten. Exported photos are marked ↗, and <em>Only photos not exported before</em>
+          exports just the new picks next time.
         </li>
       </ol>
 

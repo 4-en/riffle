@@ -1,6 +1,7 @@
 <script>
   import { view, activeFilterCount } from '../lib/state.svelte.js';
   import { resetFlags } from '../lib/culling.svelte.js';
+  import { postResetExported } from '../lib/api.js';
   import { fetchSources, addSource, removeSource, startIndex, fetchLocationHistory, addLocationHistory, removeLocationHistory } from '../lib/api.js';
   import FolderBrowser from './FolderBrowser.svelte';
 
@@ -38,6 +39,18 @@
   const filtering = $derived(view.tags.length > 0 || activeFilterCount(view.filters) > 0);
   const flaggedInFilters = $derived((facets?.flag?.pick ?? 0) + (facets?.flag?.reject ?? 0));
   let resetNote = $state('');
+
+  async function forgetExports() {
+    if (!confirm(`Forget that ${tags.exported} photos were exported?\n\nThe exported files are not touched. Riffle stops marking these photos as exported, and "only new" exports include them again. This cannot be undone.`)) return;
+    try {
+      const { cleared } = await postResetExported(view, 'all');
+      resetNote = `Forgot the export history of ${cleared} photo${cleared === 1 ? '' : 's'}.`;
+      onchange(); // refresh counts and the grid badges
+      error = '';
+    } catch (e) {
+      error = e.message;
+    }
+  }
 
   async function reset(scope) {
     const what = scope === 'all'
@@ -239,6 +252,12 @@
             class="rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:border-red-800 hover:bg-red-950 disabled:opacity-40"
             disabled={!flagged}
             onclick={() => reset('all')}>Unflag all photos ({flagged})…</button
+          >
+          <button
+            class="rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:border-red-800 hover:bg-red-950 disabled:opacity-40"
+            disabled={!tags?.exported}
+            title="Photos stay exported on disk; Riffle just stops marking them (↗) and 'only new' exports include them again"
+            onclick={forgetExports}>Forget export history ({tags?.exported ?? 0})…</button
           >
         </div>
         {#if resetNote}<p class="mt-1 text-xs text-emerald-400">{resetNote}</p>{/if}

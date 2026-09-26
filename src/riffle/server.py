@@ -28,7 +28,7 @@ from .filters import GROUP_KEYS, LOCATION_KEYS, PhotoFilter, facets, location_la
 from . import selections
 from .export import CONTENT, STRUCTURE, ExportError, check_destination, run_export
 from .jobs import BackgroundJob, index_job
-from .selections import FLAG_EXPR, flag_expr
+from .selections import EXPORTED_EXPR, FLAG_EXPR, flag_expr
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +89,7 @@ class ExportIn(BaseModel):
     structure: str = "flat"  # flat | folders
     scope: str = "all"  # all picks, or "filtered": picks within the query-string filters
     add_location: bool = True  # write timeline positions into copies of photos without GPS
+    only_new: bool = False  # skip photos that were exported before
 
 
 COLLAPSE = ("dupes", "stacks", "none")
@@ -181,6 +182,7 @@ def create_app(
         rows = conn.execute(
             f"""SELECT p.id, p.source, p.rel_path, p.width, p.height, p.taken_at, p.dupe_group,
                        p.stack_id, p.sharpness, p.clip_highlights, p.clip_shadows, {FLAG_EXPR} AS flag,
+                       {EXPORTED_EXPR} AS exported,
                        EXISTS (SELECT 1 FROM raws r WHERE r.photo_id = p.id) AS has_raw,
                        (SELECT COUNT(*) FROM photos d
                          WHERE d.dupe_group = p.dupe_group AND d.status = 'ok') AS dupe_count,
@@ -210,6 +212,7 @@ def create_app(
                 "clip_highlights": r["clip_highlights"],
                 "clip_shadows": r["clip_shadows"],
                 "flag": r["flag"],
+                "exported": bool(r["exported"]),
                 "thumb": f"/thumbs/{r['id']}.jpg",
             }
             if scores is not None:
@@ -428,6 +431,7 @@ def create_app(
                 "region_key": f"{cc}|{region}",
                 "country_key": cc,
             }
+        photo["export"] = selections.export_info(cfg.selections_path, r["sha256"]) if r["sha256"] else None
         photo["flag"] = conn.execute(
             f"SELECT {FLAG_EXPR} FROM photos p WHERE p.id = ?", (photo_id,)
         ).fetchone()[0]
@@ -507,11 +511,15 @@ def create_app(
             ).fetchall()
         )
         picks, rejects = flag_counts.get("pick", 0), flag_counts.get("reject", 0)
+        exported = conn.execute(
+            f"SELECT COUNT(*) FROM photos p WHERE p.status = 'ok' AND {EXPORTED_EXPR}"
+        ).fetchone()[0]
         return {
             "families": families,
             "photos": photos,
             "picks": picks,
             "rejects": rejects,
+            "exported": exported,
             "location_history": bool(cfg.location_history),
             "unmatched_raws": unmatched,
             "model_id": model_id,
@@ -537,6 +545,19 @@ def create_app(
         except ValueError as e:
             raise HTTPException(400, str(e))
         return {"previous": {str(k): v for k, v in previous.items()}}
+
+    @app.post("/api/exported/reset", dependencies=[Depends(require_json)])
+    def reset_exported(body: ResetIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+        """Forget the export history, of everything or of the photos within the filters."""
+        if body.scope == "all":
+            n = selections.clear_exported(conn, cfg.selections_path)
+        elif body.scope == "filtered":
+            where, params = flt.where(model_id)
+            ids = [r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)]
+            n = selections.clear_exported(conn, cfg.selections_path, ids)
+        else:
+            raise HTTPException(400, "scope must be all or filtered")
+        return {"cleared": n}
 
     @app.post("/api/flags/reset", dependencies=[Depends(require_json)])
     def reset_flags(body: ResetIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
@@ -664,12 +685,13 @@ def create_app(
             r[0]
             for r in conn.execute(
                 f"""SELECT p.id FROM photos p WHERE {where} AND {FLAG_EXPR} = 'pick'
+                    {f"AND NOT {EXPORTED_EXPR}" if body.only_new else ""}
                     ORDER BY p.taken_at IS NULL, p.taken_at, p.source, p.rel_path""",
                 params,
             )
         ]
         if not ids:
-            raise HTTPException(400, "no picked photos to export")
+            raise HTTPException(400, "no new picked photos to export" if body.only_new else "no picked photos to export")
         started = export_job.start(
             photo_ids=ids,
             folder=str(folder),

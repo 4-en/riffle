@@ -242,11 +242,16 @@
               <span class="rounded bg-black/70 px-1 text-[10px] font-semibold text-neutral-200">×{item.dupe_count}</span>
             {/if}
           </div>
-          {#if flag === 'pick'}
-            <span class="pointer-events-none absolute right-1 top-1 rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-black" title="Picked">✓</span>
-          {:else if flag === 'reject'}
-            <span class="pointer-events-none absolute right-1 top-1 rounded-full bg-red-600 px-1.5 text-[11px] font-bold text-white" title="Rejected">✕</span>
-          {/if}
+          <div class="pointer-events-none absolute right-1 top-1 flex gap-1">
+            {#if item.exported}
+              <span class="rounded-full bg-sky-600 px-1.5 text-[11px] font-bold text-white" title="Exported before">↗</span>
+            {/if}
+            {#if flag === 'pick'}
+              <span class="rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-black" title="Picked">✓</span>
+            {:else if flag === 'reject'}
+              <span class="rounded-full bg-red-600 px-1.5 text-[11px] font-bold text-white" title="Rejected">✕</span>
+            {/if}
+          </div>
           {#if item.stack_count > 1}
             <button
               class="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 text-[10px] font-semibold text-sky-200 hover:bg-sky-700 hover:text-white"

@@ -1,8 +1,9 @@
-"""Pick/reject flags: the one piece of user-created data.
+"""Pick/reject flags and export history: the user-created data.
 
 Stored in their own SQLite file, outside ``data_dir``, keyed by file content
-(sha256). Deleting ``data/`` and re-indexing, or moving files, keeps the flags;
-editing a file (new content) drops its flag. Unflagged photos have no row.
+(sha256). Deleting the derived data and re-indexing, or moving files, keeps them;
+editing a file (new content) drops them. Unflagged photos have no flags row;
+photos never exported have no exported row. Flag and exported are independent.
 """
 
 from __future__ import annotations
@@ -21,6 +22,17 @@ CREATE TABLE IF NOT EXISTS flags (
   rel_path   TEXT,
   updated_at REAL NOT NULL
 );
+
+-- v2: which photos have been exported (independent of the flag).
+CREATE TABLE IF NOT EXISTS exported (
+  sha256      TEXT PRIMARY KEY,
+  first_at    REAL NOT NULL,
+  last_at     REAL NOT NULL,
+  times       INTEGER NOT NULL DEFAULT 1,
+  last_folder TEXT,             -- where the last export went
+  source      TEXT,             -- last known location, for humans and recovery
+  rel_path    TEXT
+);
 """
 
 def flag_expr(alias: str = "p") -> str:
@@ -32,6 +44,14 @@ def flag_expr(alias: str = "p") -> str:
 FLAG_EXPR = flag_expr("p")
 
 
+def exported_expr(alias: str = "p") -> str:
+    """SQL: 1 if the photo was exported before, else 0 (needs "sel" attached)."""
+    return f"EXISTS (SELECT 1 FROM sel.exported ex WHERE ex.sha256 = {alias}.sha256)"
+
+
+EXPORTED_EXPR = exported_expr("p")
+
+
 def connect(path: str | Path) -> sqlite3.Connection:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,7 +59,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
-    conn.execute("PRAGMA user_version = 1")
+    conn.execute("PRAGMA user_version = 2")
     conn.commit()
     return conn
 
@@ -124,5 +144,57 @@ def clear_flags(
                     "DELETE FROM flags WHERE sha256 = ?", [(r["sha256"],) for r in rows]
                 )
         return previous
+    finally:
+        conn.close()
+
+
+def _photos(catalogue: sqlite3.Connection, photo_ids: list[int] | None):
+    rows = catalogue.execute("SELECT id, sha256, source, rel_path FROM photos WHERE sha256 != ''").fetchall()
+    if photo_ids is not None:
+        wanted = set(photo_ids)
+        rows = [r for r in rows if r["id"] in wanted]
+    return rows
+
+
+def mark_exported(catalogue: sqlite3.Connection, path: str | Path, photo_ids: list[int], folder: str) -> int:
+    """Record that these photos were exported (to ``folder``). Returns how many."""
+    rows = _photos(catalogue, photo_ids)
+    now = time.time()
+    conn = connect(path)
+    try:
+        with conn:
+            conn.executemany(
+                """INSERT INTO exported (sha256, first_at, last_at, times, last_folder, source, rel_path)
+                   VALUES (?, ?, ?, 1, ?, ?, ?)
+                   ON CONFLICT (sha256) DO UPDATE SET last_at = excluded.last_at,
+                     times = exported.times + 1, last_folder = excluded.last_folder,
+                     source = excluded.source, rel_path = excluded.rel_path""",
+                [(r["sha256"], now, now, folder, r["source"], r["rel_path"]) for r in rows],
+            )
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def export_info(path: str | Path, sha256: str) -> dict | None:
+    conn = connect(path)
+    try:
+        r = conn.execute(
+            "SELECT first_at, last_at, times, last_folder FROM exported WHERE sha256 = ?", (sha256,)
+        ).fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def clear_exported(catalogue: sqlite3.Connection, path: str | Path, photo_ids: list[int] | None = None) -> int:
+    """Forget the export history of these photos, or all of it. Returns how many rows."""
+    conn = connect(path)
+    try:
+        with conn:
+            if photo_ids is None:
+                return conn.execute("DELETE FROM exported").rowcount
+            shas = [(r["sha256"],) for r in _photos(catalogue, photo_ids)]
+            return sum(conn.execute("DELETE FROM exported WHERE sha256 = ?", s).rowcount for s in shas)
     finally:
         conn.close()

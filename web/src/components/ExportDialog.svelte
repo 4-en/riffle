@@ -1,12 +1,13 @@
 <script>
   import { view, activeFilterCount } from '../lib/state.svelte.js';
-  import { startExport, fetchExportStatus } from '../lib/api.js';
+  import { startExport, fetchExportStatus, fetchPickExportCounts } from '../lib/api.js';
   import { saveSetting } from '../lib/culling.svelte.js';
   import FolderBrowser from './FolderBrowser.svelte';
 
   // picksTotal: all picks; picksFiltered: picks within the current filters.
   // hasHistory: a location history is configured (enables adding GPS to the copies).
-  let { picksTotal = 0, picksFiltered = 0, hasHistory = false } = $props();
+  // ondone(): an export finished (refresh the grid's "exported" badges).
+  let { picksTotal = 0, picksFiltered = 0, hasHistory = false, ondone = () => {} } = $props();
 
   function setting(key, fallback) {
     try {
@@ -24,19 +25,29 @@
   let rawFallback = $state(setting('rawFallback', true));
   let structure = $state(setting('structure', 'flat'));
   let addLocation = $state(setting('addLocation', true));
+  let onlyNew = $state(setting('onlyNew', false));
+  // Picks in the chosen scope that were not exported before.
+  let newCount = $state(null);
   const filtered = view.tags.length > 0 || activeFilterCount(view.filters) > 0;
   let scope = $state(filtered ? 'filtered' : 'all');
   let status = $state(null);
   let error = $state('');
   let copied = $state(false);
 
-  const count = $derived(scope === 'filtered' ? picksFiltered : picksTotal);
+  $effect(() => {
+    const s = scope;
+    fetchPickExportCounts(view, s)
+      .then((c) => (newCount = c.no))
+      .catch(() => (newCount = null));
+  });
+  const scopeCount = $derived(scope === 'filtered' ? picksFiltered : picksTotal);
+  const count = $derived(onlyNew && newCount != null ? newCount : scopeCount);
   const running = $derived(status?.running);
   const done = $derived(status && !status.running && status.finished_at && status.result);
 
   async function start() {
     error = '';
-    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, folder: dir.path })) saveSetting(`export.${k}`, v);
+    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, folder: dir.path })) saveSetting(`export.${k}`, v);
     try {
       status = await startExport(view, {
         folder: dir.path,
@@ -46,12 +57,14 @@
         structure,
         scope,
         add_location: hasHistory && addLocation,
+        only_new: onlyNew,
       });
       while (status.running) {
         await new Promise((r) => setTimeout(r, 500));
         status = await fetchExportStatus();
       }
       if (status.error) error = status.error;
+      else ondone();
     } catch (e) {
       error = e.message;
     }
@@ -91,6 +104,14 @@
           Picks in the current filters ({picksFiltered})
         </label>
       </fieldset>
+
+      <label class="{radio} -mt-2">
+        <input type="checkbox" bind:checked={onlyNew} disabled={running} class="mt-0.5" />
+        <span>
+          Only photos not exported before{newCount != null ? ` (${newCount} of ${scopeCount})` : ''}
+          <span class="block text-xs text-neutral-500">Exported photos are marked ↗ in the grid.</span>
+        </span>
+      </label>
 
       <fieldset class="grid gap-1 sm:grid-cols-3" disabled={running}>
         <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Files</legend>

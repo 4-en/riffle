@@ -2,7 +2,7 @@
 
 // EXIF filters, keyed by their API query parameter. Arrays are OR-combined values.
 const FILTER_ARRAYS = ['camera', 'lens', 'orientation', 'flag', 'country', 'region', 'place', 'loc_source'];
-const FILTER_SCALARS = ['date_from', 'date_to', 'focal_min', 'focal_max', 'aperture_min', 'aperture_max', 'iso_min', 'iso_max', 'gps'];
+const FILTER_SCALARS = ['date_from', 'date_to', 'focal_min', 'focal_max', 'aperture_min', 'aperture_max', 'iso_min', 'iso_max', 'gps', 'exported'];
 
 export function emptyFilters() {
   return Object.fromEntries([...FILTER_ARRAYS.map((k) => [k, []]), ...FILTER_SCALARS.map((k) => [k, ''])]);

@@ -92,6 +92,23 @@
       </ul>
     {/if}
 
+    {#if (facets.exported && facets.exported.yes > 0) || f.exported !== ''}
+      {@render heading('Exported')}
+      <div class="grid grid-cols-2 gap-1 px-2">
+        {#each [['true', 'Exported', facets.exported?.yes ?? 0], ['false', 'Not yet', facets.exported?.no ?? 0]] as [value, label, count] (value)}
+          <button
+            class="rounded border px-1 py-0.5 text-xs {f.exported === value
+              ? 'border-sky-700 bg-sky-700 text-white'
+              : 'border-neutral-700 text-neutral-300 hover:bg-neutral-800'}"
+            aria-pressed={f.exported === value}
+            onclick={() => (view.filters.exported = f.exported === value ? '' : value)}
+          >
+            {label} <span class="tabular-nums opacity-70">{count}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+
     {#if showDate}
       {@render heading('Date taken')}
       <div class="grid grid-cols-2 gap-1 px-2">

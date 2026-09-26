@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Query
 
-from .selections import FLAG_EXPR
+from .selections import EXPORTED_EXPR, FLAG_EXPR
 
 # EXIF dates are stored as written ("2024:05:01 10:00:00"); compare as "2024-05-01".
 DATE_EXPR = "replace(substr(p.taken_at, 1, 10), ':', '-')"
@@ -71,6 +71,7 @@ class PhotoFilter:
     orientation: list[str] = field(default_factory=list)
     gps: bool | None = None
     flag: list[str] = field(default_factory=list)  # needs the selections DB attached as "sel"
+    exported: bool | None = None  # exported before (selections DB) or not
     country: list[str] = field(default_factory=list)  # location keys (LOCATION_KEYS)
     region: list[str] = field(default_factory=list)
     place: list[str] = field(default_factory=list)
@@ -143,6 +144,9 @@ class PhotoFilter:
             clauses.append(f"{LOCATION_SOURCE} IN ({','.join('?' * len(self.loc_source))})")
             params += self.loc_source
 
+        if self.exported is not None and "exported" not in exclude:
+            clauses.append(EXPORTED_EXPR if self.exported else f"NOT {EXPORTED_EXPR}")
+
         if self.flag and "flag" not in exclude:
             parts = []
             named = [f for f in self.flag if f != "none"]
@@ -171,6 +175,7 @@ def photo_filter(
     orientation: list[str] = Query([]),
     gps: bool | None = None,
     flag: list[str] = Query([]),
+    exported: bool | None = None,
     country: list[str] = Query([]),
     region: list[str] = Query([]),
     place: list[str] = Query([]),
@@ -213,6 +218,7 @@ def photo_filter(
         orientation=list(dict.fromkeys(orientation)),
         gps=gps,
         flag=list(dict.fromkeys(flag)),
+        exported=exported,
         country=list(dict.fromkeys(country)),
         region=list(dict.fromkeys(region)),
         place=list(dict.fromkeys(place)),
@@ -276,6 +282,10 @@ def facets(conn: sqlite3.Connection, flt: PhotoFilter, model_id: str) -> dict:
         ).fetchall()
     )
     out["flag"] = {f: counts.get(f, 0) for f in FLAG_VALUES}
+
+    w, p = where("exported")
+    yes, total = conn.execute(f"SELECT COALESCE(SUM({EXPORTED_EXPR}), 0), COUNT(*) FROM photos p WHERE {w}", p).fetchone()
+    out["exported"] = {"yes": yes, "no": total - yes}
 
     w, p = where("exposure")
     sums = ", ".join(f"COALESCE(SUM({expr}), 0)" for expr in EXPOSURE.values())

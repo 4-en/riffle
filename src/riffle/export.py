@@ -250,6 +250,16 @@ def run_export(
         if bar:
             bar.update(1)
 
+    # Remember which photos are now in an export folder (copied now or already there).
+    from . import selections
+
+    exported_ids = sorted({f.photo_id for f in files if f.status in ("copied", "skipped") and f.kind != "sidecar"})
+    conn = db.connect(cfg.db_path)
+    try:
+        marked = selections.mark_exported(conn, cfg.selections_path, exported_ids, str(dest)) if exported_ids else 0
+    finally:
+        conn.close()
+
     manifest = _unique(dest / "export-manifest.csv")
     with open(manifest, "w", newline="") as fh:
         w = csv.writer(fh)
@@ -259,6 +269,7 @@ def run_export(
             w.writerow([f.photo_id, f.kind, src, str(f.target), f.status, f.location])
 
     summary = {
+        "marked": marked,
         "folder": str(dest),
         "photos": len(photo_ids),
         "copied": sum(f.status == "copied" for f in files),

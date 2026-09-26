@@ -64,6 +64,16 @@ export function startExport(view, body) {
   return send('POST', qs ? `/api/export?${qs}` : '/api/export', body);
 }
 export const fetchExportStatus = () => get('/api/export');
+/** Forget which photos were exported: all, or those within the current filters. */
+export function postResetExported(view, scope) {
+  const qs = scope === 'filtered' ? query(filterParams(view)) : '';
+  return send('POST', qs ? `/api/exported/reset?${qs}` : '/api/exported/reset', { scope });
+}
+/** Picks within a scope, split into exported before / not: {yes, no}. */
+export async function fetchPickExportCounts(view, scope) {
+  const base = scope === 'filtered' ? filterParams(view) : {};
+  return (await get('/api/facets', { ...base, flag: ['pick'] })).exported;
+}
 /** Unflag all photos (scope 'all') or those within the current filters ('filtered'). */
 export function postResetFlags(view, scope) {
   const qs = scope === 'filtered' ? query(filterParams(view)) : '';

@@ -134,3 +134,54 @@ def test_export_api(picked, tmp_path):
         assert inside.status_code == 400 and "inside the photo folder" in inside.json()["detail"]
         none = c.post("/api/export", params={"flag": "reject"}, json=body | {"scope": "filtered"})
         assert none.status_code == 400
+
+
+# ---- export history ------------------------------------------------------------------
+
+
+def wait_export(c):
+    deadline = time.time() + 20
+    while (status := c.get("/api/export").json())["running"] and time.time() < deadline:
+        time.sleep(0.05)
+    return status
+
+
+def test_exported_photos_are_marked_and_filterable(picked, conn, tmp_path):
+    cfg, ids = picked
+    one, three = ids
+    with TestClient(create_app(cfg, text_encoder=FakeClip().encode_text)) as c:
+        assert c.get("/api/facets").json()["exported"] == {"yes": 0, "no": 4}
+        c.post("/api/export", json={"folder": str(tmp_path), "name": "first"})
+        assert wait_export(c)["result"]["marked"] == 2
+
+        # Exported is independent of the flag: both stay "pick" and are now exported.
+        items = {i["id"]: i for i in c.get("/api/photos", params={"collapse": "none"}).json()["items"]}
+        assert items[one]["exported"] and items[one]["flag"] == "pick"
+        assert not any(i["exported"] for pid, i in items.items() if pid not in ids)
+        assert c.get("/api/facets").json()["exported"] == {"yes": 2, "no": 2}
+        assert {i["id"] for i in c.get("/api/photos", params={"exported": "true", "collapse": "none"}).json()["items"]} == set(ids)
+        assert c.get("/api/tags").json()["exported"] == 2
+        info = c.get(f"/api/photos/{one}").json()["export"]
+        assert info["times"] == 1 and info["last_folder"] == str(tmp_path / "first")
+
+        # A new pick; "only new" exports just that one.
+        new = photo(conn, "IMG_0002.jpg")["id"]
+        c.post("/api/flags", json={"ops": [{"ids": [new], "flag": "pick"}]})
+        c.post("/api/export", json={"folder": str(tmp_path), "name": "second", "only_new": True})
+        status = wait_export(c)
+        assert status["result"]["photos"] == 1 and status["result"]["marked"] == 1
+        assert files_in(tmp_path / "second") == ["IMG_0002.jpg", "export-manifest.csv"]
+        none_left = c.post("/api/export", json={"folder": str(tmp_path), "name": "third", "only_new": True})
+        assert none_left.status_code == 400 and "no new" in none_left.json()["detail"]
+
+        # Exporting again counts up.
+        c.post("/api/export", json={"folder": str(tmp_path), "name": "fourth"})
+        wait_export(c)
+        assert c.get(f"/api/photos/{one}").json()["export"]["times"] == 2
+
+        # Forgetting the history: within the filters, then all.
+        cleared = c.post("/api/exported/reset", params={"date_from": "2024-05-01"}, json={"scope": "filtered"})
+        assert cleared.json()["cleared"] == 1  # only IMG_0001 has a capture date
+        assert c.get("/api/facets").json()["exported"]["yes"] == 2
+        assert c.post("/api/exported/reset", json={"scope": "all"}).json()["cleared"] == 2
+        assert c.get(f"/api/photos/{one}").json()["export"] is None
