@@ -12,7 +12,7 @@
 # overlapping (e.g. "cats" and "animals"), because overlapping tags split the
 # probability between them. Stick to concrete, visible things.
 #
-# After editing, run `archive tag` (seconds; reuses stored embeddings).
+# After editing, run `riffle tag` (seconds; reuses stored embeddings).
 
 templates:
   - "a photo of {}"

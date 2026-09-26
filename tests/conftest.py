@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from archive import db
-from archive.config import config_from_dict
+from riffle import db
+from riffle.config import config_from_dict
 
 VOCAB = """
 templates: ["a photo of {}"]
@@ -26,7 +26,7 @@ def isolated_user_dirs(tmp_path_factory, monkeypatch):
     home = tmp_path_factory.mktemp("home")
     for var, sub in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "share"), ("XDG_CACHE_HOME", "cache")):
         monkeypatch.setenv(var, str(home / sub))
-    monkeypatch.delenv("ARCHIVE_CONFIG", raising=False)
+    monkeypatch.delenv("RIFFLE_CONFIG", raising=False)
     monkeypatch.chdir(home)
     return home
 
@@ -133,13 +133,13 @@ def fake_clip():
 
 def fake_index(cfg, progress=None, report=print):
     """The full pipeline with the fake encoder (same signature as run_index)."""
-    from archive.dupes import compute_phashes, group_duplicates
-    from archive.embed import embed_photos, load_embeddings
-    from archive.raws import match_raws
-    from archive.scan import scan
-    from archive.stacks import compute_stacks
-    from archive.tags import tag_photos
-    from archive.thumbs import build_thumbnails
+    from riffle.dupes import compute_phashes, group_duplicates
+    from riffle.embed import embed_photos, load_embeddings
+    from riffle.raws import match_raws
+    from riffle.scan import scan
+    from riffle.stacks import compute_stacks
+    from riffle.tags import tag_photos
+    from riffle.thumbs import build_thumbnails
 
     clip = FakeClip()
     conn = db.connect(cfg.db_path)

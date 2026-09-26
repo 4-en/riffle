@@ -2,18 +2,18 @@
 
 from pathlib import Path
 
-from archive import paths
-from archive.config import load_config
+from riffle import paths
+from riffle.config import load_config
 
 
 def test_first_run_creates_user_config(isolated_user_dirs):
     cfg = load_config()
     home = isolated_user_dirs
-    assert cfg.path == home / "config" / "photo-archive" / "config.yaml"
-    assert (home / "config" / "photo-archive" / "vocabulary.yaml").is_file()  # editable copy
-    assert cfg.vocabulary_path == home / "config" / "photo-archive" / "vocabulary.yaml"
-    assert cfg.data_dir == home / "cache" / "photo-archive"  # derived: disposable
-    assert cfg.selections_path == home / "share" / "photo-archive" / "selections.sqlite3"  # user data
+    assert cfg.path == home / "config" / "riffle" / "config.yaml"
+    assert (home / "config" / "riffle" / "vocabulary.yaml").is_file()  # editable copy
+    assert cfg.vocabulary_path == home / "config" / "riffle" / "vocabulary.yaml"
+    assert cfg.data_dir == home / "cache" / "riffle"  # derived: disposable
+    assert cfg.selections_path == home / "share" / "riffle" / "selections.sqlite3"  # user data
     assert cfg.sources == [] and cfg.location_history == []
 
 
@@ -23,7 +23,7 @@ def test_config_precedence(isolated_user_dirs, monkeypatch, tmp_path):
     assert paths.find_config() == local.resolve()
     other = tmp_path / "elsewhere.yaml"
     other.write_text("sources: []\n")
-    monkeypatch.setenv("ARCHIVE_CONFIG", str(other))
+    monkeypatch.setenv("RIFFLE_CONFIG", str(other))
     assert paths.find_config() == other.resolve()
     assert paths.find_config(local) == local.resolve()  # --config wins
 

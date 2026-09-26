@@ -1,11 +1,11 @@
 import numpy as np
 from PIL import Image
 
-from archive.dupes import group_pairs, hamming
-from archive.embed import embed_photos, load_embeddings
-from archive.raws import match_raws
-from archive.scan import scan
-from archive.tags import Label, assign, label_similarities, load_vocabulary, tag_photos
+from riffle.dupes import group_pairs, hamming
+from riffle.embed import embed_photos, load_embeddings
+from riffle.raws import match_raws
+from riffle.scan import scan
+from riffle.tags import Label, assign, label_similarities, load_vocabulary, tag_photos
 from conftest import photo
 
 

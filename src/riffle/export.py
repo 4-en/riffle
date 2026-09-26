@@ -76,7 +76,7 @@ def check_destination(cfg: Config, folder: Path) -> None:
         if folder == s or folder.is_relative_to(s):
             raise ExportError(f"the destination is inside the photo folder {s}; its copies would be indexed again")
     if folder == cfg.data_dir or folder.is_relative_to(cfg.data_dir):
-        raise ExportError("the destination is inside the archive's data folder")
+        raise ExportError("the destination is inside Riffle's data folder")
     if folder.exists() and not folder.is_dir():
         raise ExportError(f"not a folder: {folder}")
 

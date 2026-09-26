@@ -2,9 +2,9 @@
 
 On Linux, honouring the XDG variables:
 
-- settings (config.yaml, vocabulary.yaml): ``~/.config/photo-archive``
-- user data (selections.sqlite3, the pick/reject flags): ``~/.local/share/photo-archive``
-- derived data (catalogue, thumbnails, previews, embeddings): ``~/.cache/photo-archive``,
+- settings (config.yaml, vocabulary.yaml): ``~/.config/riffle``
+- user data (selections.sqlite3, the pick/reject flags): ``~/.local/share/riffle``
+- derived data (catalogue, thumbnails, previews, embeddings): ``~/.cache/riffle``,
   safe to delete and rebuilt by indexing
 
 macOS uses ``~/Library/Application Support`` and ``~/Library/Caches``; Windows
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import platformdirs
 
-APP = "photo-archive"
+APP = "riffle"
 
 
 def config_dir() -> Path:
@@ -37,14 +37,14 @@ def cache_dir() -> Path:
 
 def default_file(name: str) -> Path:
     """A file shipped with the package (``defaults/``): config template, vocabulary."""
-    return Path(str(resources.files("archive") / "defaults" / name))
+    return Path(str(resources.files("riffle") / "defaults" / name))
 
 
 def find_config(explicit: str | Path | None = None) -> Path:
-    """The config file to use: ``--config``, else ``$ARCHIVE_CONFIG``, else
+    """The config file to use: ``--config``, else ``$RIFFLE_CONFIG``, else
     ``./config.yaml`` if one exists (a project-local setup), else the user's
     config, created from the template on first run."""
-    for candidate in (explicit, os.environ.get("ARCHIVE_CONFIG")):
+    for candidate in (explicit, os.environ.get("RIFFLE_CONFIG")):
         if candidate:
             return Path(candidate).expanduser().resolve()
     local = Path("config.yaml")

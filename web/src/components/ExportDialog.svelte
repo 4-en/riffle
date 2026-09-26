@@ -10,7 +10,7 @@
 
   function setting(key, fallback) {
     try {
-      const v = localStorage.getItem(`archive.export.${key}`);
+      const v = localStorage.getItem(`riffle.export.${key}`) ?? localStorage.getItem(`archive.export.${key}`);
       return v === null ? fallback : JSON.parse(v);
     } catch {
       return fallback;

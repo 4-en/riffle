@@ -9,11 +9,11 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image, ImageFilter
 
-from archive import db
-from archive.embed import load_embeddings, save_embeddings
-from archive.quality import sharpness
-from archive.server import create_app
-from archive.stacks import compute_stacks, exif_seconds
+from riffle import db
+from riffle.embed import load_embeddings, save_embeddings
+from riffle.quality import sharpness
+from riffle.server import create_app
+from riffle.stacks import compute_stacks, exif_seconds
 from conftest import FakeClip, _pattern, fake_index, photo
 
 
@@ -66,7 +66,7 @@ def test_flags_roundtrip_filter_and_facets(client, conn):
 
 def test_flags_survive_rebuild_and_moves(indexed, conn, archive_dir):
     """Flags live outside data/ and are keyed by content."""
-    from archive import selections
+    from riffle import selections
 
     a = photo(conn, "IMG_0003.png")["id"]
     selections.set_flags(conn, indexed.selections_path, [([a], "pick")])
@@ -207,7 +207,7 @@ def test_reset_flags_all_or_filtered(client, conn):
 
 
 def test_clipping_counts_near_white_and_near_black_only():
-    from archive.quality import clipping
+    from riffle.quality import clipping
 
     im = Image.new("RGB", (100, 100), (128, 128, 128))
     im.paste((255, 255, 255), (0, 0, 100, 30))  # 30% blown
@@ -229,7 +229,7 @@ def test_exposure_filter_and_facet(client, conn):
 
 
 def test_keeper_scores_prefer_sharp_well_exposed():
-    from archive.quality import keeper_scores
+    from riffle.quality import keeper_scores
 
     photos = [
         {"id": 1, "sharpness": 100, "clip_highlights": 0.0, "clip_shadows": 0.0},

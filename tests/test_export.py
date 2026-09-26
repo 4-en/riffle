@@ -8,10 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from archive import selections
-from archive.export import ExportError, run_export
-from archive.scan import sha256_file
-from archive.server import create_app
+from riffle import selections
+from riffle.export import ExportError, run_export
+from riffle.scan import sha256_file
+from riffle.server import create_app
 from conftest import FakeClip, fake_index, photo
 
 

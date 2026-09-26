@@ -5,8 +5,8 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from archive.config import load_config, set_sources
-from archive.server import create_app
+from riffle.config import load_config, set_sources
+from riffle.server import create_app
 from conftest import FakeClip, fake_index
 
 CONFIG = """\

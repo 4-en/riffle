@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from archive.scan import scan
+from riffle.scan import scan
 from conftest import photo
 
 
@@ -95,7 +95,7 @@ def test_v1_catalogue_is_migrated_and_metadata_backfilled(cfg, archive_dir):
     on the next scan, without invalidating derived data."""
     import sqlite3
 
-    from archive import db
+    from riffle import db
 
     path = cfg.db_path
     path.parent.mkdir(parents=True)

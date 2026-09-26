@@ -74,7 +74,7 @@ class BackgroundJob:
             self.step, self.done, self.total = "starting", 0, None
             self.lines, self.error = [], None
             self.started_at, self.finished_at = time.time(), None
-        self.thread = threading.Thread(target=self._work, name="archive-index", daemon=True)
+        self.thread = threading.Thread(target=self._work, name="riffle-job", daemon=True)
         self.thread.start()
         return True
 

@@ -1,4 +1,6 @@
-# Photo Archive
+# Riffle
+
+*Riffle through your photos and keep the best.*
 
 A local tool for finding the best photos in a large archive and exporting them for editing, sharing, or printing. You search and browse by what is in the pictures, then cull: pick or reject photos quickly, compare bursts side by side, and copy the picks (and their RAWs) to a new folder. Search uses CLIP embeddings; grouping uses zero-shot subject, scene, and look tags. There's no training, no labelling, and nothing leaves your machine.
 
@@ -42,12 +44,12 @@ venv/bin/pip install -e ".[dev]"     # for HEIC support: ".[dev,heic]"
 cd web && npm install && npm run build && cd ..
 ```
 
-The first run creates your settings (`~/.config/photo-archive/config.yaml` on Linux); add photo folders in the UI's **Library**, or edit that file.
+The first run creates your settings (`~/.config/riffle/config.yaml` on Linux); add photo folders in the UI's **Library**, or edit that file.
 
 ## Usage
 
 ```sh
-venv/bin/archive serve    # UI and API on http://localhost:8000
+venv/bin/riffle serve    # UI and API on http://localhost:8000
 ```
 
 In the UI, open **Library** (top right) to browse the disk, add or remove photo folders, and run indexing in the background with progress. It opens by itself when no folders are configured. Added folders are saved to `sources` in `config.yaml`.
@@ -55,10 +57,10 @@ In the UI, open **Library** (top right) to browse the disk, add or remove photo 
 Indexing can also run from the command line:
 
 ```sh
-venv/bin/archive index    # scan, thumbnail, embed, tag, group duplicates and stacks (incremental)
+venv/bin/riffle index    # scan, thumbnail, embed, tag, group duplicates and stacks (incremental)
 ```
 
-The server picks up new embeddings without a restart. Other options: `archive --config PATH ...`, `archive -v ...` for debug logging, and `archive serve --host/--port/--reload`.
+The server picks up new embeddings without a restart. Other options: `riffle --config PATH ...`, `riffle -v ...` for debug logging, and `riffle serve --host/--port/--reload`.
 
 The folder browser can list any directory the server can read, so keep `serve` bound to `127.0.0.1` (the default).
 
@@ -77,7 +79,7 @@ With a location history, the export can also **add the location to photos withou
 
 Exports never overwrite anything: identical files already in the destination are skipped (so an interrupted export can simply be run again), and other name clashes get a `-1` suffix, with an image and its RAW keeping matching names. Each export writes an `export-manifest.csv`. The destination can't be inside a photo folder, where the copies would be indexed again.
 
-Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike (`stacks.min_similarity`) in `config.yaml`; adjust and re-run `archive index` (fast, no re-embedding) if they are too eager or too strict. The right `min_similarity` depends on the model (see [Model](#model)).
+Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike (`stacks.min_similarity`) in `config.yaml`; adjust and re-run `riffle index` (fast, no re-embedding) if they are too eager or too strict. The right `min_similarity` depends on the model (see [Model](#model)).
 
 ### Keyboard
 
@@ -120,7 +122,7 @@ The CLIP model drives search, tags, stacks, and the quality hint. Set it under `
 | **Faster** | `ViT-B-16` / `dfn2b` | About 4× faster indexing and ~0.6 GB. A good choice for laptops; somewhat looser search and tags. |
 | **Max quality** | `ViT-H-14-quickgelu` / `dfn5b` | The best search and tags. About 2.5× slower to index than the default and ~4 GB of memory. |
 
-Each model keeps its own embeddings and tags, so switching back and forth loses nothing; the first `archive index` with a new model embeds every photo once. Similarity values differ between models, so after switching also set `stacks.min_similarity` (0.92 for the default, about 0.90 for ViT-B-16) and check the stacks.
+Each model keeps its own embeddings and tags, so switching back and forth loses nothing; the first `riffle index` with a new model embeds every photo once. Similarity values differ between models, so after switching also set `stacks.min_similarity` (0.92 for the default, about 0.90 for ViT-B-16) and check the stacks.
 
 ## Tags
 
@@ -135,7 +137,7 @@ subject:
 A photo scores a tag by its best-matching phrase. Tags within a family compete through a softmax, so keep them from overlapping (prefer "cats", "dogs", "birds" over a general "animals"). Thresholds per family (`min_prob`, `max_tags`) are in `config.yaml`. After editing either file, run:
 
 ```sh
-venv/bin/archive tag      # re-tags using stored embeddings; takes seconds
+venv/bin/riffle tag      # re-tags using stored embeddings; takes seconds
 ```
 
 ## Development
@@ -143,32 +145,32 @@ venv/bin/archive tag      # re-tags using stored embeddings; takes seconds
 Run the API and the Vite dev server side by side; Vite proxies `/api`, `/thumbs` and `/previews` to port 8000.
 
 ```sh
-venv/bin/archive serve --reload
+venv/bin/riffle serve --reload
 cd web && npm run dev
 ```
 
-Without the dev server, run `npm run build` after changing anything in `web/src/`; `archive serve` serves the built files from `web/dist`.
+Without the dev server, run `npm run build` after changing anything in `web/src/`; `riffle serve` serves the built files from `web/dist`.
 
 Run tests with `venv/bin/pytest`. They use synthetic images and a fake encoder, so no model download is needed.
 
 ## Where things live
 
-Following each platform's conventions (`archive paths` prints the exact locations):
+Following each platform's conventions (`riffle paths` prints the exact locations):
 
 | What | Linux | Notes |
 |---|---|---|
-| Settings: `config.yaml`, `vocabulary.yaml` | `~/.config/photo-archive/` | Created on first run from the defaults in `src/archive/defaults/` |
-| Your flags: `selections.sqlite3` | `~/.local/share/photo-archive/` | User data: back it up |
-| Derived data: catalogue, thumbnails, previews, embeddings | `~/.cache/photo-archive/` | Safe to delete; `archive index` rebuilds it (re-embedding takes a while) |
+| Settings: `config.yaml`, `vocabulary.yaml` | `~/.config/riffle/` | Created on first run from the defaults in `src/riffle/defaults/` |
+| Your flags: `selections.sqlite3` | `~/.local/share/riffle/` | User data: back it up |
+| Derived data: catalogue, thumbnails, previews, embeddings | `~/.cache/riffle/` | Safe to delete; `riffle index` rebuilds it (re-embedding takes a while) |
 | CLIP model weights | `~/.cache/huggingface/` | Downloaded once |
 
-`$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, and `$XDG_CACHE_HOME` are honoured; macOS uses `~/Library/Application Support` and `~/Library/Caches`, Windows `%APPDATA%` and `%LOCALAPPDATA%`. To use a different config, pass `--config PATH` or set `ARCHIVE_CONFIG`; a `config.yaml` in the current directory is also picked up, for a self-contained setup. `data_dir`, `selections`, and `vocabulary` in the config override the locations.
+`$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, and `$XDG_CACHE_HOME` are honoured; macOS uses `~/Library/Application Support` and `~/Library/Caches`, Windows `%APPDATA%` and `%LOCALAPPDATA%`. To use a different config, pass `--config PATH` or set `RIFFLE_CONFIG`; a `config.yaml` in the current directory is also picked up, for a self-contained setup. `data_dir`, `selections`, and `vocabulary` in the config override the locations.
 
 ## Layout
 
 ```text
-src/archive/            indexer, CLI and API server
-src/archive/defaults/   default config.yaml and vocabulary.yaml
+src/riffle/            indexer, CLI and API server
+src/riffle/defaults/   default config.yaml and vocabulary.yaml
 web/                    Svelte + Tailwind UI (Vite, no SvelteKit)
 tests/
 ```

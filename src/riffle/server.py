@@ -102,7 +102,7 @@ def create_app(
     text_encoder: TextEncoder | None = None,
     index_runner: Callable | None = None,
 ) -> FastAPI:
-    cfg = cfg or load_config()  # --config / $ARCHIVE_CONFIG / ./config.yaml / the user's config
+    cfg = cfg or load_config()  # --config / $RIFFLE_CONFIG / ./config.yaml / the user's config
     model_id = cfg.model.model_id
     state: dict = {"encoder": text_encoder}
     job = index_job(cfg, run=index_runner)
@@ -123,7 +123,7 @@ def create_app(
                 log.error("Could not load text encoder: %s", e)
         yield
 
-    app = FastAPI(title="Photo Archive", lifespan=lifespan)
+    app = FastAPI(title="Riffle", lifespan=lifespan)
 
     def get_conn():
         conn = db.connect_readonly(cfg.db_path, cfg.selections_path)
@@ -694,7 +694,7 @@ def create_app(
         if not path.is_dir():
             raise HTTPException(400, f"not a folder: {path}")
         if path == cfg.data_dir or path.is_relative_to(cfg.data_dir):
-            raise HTTPException(400, "that is the archive's own data folder")
+            raise HTTPException(400, "that is Riffle's own data folder")
         for s in cfg.sources:
             if path == s or path.is_relative_to(s):
                 raise HTTPException(409, f"already included in {s}")

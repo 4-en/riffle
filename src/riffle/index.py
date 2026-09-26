@@ -1,4 +1,4 @@
-"""The `archive index` and `archive tag` pipelines."""
+"""The `riffle index` and `riffle tag` pipelines."""
 
 from __future__ import annotations
 

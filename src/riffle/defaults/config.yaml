@@ -1,4 +1,4 @@
-# Photo Archive settings. Created on first run; `archive paths` shows where this
+# Riffle settings. Created on first run; `riffle paths` shows where this
 # and everything else lives. Relative paths are resolved against this file's folder.
 
 # Photo folders (read only). Easiest to manage in the UI: Library.
@@ -10,9 +10,9 @@ raw_extensions: [.cr2, .cr3, .nef, .arw, .raf, .dng, .orf, .rw2]
 raw_search_dirs: [".", "RAW", "../RAW"]   # relative to each image's folder
 
 # Storage. By default (Linux; macOS and Windows use their usual equivalents):
-#   derived data  ~/.cache/photo-archive          catalogue, thumbnails, embeddings: safe to delete
-#   your flags    ~/.local/share/photo-archive    selections.sqlite3: back it up
-#   this file     ~/.config/photo-archive         with vocabulary.yaml (tags; edit freely)
+#   derived data  ~/.cache/riffle          catalogue, thumbnails, embeddings: safe to delete
+#   your flags    ~/.local/share/riffle    selections.sqlite3: back it up
+#   this file     ~/.config/riffle         with vocabulary.yaml (tags; edit freely)
 # Uncomment to override:
 # data_dir: /path/to/derived-data
 # selections: /path/to/selections.sqlite3
@@ -20,7 +20,7 @@ raw_search_dirs: [".", "RAW", "../RAW"]   # relative to each image's folder
 
 # CLIP model for search, tags, stacks, and the quality hint. Each model keeps its
 # own embeddings, so you can switch back and forth; after switching, run
-# `archive index` (embeds everything once) and check stacks.min_similarity.
+# `riffle index` (embeds everything once) and check stacks.min_similarity.
 #   Default:     ViT-L-14-quickgelu / dfn2b   good quality; fine on a GPU, slower to index on a laptop CPU
 #   Faster:      ViT-B-16 / dfn2b             ~4x faster indexing, ~0.6 GB; a good choice for laptops
 #   Max quality: ViT-H-14-quickgelu / dfn5b   best search and tags; ~2.5x slower than the default, ~4 GB RAM

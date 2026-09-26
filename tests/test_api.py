@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from archive.server import create_app
+from riffle.server import create_app
 from conftest import photo
 
 

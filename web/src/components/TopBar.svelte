@@ -43,7 +43,7 @@
       view.photo = null;
     }}
   >
-    Photo Archive
+    Riffle
   </button>
 
   <form class="relative flex-1" {onsubmit}>

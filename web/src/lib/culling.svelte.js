@@ -80,7 +80,8 @@ export function clearSelection() {
 
 function loadSetting(key, fallback) {
   try {
-    const v = localStorage.getItem(`archive.${key}`);
+    // "archive." was the prefix before the rename to Riffle.
+    const v = localStorage.getItem(`riffle.${key}`) ?? localStorage.getItem(`archive.${key}`);
     return v === null ? fallback : JSON.parse(v);
   } catch {
     return fallback;
@@ -89,6 +90,6 @@ function loadSetting(key, fallback) {
 
 export function saveSetting(key, value) {
   try {
-    localStorage.setItem(`archive.${key}`, JSON.stringify(value));
+    localStorage.setItem(`riffle.${key}`, JSON.stringify(value));
   } catch {}
 }

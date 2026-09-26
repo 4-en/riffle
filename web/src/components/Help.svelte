@@ -76,10 +76,10 @@
 
       <div class="rounded border border-neutral-800 bg-neutral-950/50 p-3 text-xs text-neutral-400">
         Your picks and rejects are saved in <span class="font-mono">selections.sqlite3</span> in your user data folder
-        (<span class="font-mono">~/.local/share/photo-archive</span> on Linux): back it up. The derived data (thumbnails,
-        embeddings, tags) is in your cache folder (<span class="font-mono">~/.cache/photo-archive</span>) and can be deleted;
-        indexing rebuilds it. Settings: <span class="font-mono">~/.config/photo-archive</span>. The Library shows the exact
-        places, and so does <span class="font-mono">archive paths</span>.
+        (<span class="font-mono">~/.local/share/riffle</span> on Linux): back it up. The derived data (thumbnails,
+        embeddings, tags) is in your cache folder (<span class="font-mono">~/.cache/riffle</span>) and can be deleted;
+        indexing rebuilds it. Settings: <span class="font-mono">~/.config/riffle</span>. The Library shows the exact
+        places, and so does <span class="font-mono">riffle paths</span>.
       </div>
 
       <section>

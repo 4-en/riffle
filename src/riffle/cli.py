@@ -1,4 +1,4 @@
-"""Command line entry point: `archive index | tag | serve`."""
+"""Command line entry point: `riffle index | tag | serve`."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from .config import load_config
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="archive", description="Local photo archive search.")
+    parser = argparse.ArgumentParser(prog="riffle", description="Riffle: find the best photos in your library.")
     parser.add_argument(
         "-c", "--config", default=None,
-        help="config file (default: ./config.yaml if present, else the user config; see `archive paths`)",
+        help="config file (default: ./config.yaml if present, else the user config; see `riffle paths`)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -59,10 +59,10 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "serve":
         import uvicorn
 
-        os.environ["ARCHIVE_CONFIG"] = str(cfg.path)
+        os.environ["RIFFLE_CONFIG"] = str(cfg.path)
         print(f"Serving on http://{args.host}:{args.port}")
         uvicorn.run(
-            "archive.server:create_app",
+            "riffle.server:create_app",
             factory=True,
             host=args.host,
             port=args.port,

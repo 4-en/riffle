@@ -3,9 +3,9 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "photo-archive"
+name = "riffle"
 version = "0.1.0"
-description = "Local CLIP-based search and browsing for a photo archive"
+description = "Riffle: find the best photos in your library, locally (CLIP search, culling, export)"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
@@ -28,13 +28,13 @@ heic = ["pillow-heif>=0.16"]
 dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
-archive = "archive.cli:main"
+riffle = "riffle.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-archive = ["defaults/*.yaml"]
+riffle = ["defaults/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

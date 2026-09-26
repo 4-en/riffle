@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from archive.server import create_app
+from riffle.server import create_app
 from conftest import photo
 
 
@@ -108,7 +108,7 @@ def test_grouped_listing(client):
 
 
 def test_groups_endpoint_with_covers(client, conn):
-    from archive import selections
+    from riffle import selections
 
     res = client.get("/api/groups", params={"group": "month", "dupes": "all"}).json()
     may = next(g for g in res["groups"] if g["key"] == "2024-05")

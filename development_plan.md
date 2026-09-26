@@ -1,4 +1,6 @@
-# Computational Photo Archive — MVP Plan
+# Riffle — Development Plan
+
+*Formerly "Computational Photo Archive"; renamed to Riffle on 26 September 2026.*
 
 **Status:** MVP implemented (milestones 1–4) plus culling and export (milestone 6) and location from phone history (milestone 7); evaluation (milestone 5) pending
 **Date:** 25 September 2026 (updated after implementation, 26 September 2026)
@@ -68,7 +70,7 @@ flowchart LR
     F -. background thread .-> B
 ```
 
-- **Indexer:** scans, extracts metadata, makes thumbnails, embeds, tags, groups duplicates. Incremental and restartable. Runs from the CLI (`archive index`) or in a background thread of the server when started from the UI; both use the same pipeline (`index.run_index`), which reports progress through callbacks.
+- **Indexer:** scans, extracts metadata, makes thumbnails, embeds, tags, groups duplicates. Incremental and restartable. Runs from the CLI (`riffle index`) or in a background thread of the server when started from the UI; both use the same pipeline (`index.run_index`), which reports progress through callbacks.
 - **Server (FastAPI):** loads the embedding matrix and CLIP text encoder into memory at startup, serves a JSON API, thumbnails, and the built UI as static files. It reloads the embedding matrix when the files change, so re-indexing does not need a restart.
 - **UI (Svelte + Tailwind, built with Vite, no SvelteKit):** a single-page app that talks to the API. After `npm run build`, the FastAPI server serves it from `web/dist` on the same port.
 
@@ -93,15 +95,15 @@ No SQLAlchemy, Alembic, FAISS, FiftyOne, OpenCV, pyvips, or ExifTool in the MVP.
 
 ## 6. Project layout
 
-Per-user files follow the platform conventions (`paths.py`, via `platformdirs`; Linux shown, XDG variables honoured; `archive paths` prints them). Until 26 Sep 2026 they all lived in the repository root.
+Per-user files follow the platform conventions (`paths.py`, via `platformdirs`; Linux shown, XDG variables honoured; `riffle paths` prints them). Until 26 Sep 2026 they all lived in the repository root.
 
 ```text
-~/.config/photo-archive/         # settings, created on first run from src/archive/defaults/
+~/.config/riffle/         # settings, created on first run from src/riffle/defaults/
   config.yaml                    # source folders, model, thresholds
   vocabulary.yaml                # tag families, tags, and alternative phrases
-~/.local/share/photo-archive/
+~/.local/share/riffle/
   selections.sqlite3             # pick/reject flags: user data, NOT derived (§8.1)
-~/.cache/photo-archive/          # all derived data, safe to delete (config: data_dir)
+~/.cache/riffle/          # all derived data, safe to delete (config: data_dir)
   catalogue.sqlite3
   thumbs/                        # 320 px long edge
   previews/                      # 1600 px long edge
@@ -110,15 +112,15 @@ Per-user files follow the platform conventions (`paths.py`, via `platformdirs`; 
     <model_id>.ids.npy           # photo ids, row-aligned
 ```
 
-The config is found as: `--config`, else `$ARCHIVE_CONFIG`, else `./config.yaml` in the working directory (a self-contained setup), else the user config above. `data_dir`, `selections`, and `vocabulary` in it override the defaults.
+The config is found as: `--config`, else `$RIFFLE_CONFIG`, else `./config.yaml` in the working directory (a self-contained setup), else the user config above. `data_dir`, `selections`, and `vocabulary` in it override the defaults.
 
 ```text
 project/
   pyproject.toml
-  src/archive/
+  src/riffle/
     paths.py             # per-user locations; finding / creating the config
     defaults/            # config.yaml template, default vocabulary.yaml
-    cli.py               # archive index | tag | serve
+    cli.py               # riffle index | tag | serve
     config.py            # config loading; rewriting the sources list
     db.py                # schema and connections
     scan.py              # walk, sha256, EXIF, identity rules
@@ -292,7 +294,7 @@ Camera GPS stays in `photos.lat/lon`; `photo_locations` holds the evidence-tagge
 
 ### 8.1 Selections (user data)
 
-Pick/reject flags are the only data the user creates by hand, so they live in their own database, `selections.sqlite3` (in the user data folder, e.g. `~/.local/share/photo-archive`; configurable), not with the derived data:
+Pick/reject flags are the only data the user creates by hand, so they live in their own database, `selections.sqlite3` (in the user data folder, e.g. `~/.local/share/riffle`; configurable), not with the derived data:
 
 ```sql
 CREATE TABLE flags (
@@ -310,7 +312,7 @@ CREATE TABLE flags (
 
 ## 9. Pipeline
 
-One command runs all steps incrementally: `archive index` (or **Index now** in the UI). Each step only processes photos that need it; the CLIP model is only loaded when something needs embedding or tagging.
+One command runs all steps incrementally: `riffle index` (or **Index now** in the UI). Each step only processes photos that need it; the CLIP model is only loaded when something needs embedding or tagging.
 
 ### 9.1 Scan
 
@@ -358,7 +360,7 @@ Tags are zero-shot and require no training or labelled data.
 5. Keep tags with `prob ≥ min_prob`, up to `max_tags`, highest first.
 6. Replace that model's rows in `photo_tags`, and remove tags that are no longer in the vocabulary.
 
-Thresholds are tuned by eye in the UI and edited in `config.yaml`. Rerunning `archive tag` takes seconds, because it reuses stored embeddings.
+Thresholds are tuned by eye in the UI and edited in `config.yaml`. Rerunning `riffle tag` takes seconds, because it reuses stored embeddings.
 
 **Known limitations:**
 
@@ -433,7 +435,7 @@ look:
   - ordinary daylight: [an ordinary daytime photo, a photo in plain daylight]
 ```
 
-Editing this file and rerunning `archive tag` is the whole workflow for changing tags.
+Editing this file and rerunning `riffle tag` is the whole workflow for changing tags.
 
 ## 11. Server and UI
 

@@ -271,7 +271,7 @@
         {:else if status?.finished_at}
           <p class="text-neutral-400">Last run finished {new Date(status.finished_at * 1000).toLocaleTimeString()}.</p>
         {:else}
-          <p class="text-neutral-500">Not run since the server started. Use <span class="font-mono">archive index</span> or the button above.</p>
+          <p class="text-neutral-500">Not run since the server started. Use <span class="font-mono">riffle index</span> or the button above.</p>
         {/if}
         {#if status?.lines?.length}
           <pre class="mt-2 max-h-40 overflow-y-auto rounded bg-neutral-950 p-2 text-[11px] leading-relaxed text-neutral-400">{status.lines.join('\n')}</pre>
