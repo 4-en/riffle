@@ -537,8 +537,8 @@ Short and qualitative, recorded in a one-page note:
 
 In rough order of expected value:
 
-1. ~~**Personal taste model**~~: done (§14.2): "likely keepers / rejects first" sorts learned from the user's flags. Still open from its design: using it in Curate (§14.3) and as a "more like my picks" search.
-2. **Curate: automatic photo book / exhibition drafts** (see §14.3): from the current filters (a trip, a timeframe, a place), pick a small set (e.g. 12/24/48) that is both high quality and varied (in content, time, and place, using the photo coordinates), and present it in its own view, ready to refine and export. Best built together with named collections (item 4), and it improves once the taste model (item 1) exists.
+1. ~~**Personal taste model**~~: done (§14.2): "likely keepers / rejects first" sorts learned from the user's flags, also used by Curate. Still open: a "more like my picks" search.
+2. ~~**Curate: automatic photo book / exhibition drafts**~~: done (§14.3). Still open: saving a draft as a named collection (item 4), and the style scores as grid sorts or filters.
 3. Manual tag add/remove, stored separately from zero-shot tags (in the selections DB, like flags).
 4. Named collections (e.g. "Print", "Photo book") on top of the global pick/reject, each with its own export; and optionally star ratings for ranking the picks.
 5. Finer location "spots" within a town (clustering visit positions, e.g. within 200 m), labelled with the town and, where the timeline marks them, "Home"/"Work" from its frequent places (§14.1).
@@ -624,7 +624,19 @@ Implemented as described in §9.8 and §11.3, with the user's choices: the histo
 
 **Open questions.** How many labels are needed in practice on this user's libraries; whether taste transfers between very different trips or should be weighted towards recent culling sessions; whether a small non-linear model beats the linear one enough to justify it.
 
-### 14.3 Curate: photo book / exhibition drafts (planned)
+### 14.3 Curate: photo book / exhibition drafts (implemented)
+
+**As built** (`curate.py`, `Curate.svelte`, 26 Sep 2026):
+
+- **Candidates**: the photos within the filters, picks and unflagged by default (a switch includes rejects; a locked reject always stays). Each stack or duplicate group enters once: its locked photo, else its pick, else its best frame (CLIP quality, exposure, sharpness).
+- **Quality `q`**: rank percentiles within the candidates: taste 0.45 (when calibrated; otherwise its weight goes to CLIP quality), CLIP quality 0.25, exposure 0.10; bonuses pick +0.15, exported +0.05. Styles add `0.6 · mean(wₖ · (2·pctₖ − 1))` over the active sliders.
+- **Selection**: greedy MMR, `(1 − v)·q − v·max redundancy`, with redundancy = weighted mean of content (CLIP cosine rescaled 0.5 → 0, 0.95 → 1), time closeness `exp(−|Δt| / 3 h)` × time spread, and place closeness `exp(−d / 300 m)` × place spread × position reliability (EXIF/visit 1, route estimates by `accuracy_m`). Locked photos first, removed ones excluded. Deterministic. Instead of the coverage quotas sketched below, time and place act through the redundancy term; on the first real trip this already covered every day.
+- **Styles** (CLIP prompt pairs, `styles:` in `vocabulary.yaml`, score = embedding · (mean towards − mean away)): Scenic, Moody, Calm, Colourful, Golden light, People, Abstract & details. Each was checked on the first real library with top/bottom-12 contact sheets and separates visibly. "Breathtaking" became Scenic; "Artistic" is what CLIP reads as abstract close-ups and details, so it is labelled that way.
+- **API**: `GET /api/styles`; `POST /api/curate?<filters>` `{n, variety, time_spread, place_spread, styles, include_rejects, locked, removed}` → items in reading order (with `q`, `reason`, `day`, `place`, `similar`, `locked`), `cover` (best landscape photo), `sections` (day/place), `candidates`, `used`; `POST /api/curate/alternatives` (other frames of the stack first, then `0.5 · redundancy + 0.5 · q`); `photo_ids` on `POST /api/export` exports exactly a set.
+- **UI**: full-screen view with sliders (Photos 2–60, Best ↔ Most varied, Spread over time, Spread over places when there are locations, a collapsible Style group of −1..+1 sliders, Include rejected), a book-like layout (cover, day/place sections) with Lock / Alternatives / Remove per photo and the reason, **Mark as picks** (undoable) and **Export** (the export dialog in a "these N photos" mode). Removing never changes flags. The draft is remembered per filter set in `localStorage`.
+- **Measured** on the first real library (1,926 photos, 61 picks, taste calibrated): 40–300 ms per draft (the first request with a style encodes its prompts). Sweden trip, defaults: 30 candidates, 12 photos over all 3 days and 5 places (variety 0.8: 7 places); with rejects included (474 candidates) and Moody +1, the draft took in an alley, the underground and a crow at a café table, and kept 10 picks.
+
+**Original design notes:**
 
 **Idea.** An easy, one-click way from "all my photos of this trip" to a first draft of a small, presentable selection: high quality, but also varied (not twelve versions of the best scene, nor twelve photos from the same spot). The user narrows the library with the usual filters (dates, place, tags, "not rejected"), chooses **Curate** and a size (e.g. 12, 24, 48), and gets a dedicated view with the result, ready to refine and export. No training; everything uses signals Riffle already has, and it runs in milliseconds.
 

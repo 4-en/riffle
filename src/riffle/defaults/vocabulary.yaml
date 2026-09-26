@@ -126,3 +126,44 @@ look:
   - vivid colour: [a colourful scene, vivid colours, bright saturated colours]
   - shallow depth of field: [a blurred background, bokeh, shallow depth of field]
   - ordinary daylight: [an ordinary daytime photo, a photo in plain daylight]
+
+# Styles for Curate's sliders (not tags). Each style is scored by how much more a
+# photo looks like the "towards" phrases than the "away" phrases (CLIP). Checked
+# on a real library: they select what their label says; "Abstract & details" is
+# what CLIP makes of "artistic" (close-ups, soft focus, textures). Add your own.
+styles:
+  scenic:
+    label: Scenic
+    description: Wide, breathtaking views
+    towards: ["a breathtaking landscape photo", "a stunning, dramatic view"]
+    away: ["an ordinary snapshot", "a boring, unremarkable photo"]
+  moody:
+    label: Moody
+    description: Low-key, atmospheric, dramatic light
+    towards: ["a moody, atmospheric photo with dramatic light", "a dark, moody photograph"]
+    away: ["a flat, evenly lit snapshot", "a bright, plain photo"]
+  calm:
+    label: Calm
+    description: Minimal, lots of empty space
+    towards: ["a calm, minimalist photo with lots of empty space", "a simple, serene composition"]
+    away: ["a busy, cluttered photo", "a chaotic scene with many things"]
+  colourful:
+    label: Colourful
+    description: Vivid, saturated colours
+    towards: ["a vivid, colourful photo", "a photo with bright saturated colours"]
+    away: ["a muted, desaturated photo", "a photo with dull colours"]
+  golden:
+    label: Golden light
+    description: Sunset, sunrise, warm light
+    towards: ["a photo in warm golden sunset light", "golden hour light"]
+    away: ["a photo in harsh midday light", "an overcast, grey day"]
+  people:
+    label: People
+    description: People in the picture
+    towards: ["a candid photo of people in a moment", "an emotional moment between people"]
+    away: ["a photo without people", "an empty landscape"]
+  abstract:
+    label: Abstract & details
+    description: Close-ups, textures, soft focus
+    towards: ["an artistic photo with a creative composition", "a fine art photograph"]
+    away: ["a casual snapshot", "a quick documentary photo"]

@@ -91,6 +91,17 @@ export const fetchTaste = () => get('/api/taste');
 /** Learn from the current flags now; resolves to the new status. */
 export const calibrateTaste = () => send('POST', '/api/taste/calibrate');
 
+/** Curate: the styles for the sliders, a draft for the current filters, and alternatives for one slot. */
+export const fetchStyles = () => get('/api/styles');
+export function fetchCurate(view, body) {
+  const qs = query(filterParams(view));
+  return send('POST', qs ? `/api/curate?${qs}` : '/api/curate', body);
+}
+export function fetchAlternatives(view, body) {
+  const qs = query(filterParams(view));
+  return send('POST', qs ? `/api/curate/alternatives?${qs}` : '/api/curate/alternatives', body);
+}
+
 export const fetchSources = () => get('/api/sources');
 export const addSource = (path) => send('POST', '/api/sources', { path });
 export const removeSource = (path) => send('DELETE', '/api/sources', { path });

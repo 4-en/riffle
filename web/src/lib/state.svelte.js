@@ -23,7 +23,8 @@ export const view = $state({
   sort: 'taken_at', // 'taken_at' | '-taken_at' | 'taste' (likely keepers first) | '-taste' (likely rejects first)
   overview: false, // calendar (date grouping) or map (location grouping) instead of the grid
   compare: null, // open compare view: {kind: 'stack', id} | {kind: 'ids', ids} | {kind: 'review'} (not in the URL)
-  exporting: false, // export dialog open (not in the URL)
+  exporting: false, // export dialog open: true (picks) | {ids, fresh} (a Curate draft) (not in the URL)
+  curate: false, // Curate view open (not in the URL)
   help: false, // how-to guide open (not in the URL)
   photo: null, // open detail photo id
   raws: false, // unmatched RAWs list open

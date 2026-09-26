@@ -163,6 +163,14 @@
     onclick={() => (view.compare = { kind: 'review' })}>Review stacks</button
   >
   <button
+    class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+    title={view.q || view.similar
+      ? 'Curate works on the current filters, not on search results'
+      : 'Draft a small, varied selection (photo book, exhibition) from the current filters'}
+    disabled={!!(view.q || view.similar)}
+    onclick={() => (view.curate = true)}>Curate</button
+  >
+  <button
     class="shrink-0 rounded px-2.5 py-1 text-xs font-medium {picks
       ? 'bg-emerald-600 text-black hover:bg-emerald-500'
       : 'border border-neutral-700 text-neutral-500'}"

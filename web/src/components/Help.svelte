@@ -12,6 +12,10 @@
       ['Ctrl+Z', 'Undo the last flag change'],
       ['Esc', 'Close the current view / clear the selection'],
     ]],
+    ['Curate', [
+      ['Esc', 'Close the draft'],
+      ['← / → (photo view)', 'Step through the draft'],
+    ]],
     ['Grid', [
       ['Right-click', 'Menu: flag, compare, similar, show day / place, copy path, its tags'],
       ['Click · Ctrl/Shift+click · drag', 'Select one · add / range · box'],
@@ -68,6 +72,12 @@
           similar shots appear side by side, with the sharpest and a ★ suggested keeper marked; choose the keeper(s) and press
           <kbd>Enter</kbd>. Once you have flagged enough, <em>Sort → Likely keepers first</em> puts the promising photos first,
           learned from your own picks and rejects. <em>Flag → Picked + Unflagged</em> (or <kbd>H</kbd>) hides the rejects, and <kbd>Ctrl+Z</kbd> undoes any flag change.
+        </li>
+        <li>
+          <strong class="text-neutral-100">Curate (optional).</strong> For a photo book or an exhibition, narrow the library to a trip
+          and press <em>Curate</em>: a draft of good but varied photos, steered with sliders (how many, best ↔ varied, spread over
+          time and places, and styles like moody or colourful). Remove a photo (the next one takes its place; it is not
+          rejected), lock the ones to keep, or pick an alternative. <em>Mark as picks</em> or <em>Export</em> when it's right.
         </li>
         <li>
           <strong class="text-neutral-100">Export.</strong> <em>Export</em> (top right) copies your picks into a new folder: images,

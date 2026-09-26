@@ -45,6 +45,7 @@ def _parse_label(entry) -> Label:
 def load_vocabulary(path: Path) -> Vocabulary:
     raw = yaml.safe_load(Path(path).read_text()) or {}
     templates = raw.pop("templates", None) or DEFAULT_TEMPLATES
+    raw.pop("styles", None)  # Curate's style sliders, not a tag family (see curate.py)
     families = {
         k: [_parse_label(x) for x in v] for k, v in raw.items() if isinstance(v, list) and v
     }

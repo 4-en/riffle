@@ -77,6 +77,21 @@ class FolderIn(BaseModel):
     path: str
 
 
+class CurateIn(BaseModel):
+    n: int = 12
+    variety: float = 0.4
+    time_spread: float = 0.5
+    place_spread: float = 0.5
+    styles: dict[str, float] = {}
+    include_rejects: bool = False
+    locked: list[int] = []
+    removed: list[int] = []
+
+
+class AlternativesIn(CurateIn):
+    id: int
+
+
 class FlagOp(BaseModel):
     ids: list[int]
     flag: str | None  # "pick", "reject", or null to clear
@@ -99,6 +114,7 @@ class ExportIn(BaseModel):
     scope: str = "all"  # all picks, or "filtered": picks within the query-string filters
     add_location: bool = True  # write timeline positions into copies of photos without GPS
     only_new: bool = False  # skip photos that were exported before
+    photo_ids: list[int] | None = None  # export exactly these photos (e.g. a Curate draft)
 
 
 COLLAPSE = ("dupes", "stacks", "none")
@@ -759,6 +775,109 @@ def create_app(
         suggested, scores = keeper_scores(photos, clip_quality(index, wanted))
         return {"suggested": suggested, "scores": {str(k): v for k, v in scores.items()}}
 
+    # ---- curate ------------------------------------------------------------------
+
+    def styles_config():
+        from . import curate, paths
+
+        return curate.load_styles(cfg.vocabulary_path, paths.default_file("vocabulary.yaml"))
+
+    def style_scores(index: Index) -> dict[str, dict[int, float]]:
+        """Per style, how much more each photo looks like "towards" than "away" (CLIP)."""
+        encoder = state["encoder"]
+        if encoder is None or index.E.size == 0:
+            return {}
+        styles = styles_config()
+        key = tuple((s.name, tuple(s.towards), tuple(s.away)) for s in styles)
+        if state.get("style_key") != key:
+            vecs = {}
+            for st in styles:
+                pos, neg = encoder(st.towards).mean(axis=0), encoder(st.away).mean(axis=0)
+                vecs[st.name] = pos / np.linalg.norm(pos) - neg / np.linalg.norm(neg)
+            state["style_vecs"], state["style_key"] = vecs, key
+        ids = [int(i) for i in index.ids]
+        return {name: dict(zip(ids, (index.E @ v).tolist())) for name, v in state["style_vecs"].items()}
+
+    def curate_pool(body: CurateIn, flt: PhotoFilter, conn, index: Index):
+        from . import curate
+
+        p = curate.Params(
+            n=max(2, min(60, body.n)),
+            variety=min(1.0, max(0.0, body.variety)),
+            time_spread=min(1.0, max(0.0, body.time_spread)),
+            place_spread=min(1.0, max(0.0, body.place_spread)),
+            styles={
+                k: min(1.0, max(-1.0, float(w)))
+                for k, w in body.styles.items()
+                if k in {st.name for st in styles_config()}
+            },
+            include_rejects=body.include_rejects,
+            locked=body.locked,
+            removed=body.removed,
+        )
+        where, params = flt.where(model_id)
+        model = taste_store.current(index)
+        pool = curate.build_pool(
+            conn, where, params, index.row, index.E, p,
+            taste=taste_store.scores if model and model.enabled else None,
+            clip_quality=clip_quality(index, [int(i) for i in index.ids]),
+            style_scores=style_scores(index) if any(p.styles.values()) else {},
+            place_labels=location_labels(conn)["place"],
+        )
+        return pool, p
+
+    @app.get("/api/styles")
+    def list_styles():
+        return [{"name": s.name, "label": s.label, "description": s.description} for s in styles_config()]
+
+    @app.post("/api/curate", dependencies=[Depends(require_json)])
+    def curate_draft(body: CurateIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """A draft selection from the photos within the filters (see curate.py)."""
+        from . import curate
+
+        pool, p = curate_pool(body, flt, conn, index)
+        if pool is None:
+            return {"items": [], "cover": None, "sections": [], "candidates": 0, "used": {}}
+        d = curate.draft(pool, p)
+        labels = {s.name: s.label for s in styles_config()}
+        ids = [it["id"] for it in d["items"]]
+        by_id = {i["id"]: i for i in items_for(conn, ids)}
+        items = []
+        for it in d["items"]:
+            j = it["index"]
+            if it["id"] in by_id:
+                items.append(by_id[it["id"]] | {
+                    "q": round(float(pool.q[j]), 3),
+                    "reason": curate.reason(pool, j, p, labels),
+                    "day": pool.info[j]["day"],
+                    "place": pool.info[j]["place"],
+                    "similar": len(pool.members[j]),
+                    "locked": bool(set(p.locked) & set(pool.members[j])),
+                })
+        return {
+            "items": items,
+            "cover": d["cover"],
+            "sections": d["sections"],
+            "candidates": len(pool.ids),
+            "used": {
+                "taste": bool(taste_store.scores),
+                "locations": bool((pool.loc_w > 0).any()),
+                "styles": sorted(k for k, w in p.styles.items() if w),
+            },
+        }
+
+    @app.post("/api/curate/alternatives", dependencies=[Depends(require_json)])
+    def curate_alternatives(body: AlternativesIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """Photos that could take one slot of the draft: its other frames, then similar good ones."""
+        from . import curate
+
+        pool, p = curate_pool(body, flt, conn, index)
+        if pool is None:
+            return {"items": []}
+        chosen = {int(pool.ids[j]) for j in curate.select(pool, p)}
+        ids = curate.alternatives(pool, body.id, chosen, p)
+        return {"items": items_for(conn, ids)}
+
     # ---- export ------------------------------------------------------------------
 
     @app.post("/api/export", dependencies=[Depends(require_json)])
@@ -781,7 +900,17 @@ def create_app(
             raise HTTPException(400, str(e))
         scope = flt if body.scope == "filtered" else PhotoFilter()
         where, params = scope.where(model_id)
-        ids = [
+        if body.photo_ids is not None:
+            wanted = list(dict.fromkeys(body.photo_ids))
+            present = {r[0] for r in conn.execute(
+                f"SELECT id FROM photos WHERE status = 'ok' AND id IN ({','.join('?' * len(wanted))})", wanted
+            )} if wanted else set()
+            ids = [i for i in wanted if i in present]
+            if not ids:
+                raise HTTPException(400, "none of these photos can be exported")
+        else:
+            ids = None
+        ids = ids if ids is not None else [
             r[0]
             for r in conn.execute(
                 f"""SELECT p.id FROM photos p WHERE {where} AND {FLAG_EXPR} = 'pick'
@@ -792,6 +921,13 @@ def create_app(
         ]
         if not ids:
             raise HTTPException(400, "no new picked photos to export" if body.only_new else "no picked photos to export")
+        if body.photo_ids is not None and body.only_new:
+            fresh = {r[0] for r in conn.execute(
+                f"SELECT p.id FROM photos p WHERE NOT {EXPORTED_EXPR} AND p.id IN ({','.join('?' * len(ids))})", ids
+            )}
+            ids = [i for i in ids if i in fresh]
+            if not ids:
+                raise HTTPException(400, "all of these photos were exported before")
         started = export_job.start(
             photo_ids=ids,
             folder=str(folder),

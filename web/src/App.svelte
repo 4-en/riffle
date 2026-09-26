@@ -16,6 +16,7 @@
   import Calendar from './components/Calendar.svelte';
   import ContextMenu from './components/ContextMenu.svelte';
   import Help from './components/Help.svelte';
+  import Curate from './components/Curate.svelte';
   // The map (d3 + country outlines) loads only when it is first shown.
   const loadMap = () => import('./components/MapView.svelte');
 
@@ -203,6 +204,11 @@
     }
   }
 
+  // Curate works on the filters, not on search results ("Find similar" from its photo view ends it).
+  $effect(() => {
+    if (view.curate && (view.q || view.similar)) view.curate = false;
+  });
+
   // An overview needs a grouping and makes no sense for search results.
   $effect(() => {
     if (view.overview && (!hasOverview(view.group) || view.q || view.similar)) view.overview = false;
@@ -216,6 +222,7 @@
     const key = groupKey(photo, mode);
     const requery = view.q || view.similar || view.group !== mode;
     view.photo = null;
+    view.curate = false;
     if (requery) {
       pendingJump = { key, id: photo.id };
       view.q = '';
@@ -254,19 +261,23 @@
     return items.filter((item) => wanted.includes(flagOf(item) ?? 'none'));
   });
   const itemsById = $derived(new Map(items.map((i) => [i.id, i])));
-  const index = $derived(visibleItems.findIndex((i) => i.id === view.photo));
+  // While Curate is open, the photo view steps through the draft instead of the grid.
+  let curateOrder = $state([]);
+  const navItems = $derived(view.curate ? curateOrder.map((id) => ({ id })) : visibleItems);
+  const index = $derived(navItems.findIndex((i) => i.id === view.photo));
   const shows = (flag) => !view.filters.flag.length || view.filters.flag.includes(flag ?? 'none');
 
   async function step(delta) {
     if (view.photo == null) return;
     let i = index + delta;
-    if (i >= visibleItems.length && hasMore) await loadMore();
-    if (i >= 0 && i < visibleItems.length) view.photo = visibleItems[i].id;
+    if (i >= navItems.length && hasMore && !view.curate) await loadMore();
+    if (i >= 0 && i < navItems.length) view.photo = navItems[i].id;
   }
 
   /** P / X / U in the loupe: flag, then go on if auto-advance is on (or the photo just got hidden). */
   async function flagInLoupe(flag) {
     const id = view.photo;
+    if (view.curate) return setFlag([id], flag); // the draft does not change when flagging
     const nextId = visibleItems[index + 1]?.id ?? null;
     const prevId = visibleItems[index - 1]?.id ?? null;
     setFlag([id], flag);
@@ -342,6 +353,7 @@
       else if (view.library) view.library = false;
       else if (view.raws) view.raws = false;
       else if (view.photo != null) view.photo = null;
+      else if (view.curate) view.curate = false;
       else if (typing) e.target.blur();
       else clearSelection();
       return;
@@ -355,6 +367,8 @@
     if (mod && key === 'z') {
       e.preventDefault();
       undo();
+    } else if (view.curate && view.photo == null) {
+      return; // the grid's shortcuts do not apply to the Curate view
     } else if (mod && key === 'a' && view.photo == null) {
       e.preventDefault();
       selectAll();
@@ -457,11 +471,18 @@
   </div>
 </div>
 
+{#if view.curate}
+  <!-- A new filter set (e.g. a tag clicked in the photo view) starts its own draft. -->
+  {#key JSON.stringify([view.tags, view.excludeTags, view.filters])}
+    <Curate onorder={(ids) => (curateOrder = ids)} />
+  {/key}
+{/if}
+
 {#if view.photo != null}
   <Detail
     id={view.photo}
     hasPrev={index > 0}
-    hasNext={index >= 0 && (index < visibleItems.length - 1 || hasMore)}
+    hasNext={index >= 0 && (index < navItems.length - 1 || (hasMore && !view.curate))}
     onstep={step}
     ontimeline={showInTimeline}
     onflag={flagInLoupe}
@@ -489,6 +510,7 @@
     picksTotal={tags?.picks ?? 0}
     picksFiltered={facets?.flag?.pick ?? 0}
     hasHistory={tags?.location_history ?? false}
+    draft={typeof view.exporting === 'object' ? view.exporting : null}
     ondone={() => {
       loadSidebar();
       reset();

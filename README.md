@@ -11,6 +11,7 @@ A local tool for finding the best photos in a large archive and exporting them f
 - **Culling:** pick or reject photos one at a time (loupe with auto-advance) or many at once (multi-select), with undo
 - **Your taste:** once you have flagged enough, Riffle learns what you tend to keep and can sort by it ("likely keepers first" / "likely rejects first"); it only orders photos, it never flags anything
 - **Stacks:** bursts and near-identical shots are grouped automatically; compare them side by side with a sharpness hint, exposure clipping, and a suggested keeper
+- **Curate:** draft a small, varied selection (photo book, exhibition) from the current filters, steered with sliders for size, variety, spread over time and places, and styles such as moody or colourful; remove, lock, or swap photos, then mark them as picks or export them
 - **Export:** copy the picks to a new folder as images, images + RAWs, or RAWs only; originals are never touched
 - Text search ("red lanterns at night") and "find similar" from any photo
 - Subject, scene, and look tags from an editable vocabulary file, with alternative phrases per tag
@@ -87,6 +88,8 @@ Riffle remembers which photos you have exported: they get a small ↗ badge (alo
 
 Exports never overwrite anything: identical files already in the destination are skipped (so an interrupted export can simply be run again), and other name clashes get a `-1` suffix, with an image and its RAW keeping matching names. Each export writes an `export-manifest.csv`. The destination can't be inside a photo folder, where the copies would be indexed again.
 
+**Curate.** Narrow the library to a trip, a timeframe or a place, then press **Curate** (top bar) for a draft of a small selection: good photos, but not ten of the same scene, moment or spot. Candidates are your picks and unflagged photos (a switch adds the rejects); each stack enters once, as its pick or its best frame. Quality comes from your taste (once calibrated), the CLIP quality score, exposure, and a bonus for picks. Sliders set the number of photos, **Best ↔ Most varied**, **Spread over time**, and **Spread over places** (from the photos' coordinates, when there are any). Under **Style**, sliders for Scenic, Moody, Calm, Colourful, Golden light, People, and Abstract & details pull photos with more (or less) of that look into the draft; they are CLIP prompt pairs in `vocabulary.yaml` (`styles:`), so you can edit them or add your own. The draft reads chronologically under day and place headings, with a cover. Per photo: **✕** removes it and the next one takes its place, **Lock** keeps it when the sliders change, and **Alternatives** offers other frames of its stack and similar photos. Removing is for the draft only and is not a reject: flags change only with **Mark as picks** (undo with Ctrl+Z). **Export** copies exactly the draft's photos. The draft (sliders, locks, removals) is remembered per filter set in your browser; **Reset draft** starts over.
+
 Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike (`stacks.min_similarity`) in `config.yaml`; adjust and re-run `riffle index` (fast, no re-embedding) if they are too eager or too strict. The right `min_similarity` depends on the model (see [Model](#model)).
 
 ### Keyboard
@@ -96,6 +99,7 @@ Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike 
 | Anywhere | `?` how-to guide · `O` calendar / map overview (with a grouping) · `/` search · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
 | Grid | right-click menu (pick / reject, compare, find similar, show day / place, copy path, filter by its tags) · click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected (Flag → Picked + Unflagged) · `R` review stacks |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag (and go to the next photo) |
+| Curate | `Esc` close · in the photo view, `←` / `→` step through the draft |
 | Compare | click or `1`–`9` keep · `A` keep the suggested one · `Enter` pick kept, reject rest (with nothing kept: press twice to reject all) · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag the focused photo · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
 
 ## Location
