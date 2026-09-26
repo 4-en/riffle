@@ -4,7 +4,6 @@
 
 A local tool for finding the best photos in a large archive and exporting them for editing, sharing, or printing. You search and browse by what is in the pictures, then cull: pick or reject photos quickly, compare bursts side by side, and copy the picks (and their RAWs) to a new folder. Search uses CLIP embeddings; grouping uses zero-shot subject, scene, and look tags. There's no training, no labelling, and nothing leaves your machine.
 
-> **Status:** MVP implemented; evaluation pending. See [`development_plan.md`](development_plan.md) for the design.
 
 ## Features
 
