@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 from PIL import Image
 
-from riffle import db
+from riffle import db, paths
 from riffle.config import config_from_dict
 
 VOCAB = """
@@ -22,10 +23,15 @@ scene: [indoors, outdoors, other]
 
 @pytest.fixture(autouse=True)
 def isolated_user_dirs(tmp_path_factory, monkeypatch):
-    """Never touch the real ~/.config, ~/.local/share or ~/.cache (or a ./config.yaml)."""
+    """Never touch the real user folders (or a ./config.yaml)."""
     home = tmp_path_factory.mktemp("home")
     for var, sub in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "share"), ("XDG_CACHE_HOME", "cache")):
         monkeypatch.setenv(var, str(home / sub))
+    if not sys.platform.startswith("linux"):
+        # Only Linux follows the XDG variables; elsewhere redirect the folders themselves.
+        monkeypatch.setattr(paths, "config_dir", lambda: home / "config" / "riffle")
+        monkeypatch.setattr(paths, "data_dir", lambda: home / "share" / "riffle")
+        monkeypatch.setattr(paths, "cache_dir", lambda: home / "cache" / "riffle")
     monkeypatch.delenv("RIFFLE_CONFIG", raising=False)
     monkeypatch.chdir(home)
     return home
