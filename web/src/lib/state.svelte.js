@@ -72,6 +72,14 @@ export function urlFor(v) {
 export const SORTS = ['taken_at', '-taken_at', 'name', '-name', 'place', '-place', 'taste', '-taste'];
 export const isTasteSort = (sort) => sort === 'taste' || sort === '-taste';
 
+/** Whether a sort works with a grouping: date sorts always; place names with a
+ * location grouping and file names with folders (they order the groups by name). */
+export function sortFits(group, sort) {
+  if (!group || sort === 'taken_at' || sort === '-taken_at') return true;
+  if (LOCATION_GROUPS.includes(group)) return sort === 'place' || sort === '-place';
+  return group === 'folder' && (sort === 'name' || sort === '-name');
+}
+
 export const DATE_GROUPS = ['day', 'month', 'year'];
 export const LOCATION_GROUPS = ['place', 'region', 'country'];
 export const GROUPS = [...DATE_GROUPS, ...LOCATION_GROUPS, 'folder'];

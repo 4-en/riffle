@@ -20,7 +20,7 @@ A local tool for finding the best photos in a large archive and exporting them f
 - RAW files tracked by matching filenames (never read or modified)
 - EXIF: date, camera, lens, focal length, aperture, shutter speed, ISO, GPS
 - Filters for flag, date range, camera, lens, focal length, aperture, ISO, orientation, and location; like tags, options are counted within the other active filters, and filters that can't narrow the results are hidden
-- Sort by date, place name, or file name (either direction), or by your taste; group by date, place, or parent folder; the sidebar sections collapse and remember how you left them
+- Sort by date, place name, or file name (either direction), or by your taste; group by date, place, or parent folder (grouped by place, the place sorts order the places A–Z or Z–A; grouped by folder, the file-name sorts order the folders and their files); the sidebar sections collapse and remember how you left them
 - Timeline view: group the grid by day, month, or year (only groups with matching photos appear), jump between groups, and go from any photo to its day
 - **Overviews:** a calendar (for date groupings) and a map (for location groupings) of where your photos are; click a day, month, or place to open it in the grid
 - **Location from your phone:** add a Google Timeline export (or Records.json / GPX) and photos without GPS are placed by capture time; group by place, region, or country, filter by where you were, and optionally write the position into exported copies
@@ -73,7 +73,7 @@ The folder browser can list any directory the server can read, so keep `serve` b
 
 A typical pass:
 
-1. Turn on **Stacks** (top bar) so each burst shows as one tile, and hide the rejects with **Flag → Picked + Unflagged** in the sidebar (or press `H`).
+1. Turn on **Stacks** (in the toolbar above the grid) so each burst shows as one tile, and hide the rejects with **Flag → Picked + Unflagged** in the sidebar (or press `H`).
 2. **Review stacks** walks through every stack that still has unflagged photos. Click (or press 1–9) the keeper(s), then Enter: they are picked and the rest rejected. The sharpness bar marks the sharpest shot, ▲/▼ warn about blown highlights and crushed shadows, and **★ suggested** marks the likely keeper (sharpness, clipping, and a CLIP "good photo vs. bad photo" score, each relative to the others; hover it for the reasons). A keeps the suggestion; Z zooms all photos to the same spot to check focus.
 3. Go through the rest in the grid or the loupe with P (pick), X (reject), U (unflag). In the loupe, the next photo comes up automatically.
 4. Filter by **Flag → Picked** to check the selection, then **Export** (top bar): choose the folder, the files (Images / Images + RAWs / RAWs only), and the layout (flat, or keeping the source folders).
@@ -118,7 +118,7 @@ The file stays where it is and is only read (its path is saved in `config.yaml` 
 | Timeline: on the move | taken while travelling; interpolated along the route | tens of metres to a few km |
 | Timeline: nearby | a recorded position within 15 minutes | depends on the gap |
 
-With a location grouping, **Map** (top bar, or `O`) shows your photos as clusters on a world map; hover for a cover photo, click to open the place in the grid. The outlines are Natural Earth country borders bundled with the app, so the map works offline and never contacts a map server; it is an overview, not a street map. With a date grouping, the same button shows a **Calendar**: a year of months where each day with photos shows a cover and a count.
+With a location grouping, **Map** (next to Group above the grid, or `O`) shows your photos as clusters on a world map; hover for a cover photo, click to open the place in the grid. The outlines are Natural Earth country borders bundled with the app, so the map works offline and never contacts a map server; it is an overview, not a street map. With a date grouping, the same switch shows a **Calendar**: a year of months where each day with photos shows a cover and a count.
 
 Places are named offline from a bundled GeoNames dataset: the nearest town or village, its region, and its country. Group the grid by **Place / Region / Country** (groups are in trip order), filter by country, place, or source in the sidebar, and use **Show place** in the photo view. `location.max_gap_minutes` and `location.min_population` in `config.yaml` tune matching and naming.
 

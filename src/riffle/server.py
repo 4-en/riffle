@@ -28,6 +28,7 @@ from .filters import (
     FILENAME_EXPR,
     GROUP_KEYS,
     LOCATION_KEYS,
+    NAME_SORTS,
     PLACE_NAME,
     PhotoFilter,
     facets,
@@ -386,7 +387,7 @@ def create_app(
         order, each item carries its group key ("" = undated, last), and
         ``groups`` lists every non-empty group of the filtered set with its count.
         ``sort=taste`` / ``-taste``: likely keepers / likely rejects first (taste model)."""
-        if group and sort not in ("taken_at", "-taken_at"):
+        if group and sort not in ("taken_at", "-taken_at") and sort not in NAME_SORTS.get(group, ()):
             sort = "taken_at"  # groups must be contiguous
         if sort in ("taste", "-taste"):
             return taste_listing(flt, collapse_mode(collapse, dupes), sort, offset, limit, conn)
@@ -395,7 +396,14 @@ def create_app(
         total = conn.execute(f"{cte} SELECT COUNT(*) {shown}", params).fetchone()[0]
         direction = "DESC" if sort == "-taken_at" else ""
         by_location = group in LOCATION_KEYS
-        if by_location:
+        groups = group_summary(conn, cte, shown, params, group, direction, sort) if group else None
+        if group and sort in NAME_SORTS.get(group, ()):
+            # Groups by name (place or folder), in the order of the summary; the sort within them.
+            if groups:
+                cte += ", grank(k, r) AS (VALUES " + ", ".join("(?, ?)" for _ in groups) + ")"
+                params = [*params, *(x for r, g in enumerate(groups) for x in (g["key"], r))]
+                order = f"(SELECT r FROM grank WHERE k = COALESCE(grp, '')), {order}"
+        elif by_location:
             # Location groups in trip order: by each group's first photo, unknown last.
             order = f"grp IS NULL, MIN(p.taken_at) OVER (PARTITION BY grp) {direction}, grp, {order}"
         elif group == "folder":
@@ -411,7 +419,7 @@ def create_app(
             keys = {r[0]: r[1] or "" for r in rows}
             for item in items:
                 item["group"] = keys[item["id"]]
-            result["groups"] = group_summary(conn, cte, shown, params, group, direction)
+            result["groups"] = groups
         return result
 
     def taste_listing(flt, collapse, sort, offset, limit, conn) -> dict:
@@ -438,10 +446,11 @@ def create_app(
                 return " / ".join([s.name, *rest.split("/")]) if rest else s.name
         return key.rstrip("/")
 
-    def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "") -> list[dict]:
+    def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "", sort: str = "") -> list[dict]:
         """Every non-empty group of the listing, in display order, with its count,
         first/last capture time, and a cover photo (a pick if the group has one,
-        else its first photo). Location groups add a label and a centre point."""
+        else its first photo). Location groups add a label and a centre point.
+        With a name sort (``NAME_SORTS``), groups are ordered by their label, unknown last."""
         key = GROUP_KEYS[group]
         by_location = group in LOCATION_KEYS
         group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else f"grp {direction}"
@@ -475,6 +484,9 @@ def create_app(
                 g["label"] = labels.get(k, "Unknown location") if k else "Unknown location"
                 g["lat"], g["lon"] = (r[4], r[5]) if k else (None, None)
             out.append(g)
+        if sort in NAME_SORTS.get(group, ()):
+            known = sorted((g for g in out if g["key"]), key=lambda g: g["label"].casefold(), reverse=sort.startswith("-"))
+            out = known + [g for g in out if not g["key"]]
         return out
 
     @app.get("/api/groups")

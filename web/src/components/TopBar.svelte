@@ -1,8 +1,8 @@
 <script>
-  import { view, search, clearAll, hasOverview } from '../lib/state.svelte.js';
+  import { view, search, clearAll } from '../lib/state.svelte.js';
 
-  // taste: the taste model's status (enables the "likely keepers / rejects" sorts).
-  let { total, loading, indexStatus = null, textSearch = true, picks = 0, taste = null } = $props();
+  // The grid's own controls (count, group, sort, stacks) are in ViewBar.
+  let { indexStatus = null, textSearch = true, picks = 0 } = $props();
 
   const indexPct = $derived(
     indexStatus?.running && indexStatus.total ? Math.round((100 * indexStatus.done) / indexStatus.total) : null
@@ -68,115 +68,31 @@
     </span>
   {/if}
 
-  <label
-    class="flex shrink-0 items-center gap-1 text-xs text-neutral-400 {view.q || view.similar ? 'opacity-40' : ''}"
-    title={view.q || view.similar ? 'Grouping applies when browsing, not to search results' : 'Group the grid by date or place'}
-  >
-    Group
-    <select
-      bind:value={view.group}
-      disabled={!!(view.q || view.similar)}
-      class="rounded border border-neutral-700 bg-neutral-900 px-1 py-1 text-neutral-200"
-    >
-      <option value="">None</option>
-      <optgroup label="Date">
-        <option value="day">Day</option>
-        <option value="month">Month</option>
-        <option value="year">Year</option>
-      </optgroup>
-      <optgroup label="Location">
-        <option value="place">Place</option>
-        <option value="region">Region</option>
-        <option value="country">Country</option>
-      </optgroup>
-      <optgroup label="Files">
-        <option value="folder">Folder</option>
-      </optgroup>
-    </select>
-  </label>
-  <label
-    class="flex shrink-0 items-center gap-1 text-xs text-neutral-400 {view.q || view.similar ? 'opacity-40' : ''}"
-    title={view.q || view.similar
-      ? 'Search results are ordered by relevance'
-      : taste?.enabled
-        ? 'Order photos by date, or by how likely you are to keep them (learned from your picks and rejects)'
-        : 'Order photos by date'}
-  >
-    Sort
-    <select
-      bind:value={view.sort}
-      disabled={!!(view.q || view.similar)}
-      onchange={() => {
-        // The model rates scenes, so a burst's siblings rank together: one tile per stack reads best.
-        if (view.sort === 'taste' || view.sort === '-taste') view.collapse = 'stacks';
-      }}
-      class="rounded border border-neutral-700 bg-neutral-900 px-1 py-1 text-neutral-200"
-    >
-      <optgroup label="Date">
-        <option value="taken_at">Oldest first</option>
-        <option value="-taken_at">Newest first</option>
-      </optgroup>
-      <optgroup label="Name">
-        <option value="place" disabled={!!view.group}>Place A → Z</option>
-        <option value="-place" disabled={!!view.group}>Place Z → A</option>
-        <option value="name" disabled={!!view.group}>File name A → Z</option>
-        <option value="-name" disabled={!!view.group}>File name Z → A</option>
-      </optgroup>
-      <optgroup label="Your taste">
-        <option value="taste" disabled={!taste?.enabled || !!view.group}>Likely keepers first</option>
-        <option value="-taste" disabled={!taste?.enabled || !!view.group}>Likely rejects first</option>
-      </optgroup>
-    </select>
-  </label>
-
-  {#if hasOverview(view.group)}
-    {@const isMap = ['place', 'region', 'country'].includes(view.group)}
+  <!-- The workflow, in order: cull, curate, export. -->
+  <div class="flex shrink-0 items-center gap-1.5">
     <button
-      class="shrink-0 rounded border px-2 py-1 text-xs disabled:opacity-40 {view.overview
-        ? 'border-sky-700 bg-sky-800 text-white'
-        : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
-      aria-pressed={view.overview}
-      disabled={!!(view.q || view.similar)}
-      title={view.q || view.similar ? 'Overviews apply when browsing, not to search results' : `${isMap ? 'Map' : 'Calendar'} overview of the groups (O)`}
-      onclick={() => (view.overview = !view.overview)}
+      class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+      title="Go through the stacks that still have unflagged photos, in the current filters (R)"
+      onclick={() => (view.compare = { kind: 'review' })}>Review stacks</button
     >
-      {isMap ? 'Map' : 'Calendar'}
-    </button>
-  {/if}
+    <button
+      class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+      title={view.q || view.similar
+        ? 'Curate works on the current filters, not on search results'
+        : 'Draft a small, varied selection (photo book, exhibition) from the current filters'}
+      disabled={!!(view.q || view.similar)}
+      onclick={() => (view.curate = true)}>Curate</button
+    >
+    <button
+      class="shrink-0 rounded px-2.5 py-1 text-xs font-medium {picks
+        ? 'bg-emerald-600 text-black hover:bg-emerald-500'
+        : 'border border-neutral-700 text-neutral-500'}"
+      title="Copy the picked photos to a folder"
+      onclick={() => (view.exporting = true)}>Export{picks ? ` ${picks}` : ''}</button
+    >
+  </div>
 
-  <button
-    class="shrink-0 rounded border px-2 py-1 text-xs {view.collapse === 'stacks'
-      ? 'border-sky-700 bg-sky-800 text-white'
-      : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
-    aria-pressed={view.collapse === 'stacks'}
-    title="Show one tile per stack of similar shots (S)"
-    onclick={() => (view.collapse = view.collapse === 'stacks' ? 'dupes' : 'stacks')}>Stacks</button
-  >
-
-  <span class="shrink-0 text-xs tabular-nums text-neutral-400">
-    {#if loading && !total}Loading…{:else}{total.toLocaleString()} {total === 1 ? 'photo' : 'photos'}{/if}
-  </span>
-
-  <button
-    class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
-    title="Go through the stacks that still have unflagged photos, in the current filters (R)"
-    onclick={() => (view.compare = { kind: 'review' })}>Review stacks</button
-  >
-  <button
-    class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-    title={view.q || view.similar
-      ? 'Curate works on the current filters, not on search results'
-      : 'Draft a small, varied selection (photo book, exhibition) from the current filters'}
-    disabled={!!(view.q || view.similar)}
-    onclick={() => (view.curate = true)}>Curate</button
-  >
-  <button
-    class="shrink-0 rounded px-2.5 py-1 text-xs font-medium {picks
-      ? 'bg-emerald-600 text-black hover:bg-emerald-500'
-      : 'border border-neutral-700 text-neutral-500'}"
-    title="Copy the picked photos to a folder"
-    onclick={() => (view.exporting = true)}>Export{picks ? ` ${picks}` : ''}</button
-  >
+  <div class="h-5 w-px shrink-0 bg-neutral-800"></div>
 
   <button
     class="flex shrink-0 items-center gap-2 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"

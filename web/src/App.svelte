@@ -5,6 +5,7 @@
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import { connection, connect } from './lib/connection.svelte.js';
   import TopBar from './components/TopBar.svelte';
+  import ViewBar from './components/ViewBar.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import Grid from './components/Grid.svelte';
   import Detail from './components/Detail.svelte';
@@ -421,53 +422,58 @@
 {/if}
 
 <div class="flex h-full flex-col">
-  <TopBar bind:this={topBar} {total} {loading} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} {taste} />
+  <TopBar bind:this={topBar} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} />
   <div class="flex min-h-0 flex-1">
     <Sidebar {tags} {facets} />
-    <main class="min-w-0 flex-1 overflow-y-auto">
-      {#if error || culling.error}
-        <div class="m-4 rounded border border-red-900 bg-red-950/50 p-3 text-sm text-red-300">
-          {error || `Could not save flags: ${culling.error}`}
-          {#if view.q || view.similar}
-            <button class="ml-2 underline" onclick={clearSearch}>Clear search</button>
-          {/if}
-        </div>
+    <div class="flex min-w-0 flex-1 flex-col">
+      {#if !(tags && tags.photos === 0 && !loading)}
+        <ViewBar {total} {loading} {taste} />
       {/if}
-      {#if tags && tags.photos === 0 && !loading}
-        <div class="flex h-full flex-col items-center justify-center gap-3 text-neutral-400">
-          {#if indexStatus?.running}
-            <p>Indexing… photos appear here when it finishes.</p>
-          {:else}
-            <p>No photos in the library yet.</p>
-            <button class="text-xs text-sky-400 hover:underline" onclick={() => (view.help = true)}>How does this work?</button>
-            <button class="rounded bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600" onclick={() => (view.library = true)}>
-              Add a photo folder
-            </button>
-          {/if}
-        </div>
-      {:else if view.overview && isLocationGroup(view.group)}
-        {#await loadMap()}
-          <p class="p-4 text-sm text-neutral-500">Loading map…</p>
-        {:then { default: MapView }}
-          <MapView onopen={openGroup} />
-        {/await}
-      {:else if view.overview}
-        <Calendar onopen={openGroup} />
-      {:else}
-        <Grid
-          bind:this={grid}
-          items={visibleItems}
-          {loading}
-          {hasMore}
-          onmore={loadMore}
-          groups={grouped ? groups : null}
-          {highlight}
-          onjump={jumpToGroup}
-          oncontext={openMenu}
-        />
-        <SelectionBar onselectall={selectAll} />
-      {/if}
-    </main>
+      <main class="min-h-0 flex-1 overflow-y-auto">
+        {#if error || culling.error}
+          <div class="m-4 rounded border border-red-900 bg-red-950/50 p-3 text-sm text-red-300">
+            {error || `Could not save flags: ${culling.error}`}
+            {#if view.q || view.similar}
+              <button class="ml-2 underline" onclick={clearSearch}>Clear search</button>
+            {/if}
+          </div>
+        {/if}
+        {#if tags && tags.photos === 0 && !loading}
+          <div class="flex h-full flex-col items-center justify-center gap-3 text-neutral-400">
+            {#if indexStatus?.running}
+              <p>Indexing… photos appear here when it finishes.</p>
+            {:else}
+              <p>No photos in the library yet.</p>
+              <button class="text-xs text-sky-400 hover:underline" onclick={() => (view.help = true)}>How does this work?</button>
+              <button class="rounded bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600" onclick={() => (view.library = true)}>
+                Add a photo folder
+              </button>
+            {/if}
+          </div>
+        {:else if view.overview && isLocationGroup(view.group)}
+          {#await loadMap()}
+            <p class="p-4 text-sm text-neutral-500">Loading map…</p>
+          {:then { default: MapView }}
+            <MapView onopen={openGroup} />
+          {/await}
+        {:else if view.overview}
+          <Calendar onopen={openGroup} />
+        {:else}
+          <Grid
+            bind:this={grid}
+            items={visibleItems}
+            {loading}
+            {hasMore}
+            onmore={loadMore}
+            groups={grouped ? groups : null}
+            {highlight}
+            onjump={jumpToGroup}
+            oncontext={openMenu}
+          />
+          <SelectionBar onselectall={selectAll} />
+        {/if}
+      </main>
+    </div>
   </div>
 </div>
 

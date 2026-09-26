@@ -45,6 +45,13 @@ GROUP_KEYS = {
     "folder": FOLDER_KEY,
 }
 
+# Sorts besides date that keep a grouping: they order the groups by name (location
+# or folder label) and the photos within them by the same sort.
+NAME_SORTS = {
+    **{g: ("place", "-place") for g in LOCATION_KEYS},
+    "folder": ("name", "-name"),
+}
+
 RANGE_COLUMNS = {"focal": "p.focal_length", "aperture": "p.aperture", "iso": "p.iso"}
 
 ORIENTATIONS = {

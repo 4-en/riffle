@@ -1,3 +1,5 @@
+import { sortFits } from './state.svelte.js';
+
 function query(params) {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -28,8 +30,8 @@ export function fetchResults(view, offset, limit) {
   const common = { ...filterParams(view), collapse: view.collapse, offset, limit };
   if (view.similar) return get(`/api/search/similar/${view.similar}`, common);
   if (view.q) return get('/api/search/text', { ...common, q: view.q });
-  // Grouped views keep their own order (date, trip, or folder); only date sorts apply there.
-  const sort = view.group && view.sort !== 'taken_at' && view.sort !== '-taken_at' ? 'taken_at' : view.sort;
+  // Grouped views allow only the sorts that keep groups together (date, or the groups' names).
+  const sort = sortFits(view.group, view.sort) ? view.sort : 'taken_at';
   return get('/api/photos', { ...common, group: view.group, sort });
 }
 

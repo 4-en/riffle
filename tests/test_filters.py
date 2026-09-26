@@ -143,6 +143,16 @@ def test_sort_by_file_name_and_place(client, conn):
     assert asc == ["IMG_0002.jpg", "IMG_0003.png", "IMG_0001.jpg", "IMG_0002_edit.png"]  # Abisko, Kiruna, Visby; no place last
     dsc = [i["rel_path"].rsplit("/", 1)[1] for i in client.get("/api/photos", params={"sort": "-place", "dupes": "all"}).json()["items"]]
     assert dsc == ["IMG_0001.jpg", "IMG_0003.png", "IMG_0002.jpg", "IMG_0002_edit.png"]  # still last
+
+    # Grouped by place, the place sorts order the groups by name; unknown stays last.
+    for sort, expected in (("place", ["Abisko", "Kiruna", "Visby"]), ("-place", ["Visby", "Kiruna", "Abisko"])):
+        res = client.get("/api/photos", params={"group": "place", "sort": sort, "dupes": "all"}).json()
+        labels = [g["label"].split(",")[0] for g in res["groups"]]
+        assert labels == [*expected, "Unknown location"]
+        assert [i["group"] for i in res["items"]] == [g["key"] for g in res["groups"] for _ in range(g["count"])]
+    # A sort that does not fit the grouping falls back to date order.
+    by_date = client.get("/api/photos", params={"group": "place", "sort": "taken_at", "dupes": "all"}).json()
+    assert client.get("/api/photos", params={"group": "place", "sort": "name", "dupes": "all"}).json() == by_date
     assert client.get("/api/photos", params={"sort": "size"}).status_code == 400
 
 
@@ -166,5 +176,10 @@ def test_group_by_folder(indexed, conn, archive_dir, fake_clip):
         assert day2 == f"{indexed.sources[0]}/trip/day 2/"
         # Items arrive folder by folder, matching the groups.
         assert [i["group"] for i in res["items"]] == [g["key"] for g in res["groups"] for _ in range(g["count"])]
+        # By name: the folders by their label, the files within them by name (both reversed for Z → A).
+        desc = c.get("/api/photos", params={"group": "folder", "sort": "-name", "dupes": "all"}).json()
+        assert [g["label"] for g in desc["groups"]] == ["photos / trip / day 2", "photos / trip"]
+        names = [i["rel_path"].rsplit("/", 1)[1] for i in desc["items"]]
+        assert names == ["evening.jpg", *sorted(names[1:], key=str.lower, reverse=True)]
         only = c.get("/api/photos", params={"folder": day2, "dupes": "all"}).json()["items"]
         assert [i["rel_path"] for i in only] == ["trip/day 2/evening.jpg"]  # that folder only, not its parent
