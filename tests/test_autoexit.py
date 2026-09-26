@@ -109,3 +109,34 @@ def test_serve_mode_never_stops(indexed):
     assert not wait_stopped(thread, 3.0)
     server.should_exit = True
     assert wait_stopped(thread, 5.0)
+
+
+def test_one_ctrl_c_stops_cleanly_with_tabs_open(indexed, caplog):
+    """The open event streams end on the first Ctrl+C, so the graceful shutdown
+    does not wait for them (well before uvicorn's 3 s safety timeout)."""
+    import logging
+    import signal
+
+    from riffle.server import run_server
+
+    servers = []
+    port = free_port(0)
+    app = create_app(indexed, text_encoder=FakeClip().encode_text)
+    thread = threading.Thread(
+        target=run_server, args=(app, "127.0.0.1", port), kwargs={"on_created": servers.append}, daemon=True
+    )
+    thread.start()
+    url = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        if health(url):
+            break
+        time.sleep(0.05)
+    tabs = [Tab(url), Tab(url)]
+    caplog.set_level(logging.ERROR)
+    started = time.monotonic()
+    servers[0].handle_exit(signal.SIGINT, None)  # what one Ctrl+C does
+    assert wait_stopped(thread, 5.0)
+    assert time.monotonic() - started < 2.0
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    for tab in tabs:
+        tab.close()

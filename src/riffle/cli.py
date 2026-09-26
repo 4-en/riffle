@@ -69,18 +69,27 @@ def main(argv: list[str] | None = None) -> None:
 
         run_tag(cfg)
     elif args.command == "serve":
-        import uvicorn
-
         os.environ["RIFFLE_CONFIG"] = str(cfg.path)
-        print(f"Serving on http://{args.host}:{args.port}")
-        uvicorn.run(
-            "riffle.server:create_app",
-            factory=True,
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            reload_dirs=[os.path.dirname(__file__)] if args.reload else None,
-        )
+        print(f"Serving on http://{args.host}:{args.port} (Ctrl+C to stop)")
+        if args.reload:  # development: uvicorn re-imports the app on code changes
+            import uvicorn
+
+            try:
+                uvicorn.run(
+                    "riffle.server:create_app",
+                    factory=True,
+                    host=args.host,
+                    port=args.port,
+                    reload=True,
+                    reload_dirs=[os.path.dirname(__file__)],
+                    timeout_graceful_shutdown=3,
+                )
+            except KeyboardInterrupt:
+                pass
+        else:
+            from .server import create_app, run_server
+
+            run_server(create_app(cfg), args.host, args.port)
 
 
 if __name__ == "__main__":

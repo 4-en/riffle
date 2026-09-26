@@ -123,7 +123,8 @@ def create_app(
     cfg = cfg or load_config()  # --config / $RIFFLE_CONFIG / ./config.yaml / the user's config
     model_id = cfg.model.model_id
     # clients: open /api/events streams (browser tabs); seen_client: one ever connected.
-    state: dict = {"encoder": text_encoder, "clients": 0, "seen_client": False}
+    # stopping: the server is shutting down, so the event streams should end now.
+    state: dict = {"encoder": text_encoder, "clients": 0, "seen_client": False, "stopping": False}
     job = index_job(cfg, run=index_runner)
     export_job = BackgroundJob(cfg, run_export)
 
@@ -160,6 +161,7 @@ def create_app(
                 return
 
     app = FastAPI(title="Riffle", lifespan=lifespan)
+    app.state.end_streams = lambda: state.__setitem__("stopping", True)
 
     def get_conn():
         conn = db.connect_readonly(cfg.db_path, cfg.selections_path)
@@ -740,9 +742,14 @@ def create_app(
                 # A closed tab only shows up when writing to it fails (Starlette with
                 # ASGI 2.4 does not listen for disconnects), so write a tiny comment
                 # every 2 s: the stream is then cancelled within ~2 s of the tab closing.
-                while True:
-                    await asyncio.sleep(2)
-                    yield ": keep-alive\n\n"
+                # On shutdown the stream ends by itself, so a graceful stop does not
+                # wait for open tabs (the page reconnects when Riffle is back).
+                ticks = 0
+                while not state["stopping"]:
+                    await asyncio.sleep(0.25)
+                    ticks += 1
+                    if ticks % 8 == 0:
+                        yield ": keep-alive\n\n"
             finally:
                 state["clients"] -= 1
 
@@ -923,3 +930,27 @@ def create_app(
             )
 
     return app
+
+
+def run_server(app: FastAPI, host: str, port: int, *, on_created: Callable | None = None) -> None:
+    """Serve ``app`` until stopped. One Ctrl+C stops it cleanly: the open event
+    streams (browser tabs) are ended first, so the graceful shutdown does not wait
+    for them, and uvicorn's re-raised KeyboardInterrupt is not shown as a crash.
+    ``on_created(server)`` gets the uvicorn server (e.g. for AutoExit)."""
+    import uvicorn
+
+    class RiffleServer(uvicorn.Server):
+        def handle_exit(self, sig, frame):
+            app.state.end_streams()
+            super().handle_exit(sig, frame)
+
+    server = RiffleServer(
+        uvicorn.Config(app, host=host, port=port, log_level="warning", timeout_graceful_shutdown=3)
+    )
+    if on_created:
+        on_created(server)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass  # uvicorn re-raises the Ctrl+C it handled; the server has already stopped
+    print("Riffle stopped.")

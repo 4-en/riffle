@@ -80,9 +80,7 @@ def launch(cfg: Config, open_browser: bool = True) -> None:
             webbrowser.open(url)
         return
 
-    import uvicorn
-
-    from .server import AutoExit, create_app
+    from .server import AutoExit, create_app, run_server
 
     port = free_port()
     url = f"http://{HOST}:{port}"
@@ -90,14 +88,17 @@ def launch(cfg: Config, open_browser: bool = True) -> None:
     rt.parent.mkdir(parents=True, exist_ok=True)
     rt.write_text(json.dumps({"url": url, "pid": os.getpid()}))
     os.environ["RIFFLE_CONFIG"] = str(cfg.path)
-    server: uvicorn.Server | None = None
+    server = None
 
     def stop() -> None:
         print("The last Riffle tab was closed: stopping. Run `riffle` to start it again.")
         server.should_exit = True
 
+    def created(s) -> None:
+        nonlocal server
+        server = s
+
     app = create_app(cfg, auto_exit=AutoExit(stop=stop, idle_seconds=IDLE_EXIT_SECONDS))
-    server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=port, log_level="warning"))
     if open_browser:
         threading.Thread(target=open_when_ready, args=(url,), daemon=True).start()
     print(
@@ -105,7 +106,7 @@ def launch(cfg: Config, open_browser: bool = True) -> None:
         f"It stops by itself {IDLE_EXIT_SECONDS} s after its last browser tab is closed, or press Ctrl+C."
     )
     try:
-        server.run()
+        run_server(app, HOST, port, on_created=created)
     finally:
         try:
             if json.loads(rt.read_text()).get("pid") == os.getpid():
