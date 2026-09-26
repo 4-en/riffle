@@ -19,6 +19,7 @@ A local tool for finding the best photos in a large archive and exporting them f
 - RAW files tracked by matching filenames (never read or modified)
 - EXIF: date, camera, lens, focal length, aperture, shutter speed, ISO, GPS
 - Filters for flag, date range, camera, lens, focal length, aperture, ISO, orientation, and location; like tags, options are counted within the other active filters, and filters that can't narrow the results are hidden
+- Sort by date, place name, or file name (either direction), or by your taste; group by date, place, or parent folder; the sidebar sections collapse and remember how you left them
 - Timeline view: group the grid by day, month, or year (only groups with matching photos appear), jump between groups, and go from any photo to its day
 - **Overviews:** a calendar (for date groupings) and a map (for location groupings) of where your photos are; click a day, month, or place to open it in the grid
 - **Location from your phone:** add a Google Timeline export (or Records.json / GPX) and photos without GPS are placed by capture time; group by place, region, or country, filter by where you were, and optionally write the position into exported copies
@@ -71,7 +72,7 @@ The folder browser can list any directory the server can read, so keep `serve` b
 
 A typical pass:
 
-1. Turn on **Stacks** (top bar) so each burst shows as one tile, and **Hide rejected**.
+1. Turn on **Stacks** (top bar) so each burst shows as one tile, and hide the rejects with **Flag → Picked + Unflagged** in the sidebar (or press `H`).
 2. **Review stacks** walks through every stack that still has unflagged photos. Click (or press 1–9) the keeper(s), then Enter: they are picked and the rest rejected. The sharpness bar marks the sharpest shot, ▲/▼ warn about blown highlights and crushed shadows, and **★ suggested** marks the likely keeper (sharpness, clipping, and a CLIP "good photo vs. bad photo" score, each relative to the others; hover it for the reasons). A keeps the suggestion; Z zooms all photos to the same spot to check focus.
 3. Go through the rest in the grid or the loupe with P (pick), X (reject), U (unflag). In the loupe, the next photo comes up automatically.
 4. Filter by **Flag → Picked** to check the selection, then **Export** (top bar): choose the folder, the files (Images / Images + RAWs / RAWs only), and the layout (flat, or keeping the source folders).
@@ -93,7 +94,7 @@ Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike 
 | Where | Keys |
 |---|---|
 | Anywhere | `?` how-to guide · `O` calendar / map overview (with a grouping) · `/` search · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
-| Grid | right-click menu (pick / reject, compare, find similar, show day / place, copy path, filter by its tags) · click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected · `R` review stacks |
+| Grid | right-click menu (pick / reject, compare, find similar, show day / place, copy path, filter by its tags) · click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected (Flag → Picked + Unflagged) · `R` review stacks |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag (and go to the next photo) |
 | Compare | click or `1`–`9` keep · `A` keep the suggested one · `Enter` pick kept, reject rest (with nothing kept: press twice to reject all) · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag the focused photo · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
 

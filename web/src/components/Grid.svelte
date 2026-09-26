@@ -52,7 +52,7 @@
     return out;
   });
   const info = $derived(new Map((groups ?? []).map((g) => [g.key, g])));
-  const plural = { day: 'days', month: 'months', year: 'years', place: 'places', region: 'regions', country: 'countries' };
+  const plural = { day: 'days', month: 'months', year: 'years', place: 'places', region: 'regions', country: 'countries', folder: 'folders' };
   const labelOf = (key) => groupLabel(key, mode, info.get(key)?.label);
   const mode = $derived(view.group);
   const order = $derived(new Map(items.map((item, i) => [item.id, i])));

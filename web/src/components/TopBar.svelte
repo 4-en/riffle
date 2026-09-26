@@ -1,5 +1,5 @@
 <script>
-  import { view, search, clearAll, hidingRejected, toggleHideRejected } from '../lib/state.svelte.js';
+  import { view, search, clearAll, hasOverview } from '../lib/state.svelte.js';
 
   // taste: the taste model's status (enables the "likely keepers / rejects" sorts).
   let { total, loading, indexStatus = null, textSearch = true, picks = 0, taste = null } = $props();
@@ -89,6 +89,9 @@
         <option value="region">Region</option>
         <option value="country">Country</option>
       </optgroup>
+      <optgroup label="Files">
+        <option value="folder">Folder</option>
+      </optgroup>
     </select>
   </label>
   <label
@@ -109,8 +112,16 @@
       }}
       class="rounded border border-neutral-700 bg-neutral-900 px-1 py-1 text-neutral-200"
     >
-      <option value="taken_at">Oldest first</option>
-      <option value="-taken_at">Newest first</option>
+      <optgroup label="Date">
+        <option value="taken_at">Oldest first</option>
+        <option value="-taken_at">Newest first</option>
+      </optgroup>
+      <optgroup label="Name">
+        <option value="place" disabled={!!view.group}>Place A → Z</option>
+        <option value="-place" disabled={!!view.group}>Place Z → A</option>
+        <option value="name" disabled={!!view.group}>File name A → Z</option>
+        <option value="-name" disabled={!!view.group}>File name Z → A</option>
+      </optgroup>
       <optgroup label="Your taste">
         <option value="taste" disabled={!taste?.enabled || !!view.group}>Likely keepers first</option>
         <option value="-taste" disabled={!taste?.enabled || !!view.group}>Likely rejects first</option>
@@ -118,7 +129,7 @@
     </select>
   </label>
 
-  {#if view.group}
+  {#if hasOverview(view.group)}
     {@const isMap = ['place', 'region', 'country'].includes(view.group)}
     <button
       class="shrink-0 rounded border px-2 py-1 text-xs disabled:opacity-40 {view.overview
@@ -140,14 +151,6 @@
     aria-pressed={view.collapse === 'stacks'}
     title="Show one tile per stack of similar shots (S)"
     onclick={() => (view.collapse = view.collapse === 'stacks' ? 'dupes' : 'stacks')}>Stacks</button
-  >
-  <button
-    class="shrink-0 rounded border px-2 py-1 text-xs {hidingRejected()
-      ? 'border-red-800 bg-red-900 text-white'
-      : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
-    aria-pressed={hidingRejected()}
-    title="Hide rejected photos (H)"
-    onclick={toggleHideRejected}>Hide rejected</button
   >
 
   <span class="shrink-0 text-xs tabular-nums text-neutral-400">

@@ -1,7 +1,7 @@
 // View state, mirrored into the URL query string so views can be bookmarked.
 
 // EXIF filters, keyed by their API query parameter. Arrays are OR-combined values.
-const FILTER_ARRAYS = ['camera', 'lens', 'orientation', 'flag', 'country', 'region', 'place', 'loc_source'];
+const FILTER_ARRAYS = ['camera', 'lens', 'orientation', 'flag', 'country', 'region', 'place', 'loc_source', 'folder'];
 const FILTER_SCALARS = ['date_from', 'date_to', 'focal_min', 'focal_max', 'aperture_min', 'aperture_max', 'iso_min', 'iso_max', 'gps', 'exported'];
 
 export function emptyFilters() {
@@ -68,12 +68,14 @@ export function urlFor(v) {
 
 // ---- date groups -----------------------------------------------------------
 
-export const SORTS = ['taken_at', '-taken_at', 'taste', '-taste'];
+export const SORTS = ['taken_at', '-taken_at', 'name', '-name', 'place', '-place', 'taste', '-taste'];
 export const isTasteSort = (sort) => sort === 'taste' || sort === '-taste';
 
 export const DATE_GROUPS = ['day', 'month', 'year'];
 export const LOCATION_GROUPS = ['place', 'region', 'country'];
-export const GROUPS = [...DATE_GROUPS, ...LOCATION_GROUPS];
+export const GROUPS = [...DATE_GROUPS, ...LOCATION_GROUPS, 'folder'];
+/** Groupings with an overview: a calendar for dates, a map for locations (none for folders). */
+export const hasOverview = (mode) => DATE_GROUPS.includes(mode) || LOCATION_GROUPS.includes(mode);
 export const isLocationGroup = (mode) => LOCATION_GROUPS.includes(mode);
 
 /** The key the API uses to group a photo (detail object) by date or location. */
@@ -88,6 +90,7 @@ export function groupKey(photo, mode) {
 /** A group's heading. Location groups carry their label from the server (group.label). */
 export function groupLabel(key, mode, label = null) {
   if (isLocationGroup(mode)) return label || (key ? key : 'Unknown location');
+  if (mode === 'folder') return label || key || 'Unknown folder';
   if (!key) return 'Undated';
   const [y, m = 1, d = 1] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d);
@@ -110,6 +113,10 @@ export function dateSpan(first, last) {
 
 export function filterToGroup(key, mode) {
   if (!key) return;
+  if (mode === 'folder') {
+    view.filters.folder = [key];
+    return;
+  }
   if (isLocationGroup(mode)) {
     view.filters[mode] = [key];
     return;
@@ -134,7 +141,7 @@ export function clearFilters() {
   view.filters = emptyFilters();
 }
 
-/** Quick toggle: hide rejected photos (flag filter = picked or unflagged). */
+/** The H shortcut: hide rejected photos, i.e. Flag → Picked + Unflagged (and back). */
 export function hidingRejected() {
   const f = view.filters.flag;
   return f.length === 2 && f.includes('pick') && f.includes('none');

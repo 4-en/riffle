@@ -24,7 +24,16 @@ from pydantic import BaseModel
 from . import db
 from .config import Config, load_config, set_location_history, set_sources
 from .embed import embedding_paths, load_embeddings
-from .filters import GROUP_KEYS, LOCATION_KEYS, PhotoFilter, facets, location_labels, photo_filter
+from .filters import (
+    FILENAME_EXPR,
+    GROUP_KEYS,
+    LOCATION_KEYS,
+    PLACE_NAME,
+    PhotoFilter,
+    facets,
+    location_labels,
+    photo_filter,
+)
 from . import selections
 from .export import CONTENT, STRUCTURE, ExportError, check_destination, run_export
 from .jobs import BackgroundJob, index_job
@@ -323,10 +332,15 @@ def create_app(
             "taken_at": "p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
             "-taken_at": "p.taken_at IS NULL, p.taken_at DESC, p.source, p.rel_path",
             "path": "p.source, p.rel_path",
+            "name": f"{FILENAME_EXPR} COLLATE NOCASE, p.source, p.rel_path",
+            "-name": f"{FILENAME_EXPR} COLLATE NOCASE DESC, p.source, p.rel_path",
+            # by place name; photos without a location last either way
+            "place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE, p.taken_at IS NULL, p.taken_at",
+            "-place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE DESC, p.taken_at IS NULL, p.taken_at",
             "id": "p.id",
         }.get(sort)
         if order is None:
-            raise HTTPException(400, "sort must be taken_at, -taken_at, path or id")
+            raise HTTPException(400, "sort must be taken_at, -taken_at, name, -name, place, -place, path, id, taste or -taste")
         condition = ""
         if collapse == "dupes":
             # One representative per duplicate group: its lowest id within the filtered set.
@@ -368,6 +382,9 @@ def create_app(
         if by_location:
             # Location groups in trip order: by each group's first photo, unknown last.
             order = f"grp IS NULL, MIN(p.taken_at) OVER (PARTITION BY grp) {direction}, grp, {order}"
+        elif group == "folder":
+            # Folders in path order (each folder's photos together), by date within a folder.
+            order = f"grp, {order}"
         rows = conn.execute(
             f"{cte} SELECT p.id, {key} AS grp {shown} ORDER BY {order} LIMIT ? OFFSET ?",
             [*params, limit, offset],
@@ -393,6 +410,17 @@ def create_app(
         missing = 2.0  # photos without an embedding go last either way
         ids.sort(key=lambda i: sign * s if (s := taste_store.score_of(i)) is not None else missing)
         return {"total": len(ids), "items": items_for(conn, ids[offset : offset + limit])}
+
+    def folder_label(key: str | None) -> str:
+        """ "/photos/Sweden/" + "day 1/" -> "Sweden / day 1" (the source folder's name, then the subfolders)."""
+        if not key:
+            return "Unknown folder"
+        for s in sorted(cfg.sources, key=lambda p: -len(str(p))):
+            prefix = f"{s}/"
+            if key.startswith(prefix):
+                rest = key[len(prefix):].strip("/")
+                return " / ".join([s.name, *rest.split("/")]) if rest else s.name
+        return key.rstrip("/")
 
     def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "") -> list[dict]:
         """Every non-empty group of the listing, in display order, with its count,
@@ -425,6 +453,8 @@ def create_app(
         for r in rows:
             k = r[0]
             g = {"key": k or "", "count": r[1], "first": r[2], "last": r[3], "cover": covers.get(k)}
+            if group == "folder":
+                g["label"] = folder_label(k)
             if by_location:
                 g["label"] = labels.get(k, "Unknown location") if k else "Unknown location"
                 g["lat"], g["lon"] = (r[4], r[5]) if k else (None, None)

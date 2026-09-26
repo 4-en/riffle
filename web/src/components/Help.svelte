@@ -20,7 +20,7 @@
       ['Enter · double-click', 'Open the photo'],
       ['P · X · U', 'Pick · reject · unflag the selection'],
       ['C', 'Compare the selection side by side'],
-      ['S · H · R', 'Stacks · hide rejected · review stacks'],
+      ['S · H · R', 'Stacks · hide rejected (Flag → Picked + Unflagged) · review stacks'],
     ]],
     ['Photo view', [
       ['← →', 'Previous / next'],
@@ -67,7 +67,7 @@
           the photo view or many at once in the grid. For bursts, turn on <em>Stacks</em> and use <em>Review stacks</em>: the
           similar shots appear side by side, with the sharpest and a ★ suggested keeper marked; choose the keeper(s) and press
           <kbd>Enter</kbd>. Once you have flagged enough, <em>Sort → Likely keepers first</em> puts the promising photos first,
-          learned from your own picks and rejects. <em>Hide rejected</em> keeps the grid tidy, and <kbd>Ctrl+Z</kbd> undoes any flag change.
+          learned from your own picks and rejects. <em>Flag → Picked + Unflagged</em> (or <kbd>H</kbd>) hides the rejects, and <kbd>Ctrl+Z</kbd> undoes any flag change.
         </li>
         <li>
           <strong class="text-neutral-100">Export.</strong> <em>Export</em> (top right) copies your picks into a new folder: images,

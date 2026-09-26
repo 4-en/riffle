@@ -30,11 +30,19 @@ LOCATION_SOURCES = ("exif", "visit", "route", "nearby", "none")
 
 # Group keys for the grouped listing. Dates: "2026-03-12", "2026-03", "2026";
 # locations: see LOCATION_KEYS. NULL = undated / unknown location.
+# A photo's parent folder, e.g. "/photos/Trip/" + "day1/" (rtrim with every
+# character except "/" strips the file name, leaving the folder with a trailing /).
+DIR_EXPR = "rtrim(p.rel_path, replace(p.rel_path, '/', ''))"
+FOLDER_KEY = f"p.source || '/' || {DIR_EXPR}"
+FILENAME_EXPR = f"substr(p.rel_path, length({DIR_EXPR}) + 1)"
+PLACE_NAME = _LOC.format(expr="l.place")  # for sorting by place name
+
 GROUP_KEYS = {
     "day": DATE_EXPR,
     "month": f"substr({DATE_EXPR}, 1, 7)",
     "year": f"substr({DATE_EXPR}, 1, 4)",
     **LOCATION_KEYS,
+    "folder": FOLDER_KEY,
 }
 
 RANGE_COLUMNS = {"focal": "p.focal_length", "aperture": "p.aperture", "iso": "p.iso"}
@@ -77,6 +85,7 @@ class PhotoFilter:
     region: list[str] = field(default_factory=list)
     place: list[str] = field(default_factory=list)
     loc_source: list[str] = field(default_factory=list)
+    folder: list[str] = field(default_factory=list)  # parent folder keys (FOLDER_KEY), not subfolders
     exposure: list[str] = field(default_factory=list)  # EXPOSURE keys, OR-combined
 
     def where(self, model_id: str, exclude: frozenset[str] = frozenset()) -> tuple[str, list]:
@@ -149,6 +158,10 @@ class PhotoFilter:
         if self.exposure and "exposure" not in exclude:
             clauses.append("(" + " OR ".join(EXPOSURE[e] for e in self.exposure) + ")")
 
+        if self.folder and "folder" not in exclude:
+            clauses.append(f"{FOLDER_KEY} IN ({','.join('?' * len(self.folder))})")
+            params += self.folder
+
         if self.loc_source and "loc_source" not in exclude:
             clauses.append(f"{LOCATION_SOURCE} IN ({','.join('?' * len(self.loc_source))})")
             params += self.loc_source
@@ -191,6 +204,7 @@ def photo_filter(
     place: list[str] = Query([]),
     loc_source: list[str] = Query([]),
     exposure: list[str] = Query([]),
+    folder: list[str] = Query([]),
 ) -> PhotoFilter:
     """FastAPI dependency: the filter from query parameters."""
     try:
@@ -236,6 +250,7 @@ def photo_filter(
         place=list(dict.fromkeys(place)),
         loc_source=list(dict.fromkeys(loc_source)),
         exposure=list(dict.fromkeys(exposure)),
+        folder=list(dict.fromkeys(folder)),
     )
 
 

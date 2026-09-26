@@ -1,6 +1,6 @@
 <script>
   import { tick, untrack } from 'svelte';
-  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup } from './lib/state.svelte.js';
+  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup, hasOverview } from './lib/state.svelte.js';
   import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds, fetchTaste } from './lib/api.js';
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import { connection, connect } from './lib/connection.svelte.js';
@@ -205,7 +205,7 @@
 
   // An overview needs a grouping and makes no sense for search results.
   $effect(() => {
-    if (view.overview && (!view.group || view.q || view.similar)) view.overview = false;
+    if (view.overview && (!hasOverview(view.group) || view.q || view.similar)) view.overview = false;
   });
 
   /** From the detail view: browse the photo's date group ('date') or place ('location')
@@ -247,7 +247,7 @@
   const hasMore = $derived(items.length < total);
 
   // Flags change locally before the list is re-queried; with a flag filter active
-  // (e.g. Hide rejected), photos whose new flag no longer matches disappear at once.
+  // (e.g. Picked + Unflagged), photos whose new flag no longer matches disappear at once.
   const visibleItems = $derived.by(() => {
     const wanted = view.filters.flag;
     if (!wanted.length) return items;
@@ -386,7 +386,7 @@
       view.collapse = view.collapse === 'stacks' ? 'dupes' : 'stacks';
     } else if (key === 'h') {
       toggleHideRejected();
-    } else if (key === 'o' && view.group && !view.q && !view.similar) {
+    } else if (key === 'o' && hasOverview(view.group) && !view.q && !view.similar) {
       view.overview = !view.overview;
     } else if (key === 'r') {
       view.compare = { kind: 'review' };

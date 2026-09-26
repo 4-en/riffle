@@ -1,6 +1,7 @@
 <script>
   import { view, toggleTag, toggleExcludeTag, activeCount, clearAll } from '../lib/state.svelte.js';
   import Filters from './Filters.svelte';
+  import Section from './Section.svelte';
 
   let { tags, facets } = $props();
 
@@ -21,9 +22,12 @@
     {/if}
     <Filters {facets} />
     {#each families as [family, list] (family)}
-      <h2 class="mb-1 mt-3 px-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 first:mt-0">
-        {titles[family] ?? family}
-      </h2>
+      <Section
+        id="tags-{family}"
+        title={titles[family] ?? family}
+        defaultOpen
+        active={list.filter((t) => view.tags.includes(t.id) || view.excludeTags.includes(t.id)).length}
+      >
       <ul>
         {#each list as tag (tag.id)}
           {@const on = view.tags.includes(tag.id)}
@@ -55,6 +59,7 @@
           </li>
         {/each}
       </ul>
+      </Section>
     {/each}
 
     <div class="mt-4 border-t border-neutral-800 px-2 pt-3 text-xs text-neutral-500">

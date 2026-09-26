@@ -28,8 +28,8 @@ export function fetchResults(view, offset, limit) {
   const common = { ...filterParams(view), collapse: view.collapse, offset, limit };
   if (view.similar) return get(`/api/search/similar/${view.similar}`, common);
   if (view.q) return get('/api/search/text', { ...common, q: view.q });
-  // Taste sorts do not apply to grouped views (groups are in date / trip order).
-  const sort = view.group && (view.sort === 'taste' || view.sort === '-taste') ? 'taken_at' : view.sort;
+  // Grouped views keep their own order (date, trip, or folder); only date sorts apply there.
+  const sort = view.group && view.sort !== 'taken_at' && view.sort !== '-taken_at' ? 'taken_at' : view.sort;
   return get('/api/photos', { ...common, group: view.group, sort });
 }
 
