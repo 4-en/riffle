@@ -191,7 +191,7 @@ Following each platform's conventions (`riffle paths` prints the exact locations
 | CLIP model weights | `~/.cache/huggingface/` | Downloaded once |
 | The standalone app's log: `riffle.log` | `~/.cache/riffle/` | Only for the downloaded builds; the previous run's is `riffle.log.1` |
 
-`$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, and `$XDG_CACHE_HOME` are honoured; macOS uses `~/Library/Application Support` and `~/Library/Caches`, Windows `%APPDATA%` and `%LOCALAPPDATA%`. To use a different config, pass `--config PATH` or set `RIFFLE_CONFIG`; a `config.yaml` in the current directory is also picked up, for a self-contained setup. `data_dir`, `selections`, and `vocabulary` in the config override the locations.
+`$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, and `$XDG_CACHE_HOME` are honoured; macOS uses `~/Library/Application Support/riffle` (settings and flags) and `~/Library/Caches/riffle`; Windows `%APPDATA%\riffle` (settings and flags) and `%LOCALAPPDATA%\riffle\Cache`. To use a different config, pass `--config PATH` or set `RIFFLE_CONFIG`; a `config.yaml` in the current directory is also picked up, for a self-contained setup. `data_dir`, `selections`, and `vocabulary` in the config override the locations.
 
 ## Layout
 

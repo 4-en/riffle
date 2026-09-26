@@ -7,8 +7,9 @@ On Linux, honouring the XDG variables:
 - derived data (catalogue, thumbnails, previews, embeddings): ``~/.cache/riffle``,
   safe to delete and rebuilt by indexing
 
-macOS uses ``~/Library/Application Support`` and ``~/Library/Caches``; Windows
-``%APPDATA%`` and ``%LOCALAPPDATA%``.
+macOS uses ``~/Library/Application Support/riffle`` and ``~/Library/Caches/riffle``;
+Windows ``%APPDATA%\\riffle`` (settings and flags, which roam with the user
+profile) and ``%LOCALAPPDATA%\\riffle\\Cache``.
 """
 
 from __future__ import annotations
@@ -23,16 +24,17 @@ import platformdirs
 APP = "riffle"
 
 
+# appauthor=False: no extra "author" folder on Windows (it would be riffle\riffle).
 def config_dir() -> Path:
-    return Path(platformdirs.user_config_dir(APP))
+    return Path(platformdirs.user_config_dir(APP, appauthor=False, roaming=True))
 
 
 def data_dir() -> Path:
-    return Path(platformdirs.user_data_dir(APP))
+    return Path(platformdirs.user_data_dir(APP, appauthor=False, roaming=True))
 
 
 def cache_dir() -> Path:
-    return Path(platformdirs.user_cache_dir(APP))
+    return Path(platformdirs.user_cache_dir(APP, appauthor=False))
 
 
 def default_file(name: str) -> Path:

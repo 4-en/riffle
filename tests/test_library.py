@@ -88,7 +88,7 @@ def test_add_and_remove_folder(client, archive_dir, tmp_path):
         str(new),
     ]
     assert client.get("/api/tags").json()["photos"] == 5
-    assert str(new) in (archive_dir / "config.yaml").read_text()
+    assert str(new) in yaml.safe_load((archive_dir / "config.yaml").read_text())["sources"]
 
     # Already covered, not a folder, relative, or wrong content type.
     assert client.post("/api/sources", json={"path": str(new)}).status_code == 409

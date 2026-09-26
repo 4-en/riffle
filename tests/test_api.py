@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -68,7 +70,7 @@ def test_detail(client, conn):
     p = photo(conn, "IMG_0001.jpg")
     d = client.get(f"/api/photos/{p['id']}").json()
     assert d["camera"] == "Canon EOS R5"
-    assert d["raws"][0]["path"].endswith("trip/RAW/IMG_0001.CR3")
+    assert Path(d["raws"][0]["path"]).as_posix().endswith("trip/RAW/IMG_0001.CR3")
     assert {t["family"] for t in d["tags"]} == {"subject", "scene"}
     assert client.get(d["preview"]).status_code == 200
 
@@ -103,7 +105,7 @@ def test_similar_search_excludes_self_and_respects_filter(client, conn):
 
 def test_unmatched_raws(client):
     raws = client.get("/api/raws/unmatched").json()
-    assert [r["path"].rsplit("/", 1)[1] for r in raws] == ["orphan.NEF"]
+    assert [Path(r["path"]).name for r in raws] == ["orphan.NEF"]
 
 
 def test_exclude_tags(client, conn):

@@ -22,9 +22,9 @@ def run_server(cfg, auto_exit=None, index_runner=None):
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     url = f"http://127.0.0.1:{port}"
-    for _ in range(100):
-        if health(url):
-            break
+    deadline = time.time() + 30  # a Windows CI runner can take several seconds
+    while not health(url):
+        assert time.time() < deadline, "the test server did not start"
         time.sleep(0.05)
     return server, thread, url
 
@@ -129,9 +129,9 @@ def test_one_ctrl_c_stops_cleanly_with_tabs_open(indexed, caplog):
     )
     thread.start()
     url = f"http://127.0.0.1:{port}"
-    for _ in range(100):
-        if health(url):
-            break
+    deadline = time.time() + 30  # a Windows CI runner can take several seconds
+    while not health(url):
+        assert time.time() < deadline, "the test server did not start"
         time.sleep(0.05)
     tabs = [Tab(url), Tab(url)]
     caplog.set_level(logging.ERROR)
