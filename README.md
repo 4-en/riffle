@@ -52,7 +52,7 @@ The first run creates your settings (`~/.config/riffle/config.yaml` on Linux); a
 venv/bin/riffle          # starts Riffle and opens it in your browser
 ```
 
-Run it again while it is running and it just opens another browser tab. It uses port 8000, or a free one if that is taken; Ctrl+C stops it. `riffle serve` starts the server without opening a browser (http://localhost:8000; `--host/--port/--reload`), and `python -m riffle` works like `riffle`.
+Run it again while it is running and it just opens another browser tab. It uses port 8000, or a free one if that is taken. It stops by itself about 30 seconds after you close its last browser tab (a reload is fine, and it never stops while indexing or exporting), or press Ctrl+C. If you come back to a tab after it stopped, the page says so and reconnects once you run `riffle` again. `riffle serve` starts the server without opening a browser and keeps running until stopped (http://localhost:8000; `--host/--port/--reload`), and `python -m riffle` works like `riffle`.
 
 In the UI, open **Library** (top right) to browse the disk, add or remove photo folders, and run indexing in the background with progress. It opens by itself when no folders are configured. Added folders are saved to `sources` in `config.yaml`.
 

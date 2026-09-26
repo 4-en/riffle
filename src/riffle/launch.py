@@ -3,6 +3,9 @@
 A small ``server.json`` in the data folder records the running instance, so a
 second launch just opens another browser tab. It is only trusted if that URL
 answers ``/api/health`` as Riffle, for the same config.
+
+Launched this way, Riffle also stops by itself once its last browser tab has
+been closed for a while (server.AutoExit); `riffle serve` never does.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from .config import Config
 
 HOST = "127.0.0.1"
 PREFERRED_PORT = 8000
+IDLE_EXIT_SECONDS = 30  # after the last tab closed (a reload reconnects well within this)
 
 
 def runtime_file(cfg: Config) -> Path:
@@ -78,17 +82,30 @@ def launch(cfg: Config, open_browser: bool = True) -> None:
 
     import uvicorn
 
+    from .server import AutoExit, create_app
+
     port = free_port()
     url = f"http://{HOST}:{port}"
     rt = runtime_file(cfg)
     rt.parent.mkdir(parents=True, exist_ok=True)
     rt.write_text(json.dumps({"url": url, "pid": os.getpid()}))
     os.environ["RIFFLE_CONFIG"] = str(cfg.path)
+    server: uvicorn.Server | None = None
+
+    def stop() -> None:
+        print("The last Riffle tab was closed: stopping. Run `riffle` to start it again.")
+        server.should_exit = True
+
+    app = create_app(cfg, auto_exit=AutoExit(stop=stop, idle_seconds=IDLE_EXIT_SECONDS))
+    server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=port, log_level="warning"))
     if open_browser:
         threading.Thread(target=open_when_ready, args=(url,), daemon=True).start()
-    print(f"Riffle is starting at {url} (the browser opens when it is ready). Press Ctrl+C to stop.")
+    print(
+        f"Riffle is starting at {url} (the browser opens when it is ready).\n"
+        f"It stops by itself {IDLE_EXIT_SECONDS} s after its last browser tab is closed, or press Ctrl+C."
+    )
     try:
-        uvicorn.run("riffle.server:create_app", factory=True, host=HOST, port=port, log_level="warning")
+        server.run()
     finally:
         try:
             if json.loads(rt.read_text()).get("pid") == os.getpid():

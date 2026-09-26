@@ -5,16 +5,19 @@ At startup it loads the embedding matrix and the CLIP text encoder only.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
+import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -98,14 +101,28 @@ def require_json(request: Request) -> None:
         raise HTTPException(415, "expected application/json")
 
 
+@dataclass
+class AutoExit:
+    """Stop the server once no browser tab is connected any more (the one-click
+    launch only): ``idle_seconds`` after the last tab closed, or
+    ``first_connect_seconds`` if none ever connected, but never while an index
+    or export is running. ``stop`` asks the server to shut down."""
+
+    stop: Callable[[], None]
+    idle_seconds: float = 30.0
+    first_connect_seconds: float = 300.0
+
+
 def create_app(
     cfg: Config | None = None,
     text_encoder: TextEncoder | None = None,
     index_runner: Callable | None = None,
+    auto_exit: AutoExit | None = None,
 ) -> FastAPI:
     cfg = cfg or load_config()  # --config / $RIFFLE_CONFIG / ./config.yaml / the user's config
     model_id = cfg.model.model_id
-    state: dict = {"encoder": text_encoder}
+    # clients: open /api/events streams (browser tabs); seen_client: one ever connected.
+    state: dict = {"encoder": text_encoder, "clients": 0, "seen_client": False}
     job = index_job(cfg, run=index_runner)
     export_job = BackgroundJob(cfg, run_export)
 
@@ -122,7 +139,24 @@ def create_app(
                 state["encoder"] = Clip(cfg.model, text_only=True).encode_text
             except Exception as e:  # noqa: BLE001 - browsing still works without text search
                 log.error("Could not load text encoder: %s", e)
+        watchdog = asyncio.create_task(watch_clients()) if auto_exit else None
         yield
+        if watchdog:
+            watchdog.cancel()
+
+    async def watch_clients():
+        """Stop when no tab has been connected for a while (see AutoExit)."""
+        idle_since = time.monotonic()
+        while True:
+            await asyncio.sleep(0.5)
+            if state["clients"] > 0 or job.running or export_job.running:
+                idle_since = time.monotonic()
+                continue
+            limit = auto_exit.idle_seconds if state["seen_client"] else auto_exit.first_connect_seconds
+            if time.monotonic() - idle_since >= limit:
+                log.info("no browser tab connected for %.0f s: stopping", limit)
+                auto_exit.stop()
+                return
 
     app = FastAPI(title="Riffle", lifespan=lifespan)
 
@@ -669,6 +703,31 @@ def create_app(
             raise HTTPException(400, "use an absolute path")
         return path.resolve()
 
+    @app.get("/api/events")
+    async def events():
+        """A long-lived stream per open tab (Server-Sent Events). It tells the server
+        which tabs are open (for AutoExit) and lets the page notice a stopped server."""
+
+        async def stream():
+            state["clients"] += 1
+            state["seen_client"] = True  # even a tab that closes before the next watchdog check
+            try:
+                yield "retry: 2000\ndata: {}\n\n".format(
+                    '{"auto_exit": %s}' % ("true" if auto_exit else "false")
+                )
+                # A closed tab only shows up when writing to it fails (Starlette with
+                # ASGI 2.4 does not listen for disconnects), so write a tiny comment
+                # every 2 s: the stream is then cancelled within ~2 s of the tab closing.
+                while True:
+                    await asyncio.sleep(2)
+                    yield ": keep-alive\n\n"
+            finally:
+                state["clients"] -= 1
+
+        return StreamingResponse(
+            stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+        )
+
     @app.get("/api/health")
     def health():
         """Identifies a running Riffle (and which config it serves) for the launcher."""
@@ -678,7 +737,12 @@ def create_app(
             v = version("riffle")
         except PackageNotFoundError:
             v = "dev"
-        return {"app": "riffle", "version": v, "config": str(cfg.path) if cfg.path else None}
+        return {
+            "app": "riffle",
+            "version": v,
+            "config": str(cfg.path) if cfg.path else None,
+            "tabs": state["clients"],  # open browser tabs (live /api/events streams)
+        }
 
     @app.get("/api/sources")
     def list_sources(conn=Depends(get_conn)):

@@ -3,6 +3,7 @@
   import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup } from './lib/state.svelte.js';
   import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds } from './lib/api.js';
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
+  import { connection, connect } from './lib/connection.svelte.js';
   import TopBar from './components/TopBar.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import Grid from './components/Grid.svelte';
@@ -20,6 +21,7 @@
   const PAGE = 120;
 
   readUrl();
+  connect();
 
   let tags = $state(null);
   let items = $state([]);
@@ -359,6 +361,16 @@
 </script>
 
 <svelte:window {onkeydown} {onpopstate} />
+
+{#if connection.down}
+  <div class="fixed inset-x-0 top-0 z-50 border-b border-amber-800 bg-amber-950 px-4 py-2 text-center text-sm text-amber-100">
+    {#if connection.autoExit}
+      Riffle has stopped (its tabs were closed). Run <span class="font-mono">riffle</span> to start it again; this page reconnects by itself.
+    {:else}
+      The Riffle server is not reachable. This page reconnects by itself once it is back.
+    {/if}
+  </div>
+{/if}
 
 <div class="flex h-full flex-col">
   <TopBar bind:this={topBar} {total} {loading} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} />
