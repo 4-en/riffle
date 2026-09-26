@@ -3,7 +3,9 @@
 // page uses it to notice a stopped server. EventSource reconnects by itself, so a
 // reload, a short network blip, or a restarted Riffle heal on their own.
 
-export const connection = $state({ down: false, autoExit: false });
+// model: the AI model's state on the server ('loading' | 'ready' | 'failed'); log: the
+// standalone app's log file (null otherwise).
+export const connection = $state({ down: false, autoExit: false, model: 'ready', modelError: '', log: null });
 
 let downTimer;
 
@@ -11,7 +13,11 @@ export function connect() {
   const es = new EventSource('/api/events');
   es.onmessage = (e) => {
     try {
-      connection.autoExit = !!JSON.parse(e.data).auto_exit;
+      const d = JSON.parse(e.data);
+      connection.autoExit = !!d.auto_exit;
+      connection.model = d.model ?? 'ready';
+      connection.modelError = d.model_error ?? '';
+      connection.log = d.log ?? null;
     } catch {}
   };
   es.onopen = () => {

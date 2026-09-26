@@ -1,0 +1,149 @@
+# Standalone app for Linux, Windows and macOS (PyInstaller folder builds).
+# Push a tag like v0.1.0 to build and publish a GitHub release; run it by hand
+# (Actions → Release → Run workflow) to only build and download the artifacts.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04 # older glibc: runs on more distributions
+            target: linux-x64
+            torch_index: https://download.pytorch.org/whl/cpu # CUDA wheels would exceed GitHub's 2 GB limit
+          - os: windows-latest
+            target: windows-x64
+            torch_index: https://download.pytorch.org/whl/cpu
+          - os: macos-14 # Apple silicon; PyTorch has no Intel macOS wheels any more
+            target: macos-arm64
+            torch_index: "" # the standard wheel (CPU + Apple GPU)
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build the UI
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          if [ -n "${{ matrix.torch_index }}" ]; then
+            pip install torch torchvision --index-url "${{ matrix.torch_index }}"
+          fi
+          pip install . pyinstaller pytest httpx
+          python -c "import torch; print('torch', torch.__version__)"
+
+      - name: Test
+        run: python -m pytest -q
+
+      - name: Build the app
+        run: pyinstaller packaging/riffle.spec --noconfirm
+
+      - name: Smoke test
+        env:
+          HF_HUB_OFFLINE: "1" # the model is not downloaded here; the server must run without it
+        run: |
+          case "${{ matrix.target }}" in
+            macos-*) exe=dist/Riffle.app/Contents/MacOS/Riffle ;;
+            windows-*) exe=dist/Riffle/Riffle.exe ;;
+            *) exe=dist/Riffle/Riffle ;;
+          esac
+          "$exe" serve --port 8765 &
+          pid=$!
+          ok=
+          for i in $(seq 120); do
+            if curl -sf http://127.0.0.1:8765/api/health > health.json; then ok=1; break; fi
+            sleep 1
+          done
+          cat health.json || true; echo
+          test -n "$ok"
+          grep -q '"app":"riffle"' health.json
+          curl -sf http://127.0.0.1:8765/ | grep -qi "<!doctype html"
+          curl -sf http://127.0.0.1:8765/api/tags > /dev/null
+          # The model status arrives once loading failed (offline): the server keeps running.
+          for i in $(seq 60); do
+            curl -s http://127.0.0.1:8765/api/health | grep -q '"model":"loading"' || break
+            sleep 1
+          done
+          curl -s http://127.0.0.1:8765/api/health; echo
+          if [ "${{ runner.os }}" = "Windows" ]; then taskkill //F //IM Riffle.exe; else kill "$pid"; fi
+
+      - name: Show the app's log
+        if: failure()
+        run: cat "$(python -c 'from riffle.paths import cache_dir; print(cache_dir())')/riffle.log" || true
+
+      - name: Package
+        id: package
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          name="Riffle-${version}-${{ matrix.target }}"
+          case "${{ matrix.target }}" in
+            macos-*) ditto -c -k --keepParent dist/Riffle.app "$name.zip"; file="$name.zip" ;;
+            windows-*) (cd dist && 7z a -tzip -mx=7 "../$name.zip" Riffle > /dev/null); file="$name.zip" ;;
+            *) tar czf "$name.tar.gz" -C dist Riffle; file="$name.tar.gz" ;; # keeps the executable bit
+          esac
+          ls -l "$file"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ steps.package.outputs.file }}
+          compression-level: 0 # already compressed
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check that the tag matches the version
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${version}" >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            Download the file for your system, unpack it, and start **Riffle** (`Riffle.exe` on Windows, `Riffle.app` on macOS). It opens in your browser and stops by itself when you close its tab. The first start downloads the AI model (about 1.7 GB).
+
+            These builds run the AI model on the CPU (on a Mac also on its GPU). For an NVIDIA GPU, install with pip instead (see the README). They are not signed: see the README for how to open them the first time.

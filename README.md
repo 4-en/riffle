@@ -31,6 +31,21 @@ Your originals are never modified. All derived data lives in a cache folder and 
 
 Next is a short evaluation of search and tag quality (see `development_plan.md` §13). Other candidates, such as per-camera clock correction (which also sharpens location matching), finer "spots" within a town, and a map, are in `development_plan.md` §14.
 
+## Download
+
+Ready-to-run builds for Windows, macOS (Apple silicon) and Linux are on the [Releases](https://github.com/4-en/image-organizer/releases) page, with no Python needed. Unpack the file and start **Riffle** (`Riffle.exe` on Windows, `Riffle.app` on macOS, `Riffle` on Linux). It opens in your browser and stops by itself about 30 seconds after you close its tab; there is no window of its own. Start it again to reopen it.
+
+- **The first start downloads the AI model** (about 1.7 GB, once). You can browse meanwhile; search and indexing work once it is ready.
+- **Size:** about 300 MB to download and about 1 GB unpacked, plus the model.
+- **The AI model runs on the CPU** in the Windows and Linux builds (on a Mac, also on its GPU). That is fine for search, but indexing is slow: about 3 photos per second on a desktop CPU with the default model. With an NVIDIA GPU, install with pip instead ([Setup](#setup)), which is many times faster. Intel Macs are not supported by these builds.
+- **The builds are not signed**, so the system warns the first time:
+  - macOS: right-click → **Open**. If that is not offered: System Settings → Privacy & Security → **Open Anyway**, or run `xattr -dr com.apple.quarantine Riffle.app`.
+  - Windows: SmartScreen → **More info** → **Run anyway**.
+- **If something goes wrong,** the app writes a log, `riffle.log`, into its cache folder (see [Where things live](#where-things-live)); the page shows its path when the model fails to load. On macOS, starting the app again while it is running does nothing, so keep the tab or bookmark it.
+- **Command-line use** (`riffle index`, `riffle serve`) is for the pip install. The executable accepts the same arguments, but its output goes to the log.
+
+The builds are made by GitHub Actions (`.github/workflows/release.yml`): pushing a `v*` tag that matches the version in `pyproject.toml` builds all three and publishes a release; running the workflow by hand only builds them. To build one locally: `pip install . pyinstaller`, build the UI, then `pyinstaller packaging/riffle.spec` (needs a Python built with a shared library, as the official installers and `actions/setup-python` are).
+
 ## Requirements
 
 - Python 3.12+
@@ -174,6 +189,7 @@ Following each platform's conventions (`riffle paths` prints the exact locations
 | Your flags: `selections.sqlite3` | `~/.local/share/riffle/` | User data: back it up |
 | Derived data: catalogue, thumbnails, previews, embeddings | `~/.cache/riffle/` | Safe to delete; `riffle index` rebuilds it (re-embedding takes a while) |
 | CLIP model weights | `~/.cache/huggingface/` | Downloaded once |
+| The standalone app's log: `riffle.log` | `~/.cache/riffle/` | Only for the downloaded builds; the previous run's is `riffle.log.1` |
 
 `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, and `$XDG_CACHE_HOME` are honoured; macOS uses `~/Library/Application Support` and `~/Library/Caches`, Windows `%APPDATA%` and `%LOCALAPPDATA%`. To use a different config, pass `--config PATH` or set `RIFFLE_CONFIG`; a `config.yaml` in the current directory is also picked up, for a self-contained setup. `data_dir`, `selections`, and `vocabulary` in the config override the locations.
 

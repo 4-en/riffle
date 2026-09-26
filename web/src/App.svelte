@@ -63,6 +63,14 @@
     untrack(loadSidebar);
   });
 
+  // Once the AI model is ready, search (and the sidebar's search state) turns on.
+  let modelWas = connection.model;
+  $effect(() => {
+    const m = connection.model;
+    if (m !== modelWas && m === 'ready') untrack(loadSidebar);
+    modelWas = m;
+  });
+
   // Flag changes alter the flag counts and the Export total; refresh shortly after a burst of them.
   let sidebarTimer;
   $effect(() => {
@@ -414,7 +422,7 @@
 {#if connection.down}
   <div class="fixed inset-x-0 top-0 z-50 border-b border-amber-800 bg-amber-950 px-4 py-2 text-center text-sm text-amber-100">
     {#if connection.autoExit}
-      Riffle has stopped (its tabs were closed). Run <span class="font-mono">riffle</span> to start it again; this page reconnects by itself.
+      Riffle has stopped (its tabs were closed). Start Riffle again to continue; this page reconnects by itself.
     {:else}
       The Riffle server is not reachable. This page reconnects by itself once it is back.
     {/if}
@@ -422,6 +430,17 @@
 {/if}
 
 <div class="flex h-full flex-col">
+  {#if connection.model === 'loading' && !connection.down}
+    <div class="border-b border-sky-900 bg-sky-950 px-4 py-1.5 text-center text-xs text-sky-100">
+      Preparing the AI model… The first start downloads it (about 1.7 GB), which can take a while. You can browse meanwhile;
+      search and indexing work once it is ready.
+    </div>
+  {:else if connection.model === 'failed' && !connection.down}
+    <div class="border-b border-red-900 bg-red-950/70 px-4 py-1.5 text-center text-xs text-red-200">
+      The AI model could not be loaded, so search is off: {connection.modelError}.
+      {connection.log ? `Details: ${connection.log}` : 'See the terminal for details.'} Restart Riffle to try again (it needs an internet connection the first time).
+    </div>
+  {/if}
   <TopBar bind:this={topBar} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} />
   <div class="flex min-h-0 flex-1">
     <Sidebar {tags} {facets} />
