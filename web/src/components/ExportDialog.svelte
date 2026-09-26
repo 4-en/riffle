@@ -1,5 +1,5 @@
 <script>
-  import { view, activeFilterCount } from '../lib/state.svelte.js';
+  import { view, activeFilterCount, tagFilterActive } from '../lib/state.svelte.js';
   import { startExport, fetchExportStatus, fetchPickExportCounts } from '../lib/api.js';
   import { saveSetting } from '../lib/culling.svelte.js';
   import FolderBrowser from './FolderBrowser.svelte';
@@ -28,7 +28,7 @@
   let onlyNew = $state(setting('onlyNew', false));
   // Picks in the chosen scope that were not exported before.
   let newCount = $state(null);
-  const filtered = view.tags.length > 0 || activeFilterCount(view.filters) > 0;
+  const filtered = tagFilterActive() || activeFilterCount(view.filters) > 0;
   let scope = $state(filtered ? 'filtered' : 'all');
   let status = $state(null);
   let error = $state('');

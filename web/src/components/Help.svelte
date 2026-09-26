@@ -13,6 +13,7 @@
       ['Esc', 'Close the current view / clear the selection'],
     ]],
     ['Grid', [
+      ['Right-click', 'Menu: flag, compare, similar, show day / place, copy path, its tags'],
       ['Click · Ctrl/Shift+click · drag', 'Select one · add / range · box'],
       ['Arrows (Shift extends)', 'Move the selection'],
       ['Ctrl+A', 'Select everything in the view'],
@@ -58,7 +59,7 @@
         </li>
         <li>
           <strong class="text-neutral-100">Find what you want.</strong> Search by what is in the picture ("boats at sunset"), click
-          tags and filters on the left, or group by day or place (<em>Group</em>) and use the <em>Calendar</em> / <em>Map</em>
+          tags and filters on the left (click a tag to include it, hover and click <kbd>−</kbd> to exclude it), or group by day or place (<em>Group</em>) and use the <em>Calendar</em> / <em>Map</em>
           overview to jump around. <em>Find similar</em> in the photo view shows related shots.
         </li>
         <li>

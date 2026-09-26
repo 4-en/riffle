@@ -499,9 +499,10 @@ def create_app(
         # Families and tags come back in vocabulary order (tag ids follow it), tags by count.
         for r in conn.execute("SELECT id, family, name FROM tags ORDER BY id"):
             count = counts.get(r["id"], 0)
-            if count or r["id"] in selected:
+            excluded = r["id"] in flt.exclude_tags
+            if count or r["id"] in selected or excluded:  # keep chosen tags visible to switch them off
                 families.setdefault(r["family"], []).append(
-                    {"id": r["id"], "name": r["name"], "count": count}
+                    {"id": r["id"], "name": r["name"], "count": count, "excluded": excluded}
                 )
         for items in families.values():
             items.sort(key=lambda t: -t["count"])

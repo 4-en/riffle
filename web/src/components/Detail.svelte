@@ -1,6 +1,7 @@
 <script>
   import { view, findSimilar, DATE_GROUPS, LOCATION_GROUPS } from '../lib/state.svelte.js';
   import { fetchPhoto } from '../lib/api.js';
+  import { copyText } from '../lib/clipboard.js';
   import { culling, flagOf, saveSetting } from '../lib/culling.svelte.js';
 
   // onflag(flag): flag this photo (App handles auto-advance).
@@ -34,15 +35,7 @@
   const close = () => (view.photo = null);
 
   async function copyPath() {
-    try {
-      await navigator.clipboard.writeText(photo.path);
-    } catch {
-      const ta = Object.assign(document.createElement('textarea'), { value: photo.path });
-      document.body.append(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
-    }
+    await copyText(photo.path);
     copied = true;
     setTimeout(() => (copied = false), 1200);
   }
@@ -234,6 +227,7 @@
                     title="Filter by this tag · similarity {tag.sim.toFixed(3)}"
                     onclick={() => {
                       if (!view.tags.includes(tag.id)) view.tags = [...view.tags, tag.id];
+                      view.excludeTags = view.excludeTags.filter((t) => t !== tag.id);
                       view.photo = null;
                     }}
                   >

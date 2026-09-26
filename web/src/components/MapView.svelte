@@ -34,7 +34,7 @@
   });
 
   $effect(() => {
-    JSON.stringify(view.filters), view.tags, view.collapse, view.group;
+    JSON.stringify(view.filters), view.tags, view.excludeTags, view.collapse, view.group;
     untrack(load);
   });
 

@@ -13,7 +13,7 @@ A local tool for finding the best photos in a large archive and exporting them f
 - **Export:** copy the picks to a new folder as images, images + RAWs, or RAWs only; originals are never touched
 - Text search ("red lanterns at night") and "find similar" from any photo
 - Subject, scene, and look tags from an editable vocabulary file, with alternative phrases per tag
-- Tag sidebar that narrows with your filter: only tags present in the current selection are shown, with counts
+- Tag sidebar that narrows with your filter: only tags present in the current selection are shown, with counts. Click a tag to show only photos with it; hover and click **−** (or Alt+click) to hide photos with it instead
 - Duplicate grouping via perceptual hash
 - RAW files tracked by matching filenames (never read or modified)
 - EXIF: date, camera, lens, focal length, aperture, shutter speed, ISO, GPS
@@ -90,7 +90,7 @@ Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike 
 | Where | Keys |
 |---|---|
 | Anywhere | `?` how-to guide · `O` calendar / map overview (with a grouping) · `/` search · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
-| Grid | click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected · `R` review stacks |
+| Grid | right-click menu (pick / reject, compare, find similar, show day / place, copy path, filter by its tags) · click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected · `R` review stacks |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag (and go to the next photo) |
 | Compare | click or `1`–`9` keep · `A` keep the suggested one · `Enter` pick kept, reject rest (with nothing kept: press twice to reject all) · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag the focused photo · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
 

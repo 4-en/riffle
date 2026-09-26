@@ -1,10 +1,9 @@
 <script>
-  import { view, toggleFilterValue, clearFilters, activeFilterCount } from '../lib/state.svelte.js';
+  import { view, toggleFilterValue } from '../lib/state.svelte.js';
 
   let { facets } = $props();
 
   const f = $derived(view.filters);
-  const active = $derived(activeFilterCount(view.filters));
 
   // A facet is worth showing when it can narrow the results, or when it is in use.
   const showList = (key) => (facets?.[key]?.length ?? 0) > 1 || f[key].length > 0;
@@ -78,9 +77,6 @@
   <section class="mb-2 border-b border-neutral-800 pb-3">
     <div class="flex items-center justify-between px-2">
       <h2 class="text-xs font-semibold uppercase tracking-wider text-neutral-500">Filters</h2>
-      {#if active}
-        <button class="text-xs text-sky-400 hover:underline" onclick={clearFilters}>Reset ({active})</button>
-      {/if}
     </div>
 
     {#if showFlag}

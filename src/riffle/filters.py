@@ -62,7 +62,8 @@ _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 @dataclass
 class PhotoFilter:
-    tags: list[int] = field(default_factory=list)
+    tags: list[int] = field(default_factory=list)  # photos must have all of these
+    exclude_tags: list[int] = field(default_factory=list)  # ...and none of these
     date_from: str | None = None
     date_to: str | None = None
     camera: list[str] = field(default_factory=list)  # "" means unknown
@@ -92,6 +93,14 @@ class PhotoFilter:
                     GROUP BY photo_id HAVING COUNT(DISTINCT tag_id) = ?)"""
             )
             params += [model_id, *self.tags, len(self.tags)]
+
+        if self.exclude_tags and "tags" not in exclude:
+            marks = ",".join("?" * len(self.exclude_tags))
+            clauses.append(
+                f"""p.id NOT IN (SELECT photo_id FROM photo_tags
+                    WHERE model_id = ? AND tag_id IN ({marks}))"""
+            )
+            params += [model_id, *self.exclude_tags]
 
         if "date" not in exclude:
             if self.date_from:
@@ -162,6 +171,7 @@ class PhotoFilter:
 
 def photo_filter(
     tags: str | None = None,
+    exclude_tags: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     camera: list[str] = Query([]),
@@ -185,8 +195,9 @@ def photo_filter(
     """FastAPI dependency: the filter from query parameters."""
     try:
         tag_ids = sorted({int(t) for t in (tags or "").split(",") if t.strip()})
+        excluded_ids = sorted({int(t) for t in (exclude_tags or "").split(",") if t.strip()} - set(tag_ids))
     except ValueError:
-        raise HTTPException(400, "tags must be comma-separated tag ids")
+        raise HTTPException(400, "tags and exclude_tags must be comma-separated tag ids")
     for d in (date_from, date_to):
         if d and not _DATE.match(d):
             raise HTTPException(400, "dates must be YYYY-MM-DD")
@@ -210,6 +221,7 @@ def photo_filter(
     }
     return PhotoFilter(
         tags=tag_ids,
+        exclude_tags=excluded_ids,
         date_from=date_from or None,
         date_to=date_to or None,
         camera=list(dict.fromkeys(camera)),

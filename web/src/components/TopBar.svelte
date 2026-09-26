@@ -1,5 +1,5 @@
 <script>
-  import { view, search, clearSearch, clearFilters, activeFilterCount, hidingRejected, toggleHideRejected } from '../lib/state.svelte.js';
+  import { view, search, clearAll, hidingRejected, toggleHideRejected } from '../lib/state.svelte.js';
 
   let { total, loading, indexStatus = null, textSearch = true, picks = 0 } = $props();
 
@@ -27,12 +27,9 @@
 
   function clear() {
     text = '';
-    clearSearch();
-    view.tags = [];
-    clearFilters();
+    clearAll();
   }
 
-  const active = $derived(view.q || view.similar || view.tags.length || activeFilterCount(view.filters));
 </script>
 
 <header class="flex items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-4 py-2">
@@ -58,9 +55,15 @@
   </form>
 
   {#if view.similar}
-    <span class="flex items-center gap-2 rounded-full bg-sky-900/60 py-0.5 pl-1 pr-3 text-xs text-sky-100">
+    <span class="flex items-center gap-2 rounded-full bg-sky-900/60 py-0.5 pl-1 pr-1 text-xs text-sky-100">
       <img src="/thumbs/{view.similar}.jpg" alt="" class="h-6 w-6 rounded-full object-cover" />
       Similar to #{view.similar}
+      <button
+        class="rounded-full px-1.5 text-sky-300 hover:bg-sky-800 hover:text-white"
+        title="Back to browsing"
+        aria-label="Clear the similar search"
+        onclick={() => (view.similar = null)}>✕</button
+      >
     </span>
   {/if}
 
@@ -156,12 +159,4 @@
     onclick={() => (view.help = true)}>?</button
   >
 
-  {#if active}
-    <button
-      class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
-      onclick={clear}
-    >
-      Clear
-    </button>
-  {/if}
 </header>

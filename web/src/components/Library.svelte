@@ -1,5 +1,5 @@
 <script>
-  import { view, activeFilterCount } from '../lib/state.svelte.js';
+  import { view, activeFilterCount, tagFilterActive } from '../lib/state.svelte.js';
   import { resetFlags } from '../lib/culling.svelte.js';
   import { postResetExported } from '../lib/api.js';
   import { fetchSources, addSource, removeSource, startIndex, fetchLocationHistory, addLocationHistory, removeLocationHistory } from '../lib/api.js';
@@ -36,7 +36,7 @@
   const fromTimeline = $derived(history ? (history.placed.visit ?? 0) + (history.placed.route ?? 0) + (history.placed.nearby ?? 0) : 0);
 
   const flagged = $derived((tags?.picks ?? 0) + (tags?.rejects ?? 0));
-  const filtering = $derived(view.tags.length > 0 || activeFilterCount(view.filters) > 0);
+  const filtering = $derived(tagFilterActive() || activeFilterCount(view.filters) > 0);
   const flaggedInFilters = $derived((facets?.flag?.pick ?? 0) + (facets?.flag?.reject ?? 0));
   let resetNote = $state('');
 

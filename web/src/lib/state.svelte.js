@@ -15,7 +15,8 @@ export function activeFilterCount(f) {
 export const view = $state({
   q: '',
   similar: null, // photo id
-  tags: [], // tag ids, AND-combined
+  tags: [], // tag ids, AND-combined: photos must have all of them
+  excludeTags: [], // tag ids: photos must have none of them
   filters: emptyFilters(),
   group: '', // '' | 'day' | 'month' | 'year' | 'place' | 'region' | 'country' (browsing only, not search)
   collapse: 'dupes', // 'dupes' | 'stacks': one tile per duplicate group or per stack
@@ -33,6 +34,7 @@ export function readUrl() {
   view.q = p.get('q') ?? '';
   view.similar = p.has('similar') ? Number(p.get('similar')) : null;
   view.tags = (p.get('tags') ?? '').split(',').filter(Boolean).map(Number);
+  view.excludeTags = (p.get('xtags') ?? '').split(',').filter(Boolean).map(Number);
   view.photo = p.has('photo') ? Number(p.get('photo')) : null;
   view.raws = p.has('raws');
   view.group = GROUPS.includes(p.get('group')) ? p.get('group') : '';
@@ -49,6 +51,7 @@ export function urlFor(v) {
   if (v.q) p.set('q', v.q);
   if (v.similar) p.set('similar', v.similar);
   if (v.tags.length) p.set('tags', v.tags.join(','));
+  if (v.excludeTags.length) p.set('xtags', v.excludeTags.join(','));
   for (const k of FILTER_ARRAYS) for (const x of v.filters[k]) p.append(k, x);
   for (const k of FILTER_SCALARS) if (v.filters[k] !== '') p.set(k, v.filters[k]);
   if (v.group) p.set('group', v.group);
@@ -135,7 +138,32 @@ export function toggleHideRejected() {
 }
 
 export function toggleTag(id) {
+  view.excludeTags = view.excludeTags.filter((t) => t !== id);
   view.tags = view.tags.includes(id) ? view.tags.filter((t) => t !== id) : [...view.tags, id];
+}
+
+/** Toggle excluding a tag (photos with it are hidden); replaces including it. */
+export function toggleExcludeTag(id) {
+  view.tags = view.tags.filter((t) => t !== id);
+  view.excludeTags = view.excludeTags.includes(id) ? view.excludeTags.filter((t) => t !== id) : [...view.excludeTags, id];
+}
+
+/** How many things narrow the view: search, each included/excluded tag, each filter. */
+export function activeCount() {
+  return (view.q || view.similar ? 1 : 0) + view.tags.length + view.excludeTags.length + activeFilterCount(view.filters);
+}
+
+/** Back to the whole library: no search, no tags, no filters. */
+export function clearAll() {
+  clearSearch();
+  view.tags = [];
+  view.excludeTags = [];
+  clearFilters();
+}
+
+/** Any tag included or excluded. */
+export function tagFilterActive() {
+  return view.tags.length > 0 || view.excludeTags.length > 0;
 }
 
 export function search(q) {

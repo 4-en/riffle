@@ -8,7 +8,7 @@ function query(params) {
 }
 
 /** The filter part of the view (tags + EXIF filters) as query parameters. */
-const filterParams = (view) => ({ tags: view.tags.join(','), ...view.filters });
+const filterParams = (view) => ({ tags: view.tags.join(','), exclude_tags: view.excludeTags.join(','), ...view.filters });
 
 export async function get(path, params = {}) {
   const qs = query(params);

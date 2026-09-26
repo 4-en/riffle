@@ -14,6 +14,7 @@
   import Compare from './components/Compare.svelte';
   import ExportDialog from './components/ExportDialog.svelte';
   import Calendar from './components/Calendar.svelte';
+  import ContextMenu from './components/ContextMenu.svelte';
   import Help from './components/Help.svelte';
   // The map (d3 + country outlines) loads only when it is first shown.
   const loadMap = () => import('./components/MapView.svelte');
@@ -48,7 +49,7 @@
 
   // Tag counts and filter options are relative to the current filter.
   $effect(() => {
-    view.tags, JSON.stringify(view.filters);
+    view.tags, view.excludeTags, JSON.stringify(view.filters);
     untrack(loadSidebar);
   });
 
@@ -146,7 +147,7 @@
 
   // Re-query whenever the search, filters or grouping change.
   $effect(() => {
-    view.q, view.similar, view.tags, JSON.stringify(view.filters), view.group, view.collapse;
+    view.q, view.similar, view.tags, view.excludeTags, JSON.stringify(view.filters), view.group, view.collapse;
     untrack(reset);
   });
 
@@ -271,6 +272,20 @@
 
   /** P / X / U in the grid: flag the selection (or the focused photo). If that hides
    * them, move the selection to the next visible photo so you can keep going. */
+  // Right-click menu on a grid photo. Like a file manager: right-clicking a photo
+  // outside the selection selects just it; inside, the selection is kept.
+  let menuAt = $state(null); // {x, y, id}
+  function openMenu(e, id) {
+    e.preventDefault();
+    if (!selection.has(id)) {
+      selection.clear();
+      selection.add(id);
+      cursor.anchor = id;
+    }
+    cursor.focus = id;
+    menuAt = { x: e.clientX, y: e.clientY, id };
+  }
+
   function flagInGrid(flag) {
     const targets = selection.size ? [...selection] : cursor.focus != null ? [cursor.focus] : [];
     if (!targets.length) return;
@@ -302,6 +317,17 @@
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
     if (view.compare) return; // the compare view handles its own keys
+    if (menuAt) {
+      // The menu's shortcuts work while it is open; other keys are ignored.
+      const id = menuAt.id;
+      if (key in FLAG_KEYS && !mod) flagInGrid(FLAG_KEYS[key]);
+      else if (key === 'Enter') view.photo = id;
+      else if (key === 'c' && selection.size >= 2 && selection.size <= 30) view.compare = { kind: 'ids', ids: [...selection] };
+      else if (key !== 'Escape') return;
+      e.preventDefault();
+      menuAt = null;
+      return;
+    }
     if (key === 'Escape') {
       if (view.help) view.help = false;
       else if (view.exporting) view.exporting = false;
@@ -415,6 +441,7 @@
           groups={grouped ? groups : null}
           {highlight}
           onjump={jumpToGroup}
+          oncontext={openMenu}
         />
         <SelectionBar onselectall={selectAll} />
       {/if}
@@ -431,6 +458,12 @@
     ontimeline={showInTimeline}
     onflag={flagInLoupe}
   />
+{/if}
+
+{#if menuAt}
+  {#key menuAt}
+    <ContextMenu at={menuAt} onflag={flagInGrid} ontimeline={showInTimeline} onclose={() => (menuAt = null)} />
+  {/key}
 {/if}
 
 {#if view.compare}
