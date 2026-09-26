@@ -19,6 +19,9 @@
   let origin = $state({ x: 50, y: 50 });
   // Suggested keeper: {suggested: id, scores: {id: {sharpness, exposure, quality?, total}}}.
   let suggestion = $state(null);
+  // Enter with nothing kept asks first; a second Enter rejects them all.
+  // (Declared up here: loadMembers() runs while the component initialises.)
+  let rejectArmed = $state(false);
 
   // Review mode walks the stacks that still have unflagged photos (within the filters).
   let queue = $state([]);
@@ -68,7 +71,11 @@
       }
     }
     await loadMembers();
-  })();
+  })().catch((e) => {
+    // Never leave the view stuck on "Loading…".
+    error = e.message;
+    loading = false;
+  });
 
   function next(delta = 1) {
     if (context.kind !== 'review') return close();
@@ -77,9 +84,6 @@
     pos = p;
     loadMembers();
   }
-
-  // Enter with nothing kept asks first; a second Enter rejects them all.
-  let rejectArmed = $state(false);
 
   async function applyKeep() {
     if (!keep.size) {
