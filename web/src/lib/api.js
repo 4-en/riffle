@@ -1,3 +1,5 @@
+import { sortFits } from './state.svelte.js';
+
 function query(params) {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -8,7 +10,7 @@ function query(params) {
 }
 
 /** The filter part of the view (tags + EXIF filters) as query parameters. */
-const filterParams = (view) => ({ tags: view.tags.join(','), ...view.filters });
+const filterParams = (view) => ({ tags: view.tags.join(','), exclude_tags: view.excludeTags.join(','), ...view.filters });
 
 export async function get(path, params = {}) {
   const qs = query(params);
@@ -28,7 +30,9 @@ export function fetchResults(view, offset, limit) {
   const common = { ...filterParams(view), collapse: view.collapse, offset, limit };
   if (view.similar) return get(`/api/search/similar/${view.similar}`, common);
   if (view.q) return get('/api/search/text', { ...common, q: view.q });
-  return get('/api/photos', { ...common, group: view.group });
+  // Grouped views allow only the sorts that keep groups together (date, or the groups' names).
+  const sort = sortFits(view.group, view.sort) ? view.sort : 'taken_at';
+  return get('/api/photos', { ...common, group: view.group, sort });
 }
 
 /** Tags with counts within the current filter; tags no matching photo carries are omitted. */
@@ -83,6 +87,22 @@ export function postResetFlags(view, scope) {
 export const fetchLocationHistory = () => get('/api/location-history');
 export const addLocationHistory = (path) => send('POST', '/api/location-history', { path });
 export const removeLocationHistory = (path) => send('DELETE', '/api/location-history', { path });
+
+/** The taste model's status: {enabled, reason, keeper_scenes, reject_scenes, auc, top20_recall, training}. */
+export const fetchTaste = () => get('/api/taste');
+/** Learn from the current flags now; resolves to the new status. */
+export const calibrateTaste = () => send('POST', '/api/taste/calibrate');
+
+/** Curate: the styles for the sliders, a draft for the current filters, and alternatives for one slot. */
+export const fetchStyles = () => get('/api/styles');
+export function fetchCurate(view, body) {
+  const qs = query(filterParams(view));
+  return send('POST', qs ? `/api/curate?${qs}` : '/api/curate', body);
+}
+export function fetchAlternatives(view, body) {
+  const qs = query(filterParams(view));
+  return send('POST', qs ? `/api/curate/alternatives?${qs}` : '/api/curate/alternatives', body);
+}
 
 export const fetchSources = () => get('/api/sources');
 export const addSource = (path) => send('POST', '/api/sources', { path });

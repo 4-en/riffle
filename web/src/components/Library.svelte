@@ -1,12 +1,26 @@
 <script>
-  import { view, activeFilterCount } from '../lib/state.svelte.js';
+  import { view, activeFilterCount, tagFilterActive } from '../lib/state.svelte.js';
   import { resetFlags } from '../lib/culling.svelte.js';
-  import { postResetExported } from '../lib/api.js';
+  import { postResetExported, calibrateTaste } from '../lib/api.js';
   import { fetchSources, addSource, removeSource, startIndex, fetchLocationHistory, addLocationHistory, removeLocationHistory } from '../lib/api.js';
   import FolderBrowser from './FolderBrowser.svelte';
 
   // tags / facets: the app's current counts (global picks and rejects; flags within the filters).
-  let { status, onchange, tags = null, facets = null } = $props();
+  // ontaste(status): the taste model was (re)calibrated.
+  let { status, onchange, tags = null, facets = null, taste = null, ontaste = () => {} } = $props();
+  let calibrating = $state(false);
+
+  async function calibrate() {
+    calibrating = true;
+    try {
+      ontaste(await calibrateTaste());
+      error = '';
+    } catch (e) {
+      error = e.message;
+    } finally {
+      calibrating = false;
+    }
+  }
 
   // Location history files (phone exports) and how many photos they placed.
   let history = $state(null);
@@ -36,7 +50,7 @@
   const fromTimeline = $derived(history ? (history.placed.visit ?? 0) + (history.placed.route ?? 0) + (history.placed.nearby ?? 0) : 0);
 
   const flagged = $derived((tags?.picks ?? 0) + (tags?.rejects ?? 0));
-  const filtering = $derived(view.tags.length > 0 || activeFilterCount(view.filters) > 0);
+  const filtering = $derived(tagFilterActive() || activeFilterCount(view.filters) > 0);
   const flaggedInFilters = $derived((facets?.flag?.pick ?? 0) + (facets?.flag?.reject ?? 0));
   let resetNote = $state('');
 
@@ -261,6 +275,46 @@
           >
         </div>
         {#if resetNote}<p class="mt-1 text-xs text-emerald-400">{resetNote}</p>{/if}
+      </section>
+
+      <!-- Taste model -->
+      <section>
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-neutral-500">Your taste</h3>
+          <button
+            class="rounded border border-neutral-700 px-3 py-1 text-xs hover:bg-neutral-800 disabled:opacity-40"
+            disabled={calibrating}
+            title="Learn from your current picks, rejects and exports (a second or two)"
+            onclick={calibrate}>{calibrating ? 'Calibrating…' : taste?.calibrated ? 'Recalibrate' : 'Calibrate'}</button
+          >
+        </div>
+        {#if !taste}
+          <p class="text-xs text-neutral-500">Checking…</p>
+        {:else if !taste.calibrated}
+          <p class="text-xs text-neutral-400">
+            Riffle can learn what you tend to keep from your picks and rejects, and sort by it. Flag some photos, then press
+            <em>Calibrate</em>.
+          </p>
+        {:else if taste.enabled}
+          <p class="text-xs text-neutral-300">
+            Learned from {taste.keeper_scenes} keeper scenes and {taste.reject_scenes} rejected ones. Checked on photos it did
+            not learn from, <strong>{Math.round(taste.top20_recall * 100)}%</strong> of your keepers are in its top fifth
+            (quality {taste.auc.toFixed(2)}, where 0.5 is chance).
+          </p>
+          <p class="mt-1 text-xs text-neutral-500">
+            Use <em>Sort → Likely keepers first</em> to review the promising photos first, or <em>Likely rejects first</em> to clear
+            out misses quickly. It only orders photos; it never flags anything.
+          </p>
+        {:else}
+          <p class="text-xs text-neutral-400">Not active. {taste.reason}</p>
+        {/if}
+        {#if taste?.calibrated}
+          <p class="mt-1 text-xs {taste.changed_since >= 25 ? 'text-amber-300' : 'text-neutral-500'}">
+            Calibrated {new Date(taste.calibrated_at * 1000).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{taste.changed_since
+              ? ` · ${taste.changed_since} flag${taste.changed_since === 1 ? '' : 's'} changed since${taste.changed_since >= 25 ? ': worth recalibrating' : ''}`
+              : ' · up to date'}
+          </p>
+        {/if}
       </section>
 
       <!-- Indexing -->

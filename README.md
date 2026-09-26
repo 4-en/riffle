@@ -8,15 +8,18 @@ A local tool for finding the best photos in a large archive and exporting them f
 ## Features
 
 - **Culling:** pick or reject photos one at a time (loupe with auto-advance) or many at once (multi-select), with undo
+- **Your taste:** once you have flagged enough, Riffle learns what you tend to keep and can sort by it ("likely keepers first" / "likely rejects first"); it only orders photos, it never flags anything
 - **Stacks:** bursts and near-identical shots are grouped automatically; compare them side by side with a sharpness hint, exposure clipping, and a suggested keeper
+- **Curate:** draft a small, varied selection (photo book, exhibition) from the current filters, steered with sliders for size, variety, spread over time and places, and styles such as moody or colourful; remove, lock, or swap photos, then mark them as picks or export them
 - **Export:** copy the picks to a new folder as images, images + RAWs, or RAWs only; originals are never touched
 - Text search ("red lanterns at night") and "find similar" from any photo
 - Subject, scene, and look tags from an editable vocabulary file, with alternative phrases per tag
-- Tag sidebar that narrows with your filter: only tags present in the current selection are shown, with counts
+- Tag sidebar that narrows with your filter: only tags present in the current selection are shown, with counts. Click a tag to show only photos with it; hover and click **−** (or Alt+click) to hide photos with it instead
 - Duplicate grouping via perceptual hash
 - RAW files tracked by matching filenames (never read or modified)
 - EXIF: date, camera, lens, focal length, aperture, shutter speed, ISO, GPS
 - Filters for flag, date range, camera, lens, focal length, aperture, ISO, orientation, and location; like tags, options are counted within the other active filters, and filters that can't narrow the results are hidden
+- Sort by date, place name, or file name (either direction), or by your taste; group by date, place, or parent folder (grouped by place, the place sorts order the places A–Z or Z–A; grouped by folder, the file-name sorts order the folders and their files); the sidebar sections collapse and remember how you left them
 - Timeline view: group the grid by day, month, or year (only groups with matching photos appear), jump between groups, and go from any photo to its day
 - **Overviews:** a calendar (for date groupings) and a map (for location groupings) of where your photos are; click a day, month, or place to open it in the grid
 - **Location from your phone:** add a Google Timeline export (or Records.json / GPX) and photos without GPS are placed by capture time; group by place, region, or country, filter by where you were, and optionally write the position into exported copies
@@ -69,7 +72,7 @@ The folder browser can list any directory the server can read, so keep `serve` b
 
 A typical pass:
 
-1. Turn on **Stacks** (top bar) so each burst shows as one tile, and **Hide rejected**.
+1. Turn on **Stacks** (in the toolbar above the grid) so each burst shows as one tile, and hide the rejects with **Flag → Picked + Unflagged** in the sidebar (or press `H`).
 2. **Review stacks** walks through every stack that still has unflagged photos. Click (or press 1–9) the keeper(s), then Enter: they are picked and the rest rejected. The sharpness bar marks the sharpest shot, ▲/▼ warn about blown highlights and crushed shadows, and **★ suggested** marks the likely keeper (sharpness, clipping, and a CLIP "good photo vs. bad photo" score, each relative to the others; hover it for the reasons). A keeps the suggestion; Z zooms all photos to the same spot to check focus.
 3. Go through the rest in the grid or the loupe with P (pick), X (reject), U (unflag). In the loupe, the next photo comes up automatically.
 4. Filter by **Flag → Picked** to check the selection, then **Export** (top bar): choose the folder, the files (Images / Images + RAWs / RAWs only), and the layout (flat, or keeping the source folders).
@@ -80,7 +83,11 @@ With a location history, the export can also **add the location to photos withou
 
 Riffle remembers which photos you have exported: they get a small ↗ badge (alongside their pick or reject flag), the **Exported** filter shows them or hides them, and the photo view says when and where they last went. In the export dialog, **Only photos not exported before** exports just the picks that are new since last time. The history lives with your flags in `selections.sqlite3`; **Library → Forget export history** clears it (the exported files are not touched).
 
+**Your taste.** Your picks and rejects teach Riffle what you tend to keep: press **Library → Your taste → Calibrate** (a second or two). Once there are enough flags (20 keeper scenes and 50 rejected ones), and the model clearly helps when checked on photos it did not learn from, **Sort → Likely keepers first** shows the promising photos first, and **Likely rejects first** helps clear out misses. It judges scenes (a burst counts once), so choosing it also turns on **Stacks**; which frame of a burst to keep is still up to the sharpness hint and the suggested keeper. **Library → Your taste** shows how well it works for you and how many flags changed since the last calibration; recalibrate when that grows. The calibration is saved (it is derived data, in the cache folder), and it never flags anything on its own.
+
 Exports never overwrite anything: identical files already in the destination are skipped (so an interrupted export can simply be run again), and other name clashes get a `-1` suffix, with an image and its RAW keeping matching names. Each export writes an `export-manifest.csv`. The destination can't be inside a photo folder, where the copies would be indexed again.
+
+**Curate.** Narrow the library to a trip, a timeframe or a place, then press **Curate** (top bar) for a draft of a small selection: good photos, but not ten of the same scene, moment or spot. Candidates are your picks and unflagged photos (a switch adds the rejects); each stack enters once, as its pick or its best frame. Quality comes from your taste (once calibrated), the CLIP quality score, exposure, and a bonus for picks. Sliders set the number of photos, **Best ↔ Most varied**, **Spread over time**, and **Spread over places** (from the photos' coordinates, when there are any). Under **Style**, sliders for Scenic, Moody, Calm, Colourful, Golden light, People, and Abstract & details pull photos with more (or less) of that look into the draft; they are CLIP prompt pairs in `vocabulary.yaml` (`styles:`), so you can edit them or add your own. The draft reads chronologically under day and place headings, with a cover. Per photo: **✕** removes it and the next one takes its place, **Lock** keeps it when the sliders change, and **Alternatives** offers other frames of its stack and similar photos. Removing is for the draft only and is not a reject: flags change only with **Mark as picks** (undo with Ctrl+Z). **Export** copies exactly the draft's photos. The draft (sliders, locks, removals) is remembered per filter set in your browser; **Reset draft** starts over.
 
 Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike (`stacks.min_similarity`) in `config.yaml`; adjust and re-run `riffle index` (fast, no re-embedding) if they are too eager or too strict. The right `min_similarity` depends on the model (see [Model](#model)).
 
@@ -89,8 +96,9 @@ Stacks link photos taken at most `stacks.max_gap_seconds` apart that look alike 
 | Where | Keys |
 |---|---|
 | Anywhere | `?` how-to guide · `O` calendar / map overview (with a grouping) · `/` search · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
-| Grid | click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected · `R` review stacks |
+| Grid | right-click menu (pick / reject, compare, find similar, show day / place, copy path, filter by its tags) · click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag the selection · `C` compare the selection · `S` stacks · `H` hide rejected (Flag → Picked + Unflagged) · `R` review stacks |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag (and go to the next photo) |
+| Curate | `Esc` close · in the photo view, `←` / `→` step through the draft |
 | Compare | click or `1`–`9` keep · `A` keep the suggested one · `Enter` pick kept, reject rest (with nothing kept: press twice to reject all) · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag the focused photo · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
 
 ## Location
@@ -109,7 +117,7 @@ The file stays where it is and is only read (its path is saved in `config.yaml` 
 | Timeline: on the move | taken while travelling; interpolated along the route | tens of metres to a few km |
 | Timeline: nearby | a recorded position within 15 minutes | depends on the gap |
 
-With a location grouping, **Map** (top bar, or `O`) shows your photos as clusters on a world map; hover for a cover photo, click to open the place in the grid. The outlines are Natural Earth country borders bundled with the app, so the map works offline and never contacts a map server; it is an overview, not a street map. With a date grouping, the same button shows a **Calendar**: a year of months where each day with photos shows a cover and a count.
+With a location grouping, **Map** (next to Group above the grid, or `O`) shows your photos as clusters on a world map; hover for a cover photo, click to open the place in the grid. The outlines are Natural Earth country borders bundled with the app, so the map works offline and never contacts a map server; it is an overview, not a street map. With a date grouping, the same switch shows a **Calendar**: a year of months where each day with photos shows a cover and a count.
 
 Places are named offline from a bundled GeoNames dataset: the nearest town or village, its region, and its country. Group the grid by **Place / Region / Country** (groups are in trip order), filter by country, place, or source in the sidebar, and use **Show place** in the photo view. `location.max_gap_minutes` and `location.min_population` in `config.yaml` tune matching and naming.
 

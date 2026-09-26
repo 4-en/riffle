@@ -30,11 +30,26 @@ LOCATION_SOURCES = ("exif", "visit", "route", "nearby", "none")
 
 # Group keys for the grouped listing. Dates: "2026-03-12", "2026-03", "2026";
 # locations: see LOCATION_KEYS. NULL = undated / unknown location.
+# A photo's parent folder, e.g. "/photos/Trip/" + "day1/" (rtrim with every
+# character except "/" strips the file name, leaving the folder with a trailing /).
+DIR_EXPR = "rtrim(p.rel_path, replace(p.rel_path, '/', ''))"
+FOLDER_KEY = f"p.source || '/' || {DIR_EXPR}"
+FILENAME_EXPR = f"substr(p.rel_path, length({DIR_EXPR}) + 1)"
+PLACE_NAME = _LOC.format(expr="l.place")  # for sorting by place name
+
 GROUP_KEYS = {
     "day": DATE_EXPR,
     "month": f"substr({DATE_EXPR}, 1, 7)",
     "year": f"substr({DATE_EXPR}, 1, 4)",
     **LOCATION_KEYS,
+    "folder": FOLDER_KEY,
+}
+
+# Sorts besides date that keep a grouping: they order the groups by name (location
+# or folder label) and the photos within them by the same sort.
+NAME_SORTS = {
+    **{g: ("place", "-place") for g in LOCATION_KEYS},
+    "folder": ("name", "-name"),
 }
 
 RANGE_COLUMNS = {"focal": "p.focal_length", "aperture": "p.aperture", "iso": "p.iso"}
@@ -62,7 +77,8 @@ _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 @dataclass
 class PhotoFilter:
-    tags: list[int] = field(default_factory=list)
+    tags: list[int] = field(default_factory=list)  # photos must have all of these
+    exclude_tags: list[int] = field(default_factory=list)  # ...and none of these
     date_from: str | None = None
     date_to: str | None = None
     camera: list[str] = field(default_factory=list)  # "" means unknown
@@ -76,6 +92,7 @@ class PhotoFilter:
     region: list[str] = field(default_factory=list)
     place: list[str] = field(default_factory=list)
     loc_source: list[str] = field(default_factory=list)
+    folder: list[str] = field(default_factory=list)  # parent folder keys (FOLDER_KEY), not subfolders
     exposure: list[str] = field(default_factory=list)  # EXPOSURE keys, OR-combined
 
     def where(self, model_id: str, exclude: frozenset[str] = frozenset()) -> tuple[str, list]:
@@ -92,6 +109,14 @@ class PhotoFilter:
                     GROUP BY photo_id HAVING COUNT(DISTINCT tag_id) = ?)"""
             )
             params += [model_id, *self.tags, len(self.tags)]
+
+        if self.exclude_tags and "tags" not in exclude:
+            marks = ",".join("?" * len(self.exclude_tags))
+            clauses.append(
+                f"""p.id NOT IN (SELECT photo_id FROM photo_tags
+                    WHERE model_id = ? AND tag_id IN ({marks}))"""
+            )
+            params += [model_id, *self.exclude_tags]
 
         if "date" not in exclude:
             if self.date_from:
@@ -140,6 +165,10 @@ class PhotoFilter:
         if self.exposure and "exposure" not in exclude:
             clauses.append("(" + " OR ".join(EXPOSURE[e] for e in self.exposure) + ")")
 
+        if self.folder and "folder" not in exclude:
+            clauses.append(f"{FOLDER_KEY} IN ({','.join('?' * len(self.folder))})")
+            params += self.folder
+
         if self.loc_source and "loc_source" not in exclude:
             clauses.append(f"{LOCATION_SOURCE} IN ({','.join('?' * len(self.loc_source))})")
             params += self.loc_source
@@ -162,6 +191,7 @@ class PhotoFilter:
 
 def photo_filter(
     tags: str | None = None,
+    exclude_tags: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     camera: list[str] = Query([]),
@@ -181,12 +211,14 @@ def photo_filter(
     place: list[str] = Query([]),
     loc_source: list[str] = Query([]),
     exposure: list[str] = Query([]),
+    folder: list[str] = Query([]),
 ) -> PhotoFilter:
     """FastAPI dependency: the filter from query parameters."""
     try:
         tag_ids = sorted({int(t) for t in (tags or "").split(",") if t.strip()})
+        excluded_ids = sorted({int(t) for t in (exclude_tags or "").split(",") if t.strip()} - set(tag_ids))
     except ValueError:
-        raise HTTPException(400, "tags must be comma-separated tag ids")
+        raise HTTPException(400, "tags and exclude_tags must be comma-separated tag ids")
     for d in (date_from, date_to):
         if d and not _DATE.match(d):
             raise HTTPException(400, "dates must be YYYY-MM-DD")
@@ -210,6 +242,7 @@ def photo_filter(
     }
     return PhotoFilter(
         tags=tag_ids,
+        exclude_tags=excluded_ids,
         date_from=date_from or None,
         date_to=date_to or None,
         camera=list(dict.fromkeys(camera)),
@@ -224,6 +257,7 @@ def photo_filter(
         place=list(dict.fromkeys(place)),
         loc_source=list(dict.fromkeys(loc_source)),
         exposure=list(dict.fromkeys(exposure)),
+        folder=list(dict.fromkeys(folder)),
     )
 
 

@@ -24,7 +24,17 @@ from pydantic import BaseModel
 from . import db
 from .config import Config, load_config, set_location_history, set_sources
 from .embed import embedding_paths, load_embeddings
-from .filters import GROUP_KEYS, LOCATION_KEYS, PhotoFilter, facets, location_labels, photo_filter
+from .filters import (
+    FILENAME_EXPR,
+    GROUP_KEYS,
+    LOCATION_KEYS,
+    NAME_SORTS,
+    PLACE_NAME,
+    PhotoFilter,
+    facets,
+    location_labels,
+    photo_filter,
+)
 from . import selections
 from .export import CONTENT, STRUCTURE, ExportError, check_destination, run_export
 from .jobs import BackgroundJob, index_job
@@ -68,6 +78,21 @@ class FolderIn(BaseModel):
     path: str
 
 
+class CurateIn(BaseModel):
+    n: int = 12
+    variety: float = 0.4
+    time_spread: float = 0.5
+    place_spread: float = 0.5
+    styles: dict[str, float] = {}
+    include_rejects: bool = False
+    locked: list[int] = []
+    removed: list[int] = []
+
+
+class AlternativesIn(CurateIn):
+    id: int
+
+
 class FlagOp(BaseModel):
     ids: list[int]
     flag: str | None  # "pick", "reject", or null to clear
@@ -90,6 +115,7 @@ class ExportIn(BaseModel):
     scope: str = "all"  # all picks, or "filtered": picks within the query-string filters
     add_location: bool = True  # write timeline positions into copies of photos without GPS
     only_new: bool = False  # skip photos that were exported before
+    photo_ids: list[int] | None = None  # export exactly these photos (e.g. a Curate draft)
 
 
 COLLAPSE = ("dupes", "stacks", "none")
@@ -100,6 +126,53 @@ def require_json(request: Request) -> None:
     # without a CORS preflight (and this server grants none).
     if not request.headers.get("content-type", "").startswith("application/json"):
         raise HTTPException(415, "expected application/json")
+
+
+class TasteStore:
+    """The taste model (taste.py): trained only when the user calibrates it, saved
+    next to the embeddings, loaded at startup. Scores for the indexed photos are
+    recomputed (cheaply, without retraining) when the embeddings change."""
+
+    def __init__(self, cfg: Config):
+        from . import taste
+
+        self.cfg = cfg
+        self.path = cfg.embeddings_dir / f"{cfg.model.model_id}.taste.npz"
+        self.lock = threading.Lock()
+        self.model = taste.TasteModel.load(self.path)
+        self.scores: dict[int, float] = {}
+        self.scored_stamp = None
+
+    def _refresh_scores(self, index: Index) -> None:
+        if self.scored_stamp == index.stamp:
+            return
+        scores = {}
+        if self.model and self.model.enabled and self.model.w is not None and index.E.size:
+            if index.E.shape[1] == len(self.model.w):
+                scores = dict(zip((int(i) for i in index.ids), self.model.score(index.E).tolist()))
+        self.scores, self.scored_stamp = scores, index.stamp
+
+    def calibrate(self, index: Index):
+        from . import taste
+
+        conn = db.connect_readonly(self.cfg.db_path, self.cfg.selections_path)
+        try:
+            model = taste.train(conn, index.E, index.ids)
+        finally:
+            conn.close()
+        model.save(self.path)
+        with self.lock:
+            self.model, self.scored_stamp = model, None
+            self._refresh_scores(index)
+        return model
+
+    def current(self, index: Index):
+        with self.lock:
+            self._refresh_scores(index)
+            return self.model
+
+    def score_of(self, photo_id: int) -> float | None:
+        return self.scores.get(photo_id)
 
 
 @dataclass
@@ -126,6 +199,7 @@ def create_app(
     # stopping: the server is shutting down, so the event streams should end now.
     state: dict = {"encoder": text_encoder, "clients": 0, "seen_client": False, "stopping": False}
     job = index_job(cfg, run=index_runner)
+    taste_store = TasteStore(cfg)
     export_job = BackgroundJob(cfg, run_export)
 
     @asynccontextmanager
@@ -215,6 +289,7 @@ def create_app(
                 "clip_shadows": r["clip_shadows"],
                 "flag": r["flag"],
                 "exported": bool(r["exported"]),
+                "taste": taste_store.score_of(r["id"]),
                 "thumb": f"/thumbs/{r['id']}.jpg",
             }
             if scores is not None:
@@ -274,10 +349,15 @@ def create_app(
             "taken_at": "p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
             "-taken_at": "p.taken_at IS NULL, p.taken_at DESC, p.source, p.rel_path",
             "path": "p.source, p.rel_path",
+            "name": f"{FILENAME_EXPR} COLLATE NOCASE, p.source, p.rel_path",
+            "-name": f"{FILENAME_EXPR} COLLATE NOCASE DESC, p.source, p.rel_path",
+            # by place name; photos without a location last either way
+            "place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE, p.taken_at IS NULL, p.taken_at",
+            "-place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE DESC, p.taken_at IS NULL, p.taken_at",
             "id": "p.id",
         }.get(sort)
         if order is None:
-            raise HTTPException(400, "sort must be taken_at, -taken_at, path or id")
+            raise HTTPException(400, "sort must be taken_at, -taken_at, name, -name, place, -place, path, id, taste or -taste")
         condition = ""
         if collapse == "dupes":
             # One representative per duplicate group: its lowest id within the filtered set.
@@ -305,17 +385,30 @@ def create_app(
     ):
         """Paged listing. With ``group`` (day, month, year) photos come in date
         order, each item carries its group key ("" = undated, last), and
-        ``groups`` lists every non-empty group of the filtered set with its count."""
-        if group and sort not in ("taken_at", "-taken_at"):
+        ``groups`` lists every non-empty group of the filtered set with its count.
+        ``sort=taste`` / ``-taste``: likely keepers / likely rejects first (taste model)."""
+        if group and sort not in ("taken_at", "-taken_at") and sort not in NAME_SORTS.get(group, ()):
             sort = "taken_at"  # groups must be contiguous
+        if sort in ("taste", "-taste"):
+            return taste_listing(flt, collapse_mode(collapse, dupes), sort, offset, limit, conn)
         cte, shown, order, params = listing(flt, collapse_mode(collapse, dupes), sort, group)
         key = GROUP_KEYS[group] if group else "NULL"
         total = conn.execute(f"{cte} SELECT COUNT(*) {shown}", params).fetchone()[0]
         direction = "DESC" if sort == "-taken_at" else ""
         by_location = group in LOCATION_KEYS
-        if by_location:
+        groups = group_summary(conn, cte, shown, params, group, direction, sort) if group else None
+        if group and sort in NAME_SORTS.get(group, ()):
+            # Groups by name (place or folder), in the order of the summary; the sort within them.
+            if groups:
+                cte += ", grank(k, r) AS (VALUES " + ", ".join("(?, ?)" for _ in groups) + ")"
+                params = [*params, *(x for r, g in enumerate(groups) for x in (g["key"], r))]
+                order = f"(SELECT r FROM grank WHERE k = COALESCE(grp, '')), {order}"
+        elif by_location:
             # Location groups in trip order: by each group's first photo, unknown last.
             order = f"grp IS NULL, MIN(p.taken_at) OVER (PARTITION BY grp) {direction}, grp, {order}"
+        elif group == "folder":
+            # Folders in path order (each folder's photos together), by date within a folder.
+            order = f"grp, {order}"
         rows = conn.execute(
             f"{cte} SELECT p.id, {key} AS grp {shown} ORDER BY {order} LIMIT ? OFFSET ?",
             [*params, limit, offset],
@@ -326,13 +419,38 @@ def create_app(
             keys = {r[0]: r[1] or "" for r in rows}
             for item in items:
                 item["group"] = keys[item["id"]]
-            result["groups"] = group_summary(conn, cte, shown, params, group, direction)
+            result["groups"] = groups
         return result
 
-    def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "") -> list[dict]:
+    def taste_listing(flt, collapse, sort, offset, limit, conn) -> dict:
+        model = taste_store.current(get_index())
+        if model is None or not model.enabled:
+            raise HTTPException(
+                409, model.reason if model else "Not calibrated yet: Library → Your taste → Calibrate."
+            )
+        cte, shown, order, params = listing(flt, collapse, "taken_at", None)
+        ids = [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY {order}", params)]
+        sign = -1.0 if sort == "taste" else 1.0
+        missing = 2.0  # photos without an embedding go last either way
+        ids.sort(key=lambda i: sign * s if (s := taste_store.score_of(i)) is not None else missing)
+        return {"total": len(ids), "items": items_for(conn, ids[offset : offset + limit])}
+
+    def folder_label(key: str | None) -> str:
+        """ "/photos/Sweden/" + "day 1/" -> "Sweden / day 1" (the source folder's name, then the subfolders)."""
+        if not key:
+            return "Unknown folder"
+        for s in sorted(cfg.sources, key=lambda p: -len(str(p))):
+            prefix = f"{s}/"
+            if key.startswith(prefix):
+                rest = key[len(prefix):].strip("/")
+                return " / ".join([s.name, *rest.split("/")]) if rest else s.name
+        return key.rstrip("/")
+
+    def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "", sort: str = "") -> list[dict]:
         """Every non-empty group of the listing, in display order, with its count,
         first/last capture time, and a cover photo (a pick if the group has one,
-        else its first photo). Location groups add a label and a centre point."""
+        else its first photo). Location groups add a label and a centre point.
+        With a name sort (``NAME_SORTS``), groups are ordered by their label, unknown last."""
         key = GROUP_KEYS[group]
         by_location = group in LOCATION_KEYS
         group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else f"grp {direction}"
@@ -360,10 +478,15 @@ def create_app(
         for r in rows:
             k = r[0]
             g = {"key": k or "", "count": r[1], "first": r[2], "last": r[3], "cover": covers.get(k)}
+            if group == "folder":
+                g["label"] = folder_label(k)
             if by_location:
                 g["label"] = labels.get(k, "Unknown location") if k else "Unknown location"
                 g["lat"], g["lon"] = (r[4], r[5]) if k else (None, None)
             out.append(g)
+        if sort in NAME_SORTS.get(group, ()):
+            known = sorted((g for g in out if g["key"]), key=lambda g: g["label"].casefold(), reverse=sort.startswith("-"))
+            out = known + [g for g in out if not g["key"]]
         return out
 
     @app.get("/api/groups")
@@ -434,6 +557,7 @@ def create_app(
                 "country_key": cc,
             }
         photo["export"] = selections.export_info(cfg.selections_path, r["sha256"]) if r["sha256"] else None
+        photo["taste"] = taste_store.score_of(photo_id)
         photo["flag"] = conn.execute(
             f"SELECT {FLAG_EXPR} FROM photos p WHERE p.id = ?", (photo_id,)
         ).fetchone()[0]
@@ -499,9 +623,10 @@ def create_app(
         # Families and tags come back in vocabulary order (tag ids follow it), tags by count.
         for r in conn.execute("SELECT id, family, name FROM tags ORDER BY id"):
             count = counts.get(r["id"], 0)
-            if count or r["id"] in selected:
+            excluded = r["id"] in flt.exclude_tags
+            if count or r["id"] in selected or excluded:  # keep chosen tags visible to switch them off
                 families.setdefault(r["family"], []).append(
-                    {"id": r["id"], "name": r["name"], "count": count}
+                    {"id": r["id"], "name": r["name"], "count": count, "excluded": excluded}
                 )
         for items in families.values():
             items.sort(key=lambda t: -t["count"])
@@ -584,6 +709,7 @@ def create_app(
         conn=Depends(get_conn),
     ):
         """Every id of the listing, in order (for select-all)."""
+        sort = "taken_at" if sort in ("taste", "-taste") else sort
         cte, shown, order, params = listing(flt, collapse_mode(collapse, dupes), sort, None)
         return {"ids": [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY {order}", params)]}
 
@@ -661,6 +787,109 @@ def create_app(
         suggested, scores = keeper_scores(photos, clip_quality(index, wanted))
         return {"suggested": suggested, "scores": {str(k): v for k, v in scores.items()}}
 
+    # ---- curate ------------------------------------------------------------------
+
+    def styles_config():
+        from . import curate, paths
+
+        return curate.load_styles(cfg.vocabulary_path, paths.default_file("vocabulary.yaml"))
+
+    def style_scores(index: Index) -> dict[str, dict[int, float]]:
+        """Per style, how much more each photo looks like "towards" than "away" (CLIP)."""
+        encoder = state["encoder"]
+        if encoder is None or index.E.size == 0:
+            return {}
+        styles = styles_config()
+        key = tuple((s.name, tuple(s.towards), tuple(s.away)) for s in styles)
+        if state.get("style_key") != key:
+            vecs = {}
+            for st in styles:
+                pos, neg = encoder(st.towards).mean(axis=0), encoder(st.away).mean(axis=0)
+                vecs[st.name] = pos / np.linalg.norm(pos) - neg / np.linalg.norm(neg)
+            state["style_vecs"], state["style_key"] = vecs, key
+        ids = [int(i) for i in index.ids]
+        return {name: dict(zip(ids, (index.E @ v).tolist())) for name, v in state["style_vecs"].items()}
+
+    def curate_pool(body: CurateIn, flt: PhotoFilter, conn, index: Index):
+        from . import curate
+
+        p = curate.Params(
+            n=max(2, min(60, body.n)),
+            variety=min(1.0, max(0.0, body.variety)),
+            time_spread=min(1.0, max(0.0, body.time_spread)),
+            place_spread=min(1.0, max(0.0, body.place_spread)),
+            styles={
+                k: min(1.0, max(-1.0, float(w)))
+                for k, w in body.styles.items()
+                if k in {st.name for st in styles_config()}
+            },
+            include_rejects=body.include_rejects,
+            locked=body.locked,
+            removed=body.removed,
+        )
+        where, params = flt.where(model_id)
+        model = taste_store.current(index)
+        pool = curate.build_pool(
+            conn, where, params, index.row, index.E, p,
+            taste=taste_store.scores if model and model.enabled else None,
+            clip_quality=clip_quality(index, [int(i) for i in index.ids]),
+            style_scores=style_scores(index) if any(p.styles.values()) else {},
+            place_labels=location_labels(conn)["place"],
+        )
+        return pool, p
+
+    @app.get("/api/styles")
+    def list_styles():
+        return [{"name": s.name, "label": s.label, "description": s.description} for s in styles_config()]
+
+    @app.post("/api/curate", dependencies=[Depends(require_json)])
+    def curate_draft(body: CurateIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """A draft selection from the photos within the filters (see curate.py)."""
+        from . import curate
+
+        pool, p = curate_pool(body, flt, conn, index)
+        if pool is None:
+            return {"items": [], "cover": None, "sections": [], "candidates": 0, "used": {}}
+        d = curate.draft(pool, p)
+        labels = {s.name: s.label for s in styles_config()}
+        ids = [it["id"] for it in d["items"]]
+        by_id = {i["id"]: i for i in items_for(conn, ids)}
+        items = []
+        for it in d["items"]:
+            j = it["index"]
+            if it["id"] in by_id:
+                items.append(by_id[it["id"]] | {
+                    "q": round(float(pool.q[j]), 3),
+                    "reason": curate.reason(pool, j, p, labels),
+                    "day": pool.info[j]["day"],
+                    "place": pool.info[j]["place"],
+                    "similar": len(pool.members[j]),
+                    "locked": bool(set(p.locked) & set(pool.members[j])),
+                })
+        return {
+            "items": items,
+            "cover": d["cover"],
+            "sections": d["sections"],
+            "candidates": len(pool.ids),
+            "used": {
+                "taste": bool(taste_store.scores),
+                "locations": bool((pool.loc_w > 0).any()),
+                "styles": sorted(k for k, w in p.styles.items() if w),
+            },
+        }
+
+    @app.post("/api/curate/alternatives", dependencies=[Depends(require_json)])
+    def curate_alternatives(body: AlternativesIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """Photos that could take one slot of the draft: its other frames, then similar good ones."""
+        from . import curate
+
+        pool, p = curate_pool(body, flt, conn, index)
+        if pool is None:
+            return {"items": []}
+        chosen = {int(pool.ids[j]) for j in curate.select(pool, p)}
+        ids = curate.alternatives(pool, body.id, chosen, p)
+        return {"items": items_for(conn, ids)}
+
     # ---- export ------------------------------------------------------------------
 
     @app.post("/api/export", dependencies=[Depends(require_json)])
@@ -683,7 +912,17 @@ def create_app(
             raise HTTPException(400, str(e))
         scope = flt if body.scope == "filtered" else PhotoFilter()
         where, params = scope.where(model_id)
-        ids = [
+        if body.photo_ids is not None:
+            wanted = list(dict.fromkeys(body.photo_ids))
+            present = {r[0] for r in conn.execute(
+                f"SELECT id FROM photos WHERE status = 'ok' AND id IN ({','.join('?' * len(wanted))})", wanted
+            )} if wanted else set()
+            ids = [i for i in wanted if i in present]
+            if not ids:
+                raise HTTPException(400, "none of these photos can be exported")
+        else:
+            ids = None
+        ids = ids if ids is not None else [
             r[0]
             for r in conn.execute(
                 f"""SELECT p.id FROM photos p WHERE {where} AND {FLAG_EXPR} = 'pick'
@@ -694,6 +933,13 @@ def create_app(
         ]
         if not ids:
             raise HTTPException(400, "no new picked photos to export" if body.only_new else "no picked photos to export")
+        if body.photo_ids is not None and body.only_new:
+            fresh = {r[0] for r in conn.execute(
+                f"SELECT p.id FROM photos p WHERE NOT {EXPORTED_EXPR} AND p.id IN ({','.join('?' * len(ids))})", ids
+            )}
+            ids = [i for i in ids if i in fresh]
+            if not ids:
+                raise HTTPException(400, "all of these photos were exported before")
         started = export_job.start(
             photo_ids=ids,
             folder=str(folder),
@@ -756,6 +1002,26 @@ def create_app(
         return StreamingResponse(
             stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
         )
+
+    def taste_summary(conn, model) -> dict:
+        """The model's status plus how many flags / exports changed since calibrating."""
+        if model is None:
+            return {"enabled": False, "calibrated": False, "reason": "Not calibrated yet.", "changed_since": None}
+        since = model.calibrated_at or 0
+        changed = conn.execute("SELECT COUNT(*) FROM sel.flags WHERE updated_at > ?", (since,)).fetchone()[0]
+        changed += conn.execute("SELECT COUNT(*) FROM sel.exported WHERE last_at > ?", (since,)).fetchone()[0]
+        return model.summary() | {"calibrated": True, "changed_since": changed}
+
+    @app.get("/api/taste")
+    def taste_status(conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """Whether the taste model is available, what it learned from, how well it
+        works (checked on scenes it did not learn from), and how stale it is."""
+        return taste_summary(conn, taste_store.current(index))
+
+    @app.post("/api/taste/calibrate", dependencies=[Depends(require_json)])
+    def taste_calibrate(conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """Learn from the current flags and exports (takes a second or two)."""
+        return taste_summary(conn, taste_store.calibrate(index))
 
     @app.get("/api/health")
     def health():

@@ -1,6 +1,7 @@
 <script>
-  import { view, toggleTag } from '../lib/state.svelte.js';
+  import { view, toggleTag, toggleExcludeTag, activeCount, clearAll } from '../lib/state.svelte.js';
   import Filters from './Filters.svelte';
+  import Section from './Section.svelte';
 
   let { tags, facets } = $props();
 
@@ -13,27 +14,52 @@
   {#if !tags}
     <p class="px-2 text-neutral-500">Loading tags…</p>
   {:else}
+    {#if activeCount()}
+      <div class="mb-3 flex items-center justify-between rounded bg-neutral-800/60 px-2 py-1.5 text-xs">
+        <span class="text-neutral-400">{activeCount()} active</span>
+        <button class="font-medium text-sky-400 hover:underline" title="Clear the search, tags, and filters" onclick={clearAll}>Clear all</button>
+      </div>
+    {/if}
     <Filters {facets} />
     {#each families as [family, list] (family)}
-      <h2 class="mb-1 mt-3 px-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 first:mt-0">
-        {titles[family] ?? family}
-      </h2>
+      <Section
+        id="tags-{family}"
+        title={titles[family] ?? family}
+        defaultOpen
+        active={list.filter((t) => view.tags.includes(t.id) || view.excludeTags.includes(t.id)).length}
+      >
       <ul>
         {#each list as tag (tag.id)}
           {@const on = view.tags.includes(tag.id)}
-          <li>
+          {@const off = view.excludeTags.includes(tag.id)}
+          <!-- Click: include (photos must have it). Hover shows "−" to exclude instead
+               (photos must not have it); Alt+click does the same. Click again to clear. -->
+          <li class="group/tag relative">
             <button
               class="flex w-full items-center justify-between rounded px-2 py-1 text-left transition-colors
-                {on ? 'bg-sky-700 text-white' : 'text-neutral-300 hover:bg-neutral-800'}"
-              aria-pressed={on}
-              onclick={() => toggleTag(tag.id)}
+                {on ? 'bg-sky-700 text-white' : off ? 'bg-red-950 text-red-300' : 'text-neutral-300 hover:bg-neutral-800'}"
+              aria-pressed={on || off}
+              title={off ? 'Excluded: click to show these photos again' : on ? 'Included: click to remove' : 'Click: only photos with this tag · Alt+click: hide them'}
+              onclick={(e) => (off || e.altKey ? toggleExcludeTag(tag.id) : toggleTag(tag.id))}
             >
-              <span class="truncate">{tag.name}</span>
-              <span class="ml-2 text-xs tabular-nums {on ? 'text-sky-100' : 'text-neutral-500'}">{tag.count}</span>
+              <span class="truncate {off ? 'line-through decoration-red-400/70' : ''}">{off ? '−\u2009' : ''}{tag.name}</span>
+              <span class="ml-2 text-xs tabular-nums {on ? 'text-sky-100' : off ? 'text-red-400' : 'text-neutral-500'} {off ? '' : 'group-hover/tag:invisible'}">
+                {off ? 'hidden' : tag.count}
+              </span>
             </button>
+            {#if !off}
+              <button
+                class="absolute right-1 top-1/2 hidden -translate-y-1/2 rounded px-1.5 text-xs font-bold leading-5
+                  group-hover/tag:block {on ? 'text-sky-100 hover:bg-sky-800' : 'text-neutral-400 hover:bg-red-900 hover:text-white'}"
+                title="Exclude: hide photos with this tag (Alt+click)"
+                aria-label="Exclude {tag.name}"
+                onclick={() => toggleExcludeTag(tag.id)}>−</button
+              >
+            {/if}
           </li>
         {/each}
       </ul>
+      </Section>
     {/each}
 
     <div class="mt-4 border-t border-neutral-800 px-2 pt-3 text-xs text-neutral-500">

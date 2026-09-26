@@ -1,13 +1,15 @@
 <script>
-  import { view, activeFilterCount } from '../lib/state.svelte.js';
+  import { untrack } from 'svelte';
+  import { view, activeFilterCount, tagFilterActive } from '../lib/state.svelte.js';
   import { startExport, fetchExportStatus, fetchPickExportCounts } from '../lib/api.js';
   import { saveSetting } from '../lib/culling.svelte.js';
   import FolderBrowser from './FolderBrowser.svelte';
 
   // picksTotal: all picks; picksFiltered: picks within the current filters.
   // hasHistory: a location history is configured (enables adding GPS to the copies).
+  // draft: {ids, fresh} exports exactly these photos (a Curate draft; fresh = not exported before).
   // ondone(): an export finished (refresh the grid's "exported" badges).
-  let { picksTotal = 0, picksFiltered = 0, hasHistory = false, ondone = () => {} } = $props();
+  let { picksTotal = 0, picksFiltered = 0, hasHistory = false, draft = null, ondone = () => {} } = $props();
 
   function setting(key, fallback) {
     try {
@@ -20,7 +22,8 @@
 
   const today = new Date().toISOString().slice(0, 10);
   let dir = $state(null);
-  let name = $state(`Selection ${today}`);
+  // The dialog is opened for one purpose; draft does not change while it is open.
+  let name = $state(`${untrack(() => draft) ? 'Curated' : 'Selection'} ${today}`);
   let content = $state(setting('content', 'images'));
   let rawFallback = $state(setting('rawFallback', true));
   let structure = $state(setting('structure', 'flat'));
@@ -28,7 +31,7 @@
   let onlyNew = $state(setting('onlyNew', false));
   // Picks in the chosen scope that were not exported before.
   let newCount = $state(null);
-  const filtered = view.tags.length > 0 || activeFilterCount(view.filters) > 0;
+  const filtered = tagFilterActive() || activeFilterCount(view.filters) > 0;
   let scope = $state(filtered ? 'filtered' : 'all');
   let status = $state(null);
   let error = $state('');
@@ -36,12 +39,14 @@
 
   $effect(() => {
     const s = scope;
+    if (draft) return;
     fetchPickExportCounts(view, s)
       .then((c) => (newCount = c.no))
       .catch(() => (newCount = null));
   });
-  const scopeCount = $derived(scope === 'filtered' ? picksFiltered : picksTotal);
-  const count = $derived(onlyNew && newCount != null ? newCount : scopeCount);
+  const scopeCount = $derived(draft ? draft.ids.length : scope === 'filtered' ? picksFiltered : picksTotal);
+  const fresh = $derived(draft ? draft.fresh : newCount);
+  const count = $derived(onlyNew && fresh != null ? fresh : scopeCount);
   const running = $derived(status?.running);
   const done = $derived(status && !status.running && status.finished_at && status.result);
 
@@ -58,6 +63,7 @@
         scope,
         add_location: hasHistory && addLocation,
         only_new: onlyNew,
+        ...(draft ? { photo_ids: draft.ids } : {}),
       });
       while (status.running) {
         await new Promise((r) => setTimeout(r, 500));
@@ -83,11 +89,11 @@
   const radio = 'flex cursor-pointer items-start gap-2 rounded px-2 py-1 hover:bg-neutral-800';
 </script>
 
-<div class="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-6" role="dialog" aria-modal="true" aria-label="Export picks">
+<div class="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-6" role="dialog" aria-modal="true" aria-label={draft ? 'Export the draft' : 'Export picks'}>
   <button class="absolute inset-0 cursor-default" aria-label="Close" onclick={close}></button>
   <div class="relative flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 text-sm">
     <div class="flex items-center justify-between border-b border-neutral-800 px-4 py-2">
-      <h2 class="font-semibold">Export picks</h2>
+      <h2 class="font-semibold">{draft ? 'Export the draft' : 'Export picks'}</h2>
       <button class="text-neutral-400 hover:text-white disabled:opacity-30" aria-label="Close" disabled={running} onclick={close}>✕</button>
     </div>
 
@@ -96,19 +102,23 @@
         Copies files into a new folder. Your originals are only read, and nothing in the destination is overwritten.
       </p>
 
-      <fieldset class="grid gap-1 sm:grid-cols-2" disabled={running}>
-        <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Which photos</legend>
-        <label class={radio}><input type="radio" bind:group={scope} value="all" class="mt-0.5" /> All picks ({picksTotal})</label>
-        <label class="{radio} {filtered ? '' : 'opacity-40'}">
-          <input type="radio" bind:group={scope} value="filtered" disabled={!filtered} class="mt-0.5" />
-          Picks in the current filters ({picksFiltered})
-        </label>
-      </fieldset>
+      {#if draft}
+        <p class="text-neutral-300">The {draft.ids.length} photos of the Curate draft, whether they are picked or not.</p>
+      {:else}
+        <fieldset class="grid gap-1 sm:grid-cols-2" disabled={running}>
+          <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Which photos</legend>
+          <label class={radio}><input type="radio" bind:group={scope} value="all" class="mt-0.5" /> All picks ({picksTotal})</label>
+          <label class="{radio} {filtered ? '' : 'opacity-40'}">
+            <input type="radio" bind:group={scope} value="filtered" disabled={!filtered} class="mt-0.5" />
+            Picks in the current filters ({picksFiltered})
+          </label>
+        </fieldset>
+      {/if}
 
       <label class="{radio} -mt-2">
         <input type="checkbox" bind:checked={onlyNew} disabled={running} class="mt-0.5" />
         <span>
-          Only photos not exported before{newCount != null ? ` (${newCount} of ${scopeCount})` : ''}
+          Only photos not exported before{fresh != null ? ` (${fresh} of ${scopeCount})` : ''}
           <span class="block text-xs text-neutral-500">Exported photos are marked ↗ in the grid.</span>
         </span>
       </label>

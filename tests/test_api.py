@@ -104,3 +104,25 @@ def test_similar_search_excludes_self_and_respects_filter(client, conn):
 def test_unmatched_raws(client):
     raws = client.get("/api/raws/unmatched").json()
     assert [r["path"].rsplit("/", 1)[1] for r in raws] == ["orphan.NEF"]
+
+
+def test_exclude_tags(client, conn):
+    tags = client.get("/api/tags").json()["families"]["scene"]
+    scene = max(tags, key=lambda t: t["count"])
+    everything = client.get("/api/photos", params={"dupes": "all"}).json()["total"]
+    with_it = client.get("/api/photos", params={"tags": str(scene["id"]), "dupes": "all"}).json()["total"]
+    without = client.get("/api/photos", params={"exclude_tags": str(scene["id"]), "dupes": "all"}).json()
+    assert without["total"] == everything - with_it
+    tagged = {r[0] for r in conn.execute("SELECT photo_id FROM photo_tags WHERE tag_id = ?", (scene["id"],))}
+    assert tagged.isdisjoint(i["id"] for i in without["items"])
+
+    # The excluded tag stays listed (count 0 in this view) so it can be switched off.
+    listed = client.get("/api/tags", params={"exclude_tags": str(scene["id"])}).json()["families"]["scene"]
+    entry = next(t for t in listed if t["id"] == scene["id"])
+    assert entry["excluded"] and entry["count"] == 0
+    # Excluding also applies to search, and including wins over excluding the same tag.
+    res = client.get("/api/search/text", params={"q": "x", "exclude_tags": str(scene["id"]), "dupes": "all"}).json()
+    assert res["total"] == everything - with_it
+    both = client.get("/api/photos", params={"tags": str(scene["id"]), "exclude_tags": str(scene["id"]), "dupes": "all"})
+    assert both.json()["total"] == with_it
+    assert client.get("/api/photos", params={"exclude_tags": "x"}).status_code == 400

@@ -1,10 +1,11 @@
 <script>
   import { tick, untrack } from 'svelte';
-  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup } from './lib/state.svelte.js';
-  import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds } from './lib/api.js';
+  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup, hasOverview } from './lib/state.svelte.js';
+  import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds, fetchTaste } from './lib/api.js';
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import { connection, connect } from './lib/connection.svelte.js';
   import TopBar from './components/TopBar.svelte';
+  import ViewBar from './components/ViewBar.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import Grid from './components/Grid.svelte';
   import Detail from './components/Detail.svelte';
@@ -14,7 +15,9 @@
   import Compare from './components/Compare.svelte';
   import ExportDialog from './components/ExportDialog.svelte';
   import Calendar from './components/Calendar.svelte';
+  import ContextMenu from './components/ContextMenu.svelte';
   import Help from './components/Help.svelte';
+  import Curate from './components/Curate.svelte';
   // The map (d3 + country outlines) loads only when it is first shown.
   const loadMap = () => import('./components/MapView.svelte');
 
@@ -34,6 +37,13 @@
   let loaded = false; // first page of the current query has arrived
 
   let facets = $state(null);
+  // The taste model's status; refreshed with the sidebar (it retrains in the background).
+  let taste = $state(null);
+  function loadTaste() {
+    fetchTaste()
+      .then((t) => (taste = t))
+      .catch(() => {});
+  }
   let sidebarToken = 0;
   function loadSidebar() {
     const mine = ++sidebarToken;
@@ -42,13 +52,14 @@
         if (mine !== sidebarToken) return;
         tags = t;
         facets = f;
+        loadTaste();
       })
       .catch((e) => (error = e.message));
   }
 
   // Tag counts and filter options are relative to the current filter.
   $effect(() => {
-    view.tags, JSON.stringify(view.filters);
+    view.tags, view.excludeTags, JSON.stringify(view.filters);
     untrack(loadSidebar);
   });
 
@@ -146,7 +157,7 @@
 
   // Re-query whenever the search, filters or grouping change.
   $effect(() => {
-    view.q, view.similar, view.tags, JSON.stringify(view.filters), view.group, view.collapse;
+    view.q, view.similar, view.tags, view.excludeTags, JSON.stringify(view.filters), view.group, view.collapse, view.sort;
     untrack(reset);
   });
 
@@ -194,9 +205,14 @@
     }
   }
 
+  // Curate works on the filters, not on search results ("Find similar" from its photo view ends it).
+  $effect(() => {
+    if (view.curate && (view.q || view.similar)) view.curate = false;
+  });
+
   // An overview needs a grouping and makes no sense for search results.
   $effect(() => {
-    if (view.overview && (!view.group || view.q || view.similar)) view.overview = false;
+    if (view.overview && (!hasOverview(view.group) || view.q || view.similar)) view.overview = false;
   });
 
   /** From the detail view: browse the photo's date group ('date') or place ('location')
@@ -207,6 +223,7 @@
     const key = groupKey(photo, mode);
     const requery = view.q || view.similar || view.group !== mode;
     view.photo = null;
+    view.curate = false;
     if (requery) {
       pendingJump = { key, id: photo.id };
       view.q = '';
@@ -238,26 +255,30 @@
   const hasMore = $derived(items.length < total);
 
   // Flags change locally before the list is re-queried; with a flag filter active
-  // (e.g. Hide rejected), photos whose new flag no longer matches disappear at once.
+  // (e.g. Picked + Unflagged), photos whose new flag no longer matches disappear at once.
   const visibleItems = $derived.by(() => {
     const wanted = view.filters.flag;
     if (!wanted.length) return items;
     return items.filter((item) => wanted.includes(flagOf(item) ?? 'none'));
   });
   const itemsById = $derived(new Map(items.map((i) => [i.id, i])));
-  const index = $derived(visibleItems.findIndex((i) => i.id === view.photo));
+  // While Curate is open, the photo view steps through the draft instead of the grid.
+  let curateOrder = $state([]);
+  const navItems = $derived(view.curate ? curateOrder.map((id) => ({ id })) : visibleItems);
+  const index = $derived(navItems.findIndex((i) => i.id === view.photo));
   const shows = (flag) => !view.filters.flag.length || view.filters.flag.includes(flag ?? 'none');
 
   async function step(delta) {
     if (view.photo == null) return;
     let i = index + delta;
-    if (i >= visibleItems.length && hasMore) await loadMore();
-    if (i >= 0 && i < visibleItems.length) view.photo = visibleItems[i].id;
+    if (i >= navItems.length && hasMore && !view.curate) await loadMore();
+    if (i >= 0 && i < navItems.length) view.photo = navItems[i].id;
   }
 
   /** P / X / U in the loupe: flag, then go on if auto-advance is on (or the photo just got hidden). */
   async function flagInLoupe(flag) {
     const id = view.photo;
+    if (view.curate) return setFlag([id], flag); // the draft does not change when flagging
     const nextId = visibleItems[index + 1]?.id ?? null;
     const prevId = visibleItems[index - 1]?.id ?? null;
     setFlag([id], flag);
@@ -271,6 +292,20 @@
 
   /** P / X / U in the grid: flag the selection (or the focused photo). If that hides
    * them, move the selection to the next visible photo so you can keep going. */
+  // Right-click menu on a grid photo. Like a file manager: right-clicking a photo
+  // outside the selection selects just it; inside, the selection is kept.
+  let menuAt = $state(null); // {x, y, id}
+  function openMenu(e, id) {
+    e.preventDefault();
+    if (!selection.has(id)) {
+      selection.clear();
+      selection.add(id);
+      cursor.anchor = id;
+    }
+    cursor.focus = id;
+    menuAt = { x: e.clientX, y: e.clientY, id };
+  }
+
   function flagInGrid(flag) {
     const targets = selection.size ? [...selection] : cursor.focus != null ? [cursor.focus] : [];
     if (!targets.length) return;
@@ -302,12 +337,24 @@
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
     if (view.compare) return; // the compare view handles its own keys
+    if (menuAt) {
+      // The menu's shortcuts work while it is open; other keys are ignored.
+      const id = menuAt.id;
+      if (key in FLAG_KEYS && !mod) flagInGrid(FLAG_KEYS[key]);
+      else if (key === 'Enter') view.photo = id;
+      else if (key === 'c' && selection.size >= 2 && selection.size <= 30) view.compare = { kind: 'ids', ids: [...selection] };
+      else if (key !== 'Escape') return;
+      e.preventDefault();
+      menuAt = null;
+      return;
+    }
     if (key === 'Escape') {
       if (view.help) view.help = false;
       else if (view.exporting) view.exporting = false;
       else if (view.library) view.library = false;
       else if (view.raws) view.raws = false;
       else if (view.photo != null) view.photo = null;
+      else if (view.curate) view.curate = false;
       else if (typing) e.target.blur();
       else clearSelection();
       return;
@@ -321,6 +368,8 @@
     if (mod && key === 'z') {
       e.preventDefault();
       undo();
+    } else if (view.curate && view.photo == null) {
+      return; // the grid's shortcuts do not apply to the Curate view
     } else if (mod && key === 'a' && view.photo == null) {
       e.preventDefault();
       selectAll();
@@ -352,7 +401,7 @@
       view.collapse = view.collapse === 'stacks' ? 'dupes' : 'stacks';
     } else if (key === 'h') {
       toggleHideRejected();
-    } else if (key === 'o' && view.group && !view.q && !view.similar) {
+    } else if (key === 'o' && hasOverview(view.group) && !view.q && !view.similar) {
       view.overview = !view.overview;
     } else if (key === 'r') {
       view.compare = { kind: 'review' };
@@ -373,64 +422,83 @@
 {/if}
 
 <div class="flex h-full flex-col">
-  <TopBar bind:this={topBar} {total} {loading} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} />
+  <TopBar bind:this={topBar} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} />
   <div class="flex min-h-0 flex-1">
     <Sidebar {tags} {facets} />
-    <main class="min-w-0 flex-1 overflow-y-auto">
-      {#if error || culling.error}
-        <div class="m-4 rounded border border-red-900 bg-red-950/50 p-3 text-sm text-red-300">
-          {error || `Could not save flags: ${culling.error}`}
-          {#if view.q || view.similar}
-            <button class="ml-2 underline" onclick={clearSearch}>Clear search</button>
-          {/if}
-        </div>
+    <div class="flex min-w-0 flex-1 flex-col">
+      {#if !(tags && tags.photos === 0 && !loading)}
+        <ViewBar {total} {loading} {taste} />
       {/if}
-      {#if tags && tags.photos === 0 && !loading}
-        <div class="flex h-full flex-col items-center justify-center gap-3 text-neutral-400">
-          {#if indexStatus?.running}
-            <p>Indexing… photos appear here when it finishes.</p>
-          {:else}
-            <p>No photos in the library yet.</p>
-            <button class="text-xs text-sky-400 hover:underline" onclick={() => (view.help = true)}>How does this work?</button>
-            <button class="rounded bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600" onclick={() => (view.library = true)}>
-              Add a photo folder
-            </button>
-          {/if}
-        </div>
-      {:else if view.overview && isLocationGroup(view.group)}
-        {#await loadMap()}
-          <p class="p-4 text-sm text-neutral-500">Loading map…</p>
-        {:then { default: MapView }}
-          <MapView onopen={openGroup} />
-        {/await}
-      {:else if view.overview}
-        <Calendar onopen={openGroup} />
-      {:else}
-        <Grid
-          bind:this={grid}
-          items={visibleItems}
-          {loading}
-          {hasMore}
-          onmore={loadMore}
-          groups={grouped ? groups : null}
-          {highlight}
-          onjump={jumpToGroup}
-        />
-        <SelectionBar onselectall={selectAll} />
-      {/if}
-    </main>
+      <main class="min-h-0 flex-1 overflow-y-auto">
+        {#if error || culling.error}
+          <div class="m-4 rounded border border-red-900 bg-red-950/50 p-3 text-sm text-red-300">
+            {error || `Could not save flags: ${culling.error}`}
+            {#if view.q || view.similar}
+              <button class="ml-2 underline" onclick={clearSearch}>Clear search</button>
+            {/if}
+          </div>
+        {/if}
+        {#if tags && tags.photos === 0 && !loading}
+          <div class="flex h-full flex-col items-center justify-center gap-3 text-neutral-400">
+            {#if indexStatus?.running}
+              <p>Indexing… photos appear here when it finishes.</p>
+            {:else}
+              <p>No photos in the library yet.</p>
+              <button class="text-xs text-sky-400 hover:underline" onclick={() => (view.help = true)}>How does this work?</button>
+              <button class="rounded bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600" onclick={() => (view.library = true)}>
+                Add a photo folder
+              </button>
+            {/if}
+          </div>
+        {:else if view.overview && isLocationGroup(view.group)}
+          {#await loadMap()}
+            <p class="p-4 text-sm text-neutral-500">Loading map…</p>
+          {:then { default: MapView }}
+            <MapView onopen={openGroup} />
+          {/await}
+        {:else if view.overview}
+          <Calendar onopen={openGroup} />
+        {:else}
+          <Grid
+            bind:this={grid}
+            items={visibleItems}
+            {loading}
+            {hasMore}
+            onmore={loadMore}
+            groups={grouped ? groups : null}
+            {highlight}
+            onjump={jumpToGroup}
+            oncontext={openMenu}
+          />
+          <SelectionBar onselectall={selectAll} />
+        {/if}
+      </main>
+    </div>
   </div>
 </div>
+
+{#if view.curate}
+  <!-- A new filter set (e.g. a tag clicked in the photo view) starts its own draft. -->
+  {#key JSON.stringify([view.tags, view.excludeTags, view.filters])}
+    <Curate onorder={(ids) => (curateOrder = ids)} />
+  {/key}
+{/if}
 
 {#if view.photo != null}
   <Detail
     id={view.photo}
     hasPrev={index > 0}
-    hasNext={index >= 0 && (index < visibleItems.length - 1 || hasMore)}
+    hasNext={index >= 0 && (index < navItems.length - 1 || (hasMore && !view.curate))}
     onstep={step}
     ontimeline={showInTimeline}
     onflag={flagInLoupe}
   />
+{/if}
+
+{#if menuAt}
+  {#key menuAt}
+    <ContextMenu at={menuAt} onflag={flagInGrid} ontimeline={showInTimeline} onclose={() => (menuAt = null)} />
+  {/key}
 {/if}
 
 {#if view.compare}
@@ -448,6 +516,7 @@
     picksTotal={tags?.picks ?? 0}
     picksFiltered={facets?.flag?.pick ?? 0}
     hasHistory={tags?.location_history ?? false}
+    draft={typeof view.exporting === 'object' ? view.exporting : null}
     ondone={() => {
       loadSidebar();
       reset();
@@ -460,5 +529,15 @@
 {/if}
 
 {#if view.library}
-  <Library status={indexStatus} onchange={() => pollIndex(true)} {tags} {facets} />
+  <Library
+    status={indexStatus}
+    onchange={() => pollIndex(true)}
+    {tags}
+    {facets}
+    {taste}
+    ontaste={(t) => {
+      taste = t;
+      if (view.sort === 'taste' || view.sort === '-taste') reset(); // new scores: new order
+    }}
+  />
 {/if}

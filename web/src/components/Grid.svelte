@@ -3,7 +3,8 @@
   import { selection, cursor, flagOf } from '../lib/culling.svelte.js';
 
   // `groups`: the result's date groups (key, count) when the grid is grouped, else null.
-  let { items, loading, hasMore, onmore, groups = null, highlight = null, onjump } = $props();
+  // oncontext(event, id): right-click on a photo (App shows the context menu).
+  let { items, loading, hasMore, onmore, groups = null, highlight = null, onjump, oncontext = null } = $props();
 
   let sentinel;
   let container;
@@ -51,7 +52,7 @@
     return out;
   });
   const info = $derived(new Map((groups ?? []).map((g) => [g.key, g])));
-  const plural = { day: 'days', month: 'months', year: 'years', place: 'places', region: 'regions', country: 'countries' };
+  const plural = { day: 'days', month: 'months', year: 'years', place: 'places', region: 'regions', country: 'countries', folder: 'folders' };
   const labelOf = (key) => groupLabel(key, mode, info.get(key)?.label);
   const mode = $derived(view.group);
   const order = $derived(new Map(items.map((item, i) => [item.id, i])));
@@ -219,6 +220,7 @@
             {cursor.focus === item.id ? 'outline-2 outline-offset-2 outline-white/70' : ''}
             {highlight === item.id ? 'ring-4 ring-amber-400' : ''}"
           onclick={(e) => onTileClick(e, item.id)}
+          oncontextmenu={(e) => oncontext?.(e, item.id)}
           ondblclick={() => (view.photo = item.id)}
           onkeydown={(e) => e.key === 'Enter' && (view.photo = item.id)}
           title={item.rel_path}

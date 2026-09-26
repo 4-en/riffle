@@ -12,14 +12,19 @@
       ['Ctrl+Z', 'Undo the last flag change'],
       ['Esc', 'Close the current view / clear the selection'],
     ]],
+    ['Curate', [
+      ['Esc', 'Close the draft'],
+      ['← / → (photo view)', 'Step through the draft'],
+    ]],
     ['Grid', [
+      ['Right-click', 'Menu: flag, compare, similar, show day / place, copy path, its tags'],
       ['Click · Ctrl/Shift+click · drag', 'Select one · add / range · box'],
       ['Arrows (Shift extends)', 'Move the selection'],
       ['Ctrl+A', 'Select everything in the view'],
       ['Enter · double-click', 'Open the photo'],
       ['P · X · U', 'Pick · reject · unflag the selection'],
       ['C', 'Compare the selection side by side'],
-      ['S · H · R', 'Stacks · hide rejected · review stacks'],
+      ['S · H · R', 'Stacks · hide rejected (Flag → Picked + Unflagged) · review stacks'],
     ]],
     ['Photo view', [
       ['← →', 'Previous / next'],
@@ -58,14 +63,21 @@
         </li>
         <li>
           <strong class="text-neutral-100">Find what you want.</strong> Search by what is in the picture ("boats at sunset"), click
-          tags and filters on the left, or group by day or place (<em>Group</em>) and use the <em>Calendar</em> / <em>Map</em>
+          tags and filters on the left (click a tag to include it, hover and click <kbd>−</kbd> to exclude it), or group by day or place (<em>Group</em>) and use the <em>Calendar</em> / <em>Map</em>
           overview to jump around. <em>Find similar</em> in the photo view shows related shots.
         </li>
         <li>
           <strong class="text-neutral-100">Cull.</strong> Mark photos with <kbd>P</kbd> (pick) or <kbd>X</kbd> (reject), one by one in
           the photo view or many at once in the grid. For bursts, turn on <em>Stacks</em> and use <em>Review stacks</em>: the
           similar shots appear side by side, with the sharpest and a ★ suggested keeper marked; choose the keeper(s) and press
-          <kbd>Enter</kbd>. <em>Hide rejected</em> keeps the grid tidy, and <kbd>Ctrl+Z</kbd> undoes any flag change.
+          <kbd>Enter</kbd>. Once you have flagged enough, <em>Sort → Likely keepers first</em> puts the promising photos first,
+          learned from your own picks and rejects. <em>Flag → Picked + Unflagged</em> (or <kbd>H</kbd>) hides the rejects, and <kbd>Ctrl+Z</kbd> undoes any flag change.
+        </li>
+        <li>
+          <strong class="text-neutral-100">Curate (optional).</strong> For a photo book or an exhibition, narrow the library to a trip
+          and press <em>Curate</em>: a draft of good but varied photos, steered with sliders (how many, best ↔ varied, spread over
+          time and places, and styles like moody or colourful). Remove a photo (the next one takes its place; it is not
+          rejected), lock the ones to keep, or pick an alternative. <em>Mark as picks</em> or <em>Export</em> when it's right.
         </li>
         <li>
           <strong class="text-neutral-100">Export.</strong> <em>Export</em> (top right) copies your picks into a new folder: images,

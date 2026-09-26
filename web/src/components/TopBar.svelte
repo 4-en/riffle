@@ -1,7 +1,8 @@
 <script>
-  import { view, search, clearSearch, clearFilters, activeFilterCount, hidingRejected, toggleHideRejected } from '../lib/state.svelte.js';
+  import { view, search, clearAll } from '../lib/state.svelte.js';
 
-  let { total, loading, indexStatus = null, textSearch = true, picks = 0 } = $props();
+  // The grid's own controls (count, group, sort, stacks) are in ViewBar.
+  let { indexStatus = null, textSearch = true, picks = 0 } = $props();
 
   const indexPct = $derived(
     indexStatus?.running && indexStatus.total ? Math.round((100 * indexStatus.done) / indexStatus.total) : null
@@ -27,12 +28,9 @@
 
   function clear() {
     text = '';
-    clearSearch();
-    view.tags = [];
-    clearFilters();
+    clearAll();
   }
 
-  const active = $derived(view.q || view.similar || view.tags.length || activeFilterCount(view.filters));
 </script>
 
 <header class="flex items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-4 py-2">
@@ -58,83 +56,43 @@
   </form>
 
   {#if view.similar}
-    <span class="flex items-center gap-2 rounded-full bg-sky-900/60 py-0.5 pl-1 pr-3 text-xs text-sky-100">
+    <span class="flex items-center gap-2 rounded-full bg-sky-900/60 py-0.5 pl-1 pr-1 text-xs text-sky-100">
       <img src="/thumbs/{view.similar}.jpg" alt="" class="h-6 w-6 rounded-full object-cover" />
       Similar to #{view.similar}
+      <button
+        class="rounded-full px-1.5 text-sky-300 hover:bg-sky-800 hover:text-white"
+        title="Back to browsing"
+        aria-label="Clear the similar search"
+        onclick={() => (view.similar = null)}>✕</button
+      >
     </span>
   {/if}
 
-  <label
-    class="flex shrink-0 items-center gap-1 text-xs text-neutral-400 {view.q || view.similar ? 'opacity-40' : ''}"
-    title={view.q || view.similar ? 'Grouping applies when browsing, not to search results' : 'Group the grid by date or place'}
-  >
-    Group
-    <select
-      bind:value={view.group}
-      disabled={!!(view.q || view.similar)}
-      class="rounded border border-neutral-700 bg-neutral-900 px-1 py-1 text-neutral-200"
-    >
-      <option value="">None</option>
-      <optgroup label="Date">
-        <option value="day">Day</option>
-        <option value="month">Month</option>
-        <option value="year">Year</option>
-      </optgroup>
-      <optgroup label="Location">
-        <option value="place">Place</option>
-        <option value="region">Region</option>
-        <option value="country">Country</option>
-      </optgroup>
-    </select>
-  </label>
-  {#if view.group}
-    {@const isMap = ['place', 'region', 'country'].includes(view.group)}
+  <!-- The workflow, in order: cull, curate, export. -->
+  <div class="flex shrink-0 items-center gap-1.5">
     <button
-      class="shrink-0 rounded border px-2 py-1 text-xs disabled:opacity-40 {view.overview
-        ? 'border-sky-700 bg-sky-800 text-white'
-        : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
-      aria-pressed={view.overview}
-      disabled={!!(view.q || view.similar)}
-      title={view.q || view.similar ? 'Overviews apply when browsing, not to search results' : `${isMap ? 'Map' : 'Calendar'} overview of the groups (O)`}
-      onclick={() => (view.overview = !view.overview)}
+      class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+      title="Go through the stacks that still have unflagged photos, in the current filters (R)"
+      onclick={() => (view.compare = { kind: 'review' })}>Review stacks</button
     >
-      {isMap ? 'Map' : 'Calendar'}
-    </button>
-  {/if}
+    <button
+      class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+      title={view.q || view.similar
+        ? 'Curate works on the current filters, not on search results'
+        : 'Draft a small, varied selection (photo book, exhibition) from the current filters'}
+      disabled={!!(view.q || view.similar)}
+      onclick={() => (view.curate = true)}>Curate</button
+    >
+    <button
+      class="shrink-0 rounded px-2.5 py-1 text-xs font-medium {picks
+        ? 'bg-emerald-600 text-black hover:bg-emerald-500'
+        : 'border border-neutral-700 text-neutral-500'}"
+      title="Copy the picked photos to a folder"
+      onclick={() => (view.exporting = true)}>Export{picks ? ` ${picks}` : ''}</button
+    >
+  </div>
 
-  <button
-    class="shrink-0 rounded border px-2 py-1 text-xs {view.collapse === 'stacks'
-      ? 'border-sky-700 bg-sky-800 text-white'
-      : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
-    aria-pressed={view.collapse === 'stacks'}
-    title="Show one tile per stack of similar shots (S)"
-    onclick={() => (view.collapse = view.collapse === 'stacks' ? 'dupes' : 'stacks')}>Stacks</button
-  >
-  <button
-    class="shrink-0 rounded border px-2 py-1 text-xs {hidingRejected()
-      ? 'border-red-800 bg-red-900 text-white'
-      : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
-    aria-pressed={hidingRejected()}
-    title="Hide rejected photos (H)"
-    onclick={toggleHideRejected}>Hide rejected</button
-  >
-
-  <span class="shrink-0 text-xs tabular-nums text-neutral-400">
-    {#if loading && !total}Loading…{:else}{total.toLocaleString()} {total === 1 ? 'photo' : 'photos'}{/if}
-  </span>
-
-  <button
-    class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
-    title="Go through the stacks that still have unflagged photos, in the current filters (R)"
-    onclick={() => (view.compare = { kind: 'review' })}>Review stacks</button
-  >
-  <button
-    class="shrink-0 rounded px-2.5 py-1 text-xs font-medium {picks
-      ? 'bg-emerald-600 text-black hover:bg-emerald-500'
-      : 'border border-neutral-700 text-neutral-500'}"
-    title="Copy the picked photos to a folder"
-    onclick={() => (view.exporting = true)}>Export{picks ? ` ${picks}` : ''}</button
-  >
+  <div class="h-5 w-px shrink-0 bg-neutral-800"></div>
 
   <button
     class="flex shrink-0 items-center gap-2 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
@@ -156,12 +114,4 @@
     onclick={() => (view.help = true)}>?</button
   >
 
-  {#if active}
-    <button
-      class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
-      onclick={clear}
-    >
-      Clear
-    </button>
-  {/if}
 </header>

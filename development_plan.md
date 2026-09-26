@@ -48,7 +48,7 @@ The tool's actual use case is **making a selection**: going through a library, m
 - captions, OCR, object detection
 - clustering, UMAP maps, outlier detection
 - aesthetic scores (the sharpness hint in §9.7 is the only quality measure)
-- preference learning or any model training
+- preference learning or any model training (now a planned candidate: §14.2)
 - manual tagging, named collections, star ratings
 - maps or reverse geocoding
 - multi-user or remote access
@@ -470,7 +470,7 @@ Editing this file and rerunning `riffle tag` is the whole workflow for changing 
 | GET | `/thumbs/{id}.jpg`, `/previews/{id}.jpg` | Static images |
 | GET | `/` | Built Svelte app |
 
-`<filters>` are shared by all these endpoints (`filters.py`): `tags=1,2` (AND), `date_from`/`date_to` (`YYYY-MM-DD`), repeated `camera=`/`lens=` (OR; empty value = unknown), `focal_min/max`, `aperture_min/max`, `iso_min/max`, repeated `orientation=` (`landscape`, `portrait`, `square`), `gps=true|false`, repeated `flag=` (`pick`, `reject`, `none`), repeated `exposure=` (`highlights`, `shadows`, `ok`), repeated `country=` / `region=` / `place=` (location keys) and `loc_source=` (`exif`, `visit`, `route`, `nearby`, `none`). Different filters combine with AND. `/api/tags` also returns the total numbers of picks and rejects.
+`<filters>` are shared by all these endpoints (`filters.py`): `tags=1,2` (AND), `exclude_tags=3,4` (none of them; excluded tags stay listed in `/api/tags` with `excluded: true` so they can be switched off), `date_from`/`date_to` (`YYYY-MM-DD`), repeated `camera=`/`lens=` (OR; empty value = unknown), `focal_min/max`, `aperture_min/max`, `iso_min/max`, repeated `orientation=` (`landscape`, `portrait`, `square`), `gps=true|false`, repeated `flag=` (`pick`, `reject`, `none`), repeated `exposure=` (`highlights`, `shadows`, `ok`), repeated `country=` / `region=` / `place=` (location keys) and `loc_source=` (`exif`, `visit`, `route`, `nearby`, `none`). Different filters combine with AND. `/api/tags` also returns the total numbers of picks and rejects.
 
 At startup the server loads the embedding matrix and the CLIP text encoder only; the image encoder is not needed at serve time (background indexing loads its own model). Tag filters on search are applied as a boolean mask over the matrix before ranking.
 
@@ -480,11 +480,15 @@ Mutating endpoints accept only JSON bodies, so other websites cannot trigger the
 
 A single page with no router; view state lives in a small Svelte store and is mirrored into the URL query string (`q`, `similar`, `tags`, the EXIF and flag filters, `group`, `collapse`, `photo`) so views can be bookmarked.
 
-- **Top bar:** search input (Enter runs text search), "similar to" chip, grouping (a select: None / Day / Month / Year / Place / Region / Country; browsing only, not search results), **Stacks** and **Hide rejected** toggles, result count, **Review stacks**, **Export (n picks)**, **Library** button (shows indexing progress), clear button.
-- **Left sidebar, filters:** flag (picked / rejected / unflagged), location (source, country, place), date range, camera, lens, focal length, aperture, ISO, orientation, GPS, with counts within the other active filters. A filter that cannot narrow the results (e.g. a single camera) is hidden unless in use. The camera name is EXIF Make + Model, with the make dropped when the model repeats it. **Reset** clears them.
-- **Left sidebar, tags:** one section per tag family, in vocabulary order, with counts within the current filter. Tags with no matching photos are hidden. Click a tag to filter, click again to remove. Filters combine with search.
-- **Overviews** (the **Calendar**/**Map** button next to Group, or `O`; mirrored in the URL): with a date grouping, a calendar of the year (month grids; days with photos show a cover and a count; year switcher); with a location grouping, a map with one cluster per place, region, or country (size by count, hover card with cover and dates). Clicking a day, month, year, or cluster opens that group in the grid (the existing jump). The map draws Natural Earth country outlines bundled via `world-atlas` (50m resolution, loaded lazily as a separate chunk) with d3-geo and d3-zoom: offline by design (principle 3; online tiles would also reveal the viewed areas to a tile server). Street-level detail was deliberately left out.
-- **Grid:** responsive thumbnail grid with infinite scroll and multi-select (§11.3). Picks have a green ✓, rejects are dimmed with a red ✕, stacks have a ▦ count badge that opens the compare view. When grouped: sticky section headers with the group's full count, only groups with matching photos, a **Jump to…** menu, and **Only this day/month/year** to turn a group into a date filter. Badges show RAW and duplicate count; search results show their score on hover.
+- **Top bar** (the app and its workflow): search input (Enter runs text search), "similar to" chip (with its own ✕), then the workflow in order: **Review stacks**, **Curate**, **Export (n picks)**; after a divider, **Library** (shows indexing progress) and help (**?**).
+- **Toolbar above the grid** (how the grid is shown): result count, grouping (a select: None / Day / Month / Year / Place / Region / Country / Folder; browsing only, not search results) with a **Grid | Calendar/Map** switch when the grouping has an overview, sort (Oldest / Newest first, Place A→Z / Z→A, File name A→Z / Z→A, and the taste sorts; a grouping keeps its groups together, so it allows the date sorts plus, with a location grouping, the place sorts and, with folders, the file-name sorts, which then order the groups by name and the photos within them), and a **Stacks** checkbox.
+- **Left sidebar, filters:** flag (picked / rejected / unflagged), location (source, country, place), date range, camera, lens, focal length, aperture, ISO, orientation, GPS, with counts within the other active filters. A filter that cannot narrow the results (e.g. a single camera) is hidden unless in use. The camera name is EXIF Make + Model, with the make dropped when the model repeats it.
+- **Left sidebar, sections:** every filter group and tag family is a collapsible section (Flag, Date taken, Camera, Lens, Exposure, Orientation, Location, Places; Subject, Scene, Look). Subject, Scene and Look start open, the rest closed; each section remembers its state (per browser). A closed section with an active filter shows how many are set. An active folder filter (from "Only this folder") shows as a chip.
+- **Folder grouping:** `group=folder` groups by parent folder (key: source path + folder, labelled "Source / sub / folder"; groups in path order, dates within), with a `folder=` filter for "Only this folder" (that folder only, not its subfolders). Sorting by file name uses the name without its folder (`name` / `-name`, case-insensitive); by place uses the place name (`place` / `-place`), photos without a location last either way.
+- **Left sidebar, top:** only when something narrows the view, a line "N active · **Clear all**" that clears the search, the included and excluded tags, and all filters (it replaced a Clear button in the top bar and a separate Reset for the filters).
+- **Left sidebar, tags:** one section per tag family, in vocabulary order, with counts within the current filter. Tags with no matching photos are hidden. Click a tag to filter (photos must have it), click again to remove. Hovering reveals a **−** to exclude the tag instead (photos must not have it; shown crossed out in red; Alt+click does the same). Filters combine with search.
+- **Overviews** (the **Grid | Calendar/Map** switch next to Group, or `O`; mirrored in the URL): with a date grouping, a calendar of the year (month grids; days with photos show a cover and a count; year switcher); with a location grouping, a map with one cluster per place, region, or country (size by count, hover card with cover and dates). Clicking a day, month, year, or cluster opens that group in the grid (the existing jump). The map draws Natural Earth country outlines bundled via `world-atlas` (50m resolution, loaded lazily as a separate chunk) with d3-geo and d3-zoom: offline by design (principle 3; online tiles would also reveal the viewed areas to a tile server). Street-level detail was deliberately left out.
+- **Grid:** responsive thumbnail grid with infinite scroll and multi-select (§11.3). A right-click menu on a photo offers the photo view's actions without opening it: Open, Pick / Reject / Unflag (for the whole selection when the photo is part of it, like a file manager; otherwise it selects just that photo), Compare the selection or the photo's stack, Find similar, Show day / place, Copy path, and the photo's tags as chips (click includes, Alt+click excludes). Its shortcuts (P / X / U, Enter, C) work while it is open; Esc, a click elsewhere, or scrolling closes it. Picks have a green ✓, rejects are dimmed with a red ✕, stacks have a ▦ count badge that opens the compare view. When grouped: sticky section headers with the group's full count, only groups with matching photos, a **Jump to…** menu, and **Only this day/month/year** to turn a group into a date filter. Badges show RAW and duplicate count; search results show their score on hover.
 - **Detail panel:** opens on click. It shows a large preview, capture date, camera and lens, exposure (focal length, aperture, shutter speed, ISO), source path, RAW path, tags with probabilities (click to filter), duplicates, and GPS coordinates as text. Doubles as the loupe for culling: **Pick** / **Reject** buttons, P/X/U keys, and "Next photo after flagging". Shows the location with its source and accuracy. Buttons: **Stack (n)**, **Find similar**, **Show place**, **Show day** (switches to the grouped grid, loads as far as needed, scrolls to the photo's group and highlights the photo), **Copy path**, **Previous/Next**.
 - **Library dialog:** configured folders with photo counts and **Remove**; a server-side folder browser with a path box and **Add this folder and index**; **Index now** with a progress bar and step log; a low-key **Flags** section with the pick/reject counts and **Unflag all photos** / **Unflag photos in the current filters** (confirmed, undoable). Opens automatically when no folders are configured; an empty library shows an "Add a photo folder" prompt.
 - **Help:** a short in-app guide (the **?** button or key) with the workflow in four steps (add photos, find, cull, export) and all keyboard shortcuts.
@@ -496,7 +500,7 @@ Tailwind only; no component library.
 
 The workflow the tool exists for: mark the keepers and the rejects quickly, then copy the keepers out.
 
-- **Flags:** one global state per photo, pick / reject / unflagged (no star ratings, no named collections; §14). Flag changes apply at once on screen (optimistic), are saved through `/api/flags`, and every change can be undone with Ctrl+Z (the client keeps the previous flags the API returns). With a flag filter active, e.g. **Hide rejected**, rejected photos vanish immediately and the selection moves on to the next photo.
+- **Flags:** one global state per photo, pick / reject / unflagged (no star ratings, no named collections; §14). Flag changes apply at once on screen (optimistic), are saved through `/api/flags`, and every change can be undone with Ctrl+Z (the client keeps the previous flags the API returns). With a flag filter active, e.g. Picked + Unflagged (the `H` shortcut; a separate "Hide rejected" button was dropped as a duplicate of the Flag filter), rejected photos vanish immediately and the selection moves on to the next photo.
 - **Grid multi-select:** click selects, Ctrl/Cmd-click toggles, Shift-click selects a range, dragging draws a selection box, arrow keys move (Shift extends), Ctrl+A selects the whole listing (not only the loaded pages). A floating bar offers **Pick**, **Reject**, **Unflag**, and **Compare** for the selection; P / X / U do the same. Double-click or Enter opens the loupe.
 - **Loupe:** the detail panel; P / X / U flag the photo and, by default, go straight to the next one.
 - **Stacks and compare:** **Stacks** collapses each burst into one tile (showing the pick once there is one). The compare view shows a stack, a selection, or, with **Review stacks**, every stack in the current filters that still has an unflagged photo, one after another. Photos appear side by side with their flag, a relative sharpness bar (the sharpest is marked), clipping warnings, and the suggested keeper (★; A keeps it). Click or 1–9 marks the keeper(s), Enter picks them and rejects the rest, Shift+X rejects the whole stack (so does Enter pressed twice with nothing kept: the first press only asks, so a stray Enter never rejects a burst), Shift+U unflags it again, Z zooms all photos to 2.5× at the same spot to compare focus.
@@ -534,16 +538,18 @@ Short and qualitative, recorded in a one-page note:
 
 In rough order of expected value:
 
-1. Manual tag add/remove, stored separately from zero-shot tags (in the selections DB, like flags).
-2. Named collections (e.g. "Print", "Photo book") on top of the global pick/reject, each with its own export; and optionally star ratings for ranking the picks.
-3. Finer location "spots" within a town (clustering visit positions, e.g. within 200 m), labelled with the town and, where the timeline marks them, "Home"/"Work" from its frequent places (§14.1).
-4. Comparing models on the §13 queries (the default is now ViT-L-14 DFN-2B; SigLIP SO400M or a multilingual model for Chinese queries are the next candidates; SigLIP needs `tags.softmax_scale` and the stack threshold retuned).
-5. Image-prototype tags built from a few example photos, for concepts that text describes badly.
-6. Per-camera clock offset correction (date and camera filters are done). Location matching depends on it: a camera that is 10 minutes off places photos along the wrong part of a route.
-7. A 2D embedding map (UMAP) for exploration. (The location map overview is done; street-level detail, e.g. via a downloaded PMTiles extract, stays out of scope unless needed.)
-8. Captions and OCR through a local vision-language model.
-9. **Distribution.** The package is pure Python with the built UI inside, so one `py3-none-any` wheel serves every platform: publish to PyPI (`pipx install riffle`, then `riffle`), built by a single CI job (tests, `npm run build`, wheel). Standalone binaries (PyInstaller, a Linux/Windows/macOS CI matrix) would be CPU-only and ~0.5–1 GB because of PyTorch, unsigned unless paid for (Gatekeeper/SmartScreen warnings), and download the model on first run; moving inference to ONNX Runtime (exported CLIP) would cut them to ~100–200 MB and give GPU via DirectML/CoreML. `multiprocessing.freeze_support()` is already in place for frozen builds.
-10. Writing flags to XMP sidecars in the export folder (never next to the originals), so Lightroom or darktable see the selection.
+1. ~~**Personal taste model**~~: done (§14.2): "likely keepers / rejects first" sorts learned from the user's flags, also used by Curate. Still open: a "more like my picks" search.
+2. ~~**Curate: automatic photo book / exhibition drafts**~~: done (§14.3). Still open: saving a draft as a named collection (item 4), and the style scores as grid sorts or filters.
+3. Manual tag add/remove, stored separately from zero-shot tags (in the selections DB, like flags).
+4. Named collections (e.g. "Print", "Photo book") on top of the global pick/reject, each with its own export; and optionally star ratings for ranking the picks.
+5. Finer location "spots" within a town (clustering visit positions, e.g. within 200 m), labelled with the town and, where the timeline marks them, "Home"/"Work" from its frequent places (§14.1).
+6. Comparing models on the §13 queries (the default is now ViT-L-14 DFN-2B; SigLIP SO400M or a multilingual model for Chinese queries are the next candidates; SigLIP needs `tags.softmax_scale` and the stack threshold retuned).
+7. Image-prototype tags built from a few example photos, for concepts that text describes badly.
+8. Per-camera clock offset correction (date and camera filters are done). Location matching depends on it: a camera that is 10 minutes off places photos along the wrong part of a route.
+9. A 2D embedding map (UMAP) for exploration. (The location map overview is done; street-level detail, e.g. via a downloaded PMTiles extract, stays out of scope unless needed.)
+10. Captions and OCR through a local vision-language model.
+11. **Distribution.** The package is pure Python with the built UI inside, so one `py3-none-any` wheel serves every platform: publish to PyPI (`pipx install riffle`, then `riffle`), built by a single CI job (tests, `npm run build`, wheel). Standalone binaries (PyInstaller, a Linux/Windows/macOS CI matrix) would be CPU-only and ~0.5–1 GB because of PyTorch, unsigned unless paid for (Gatekeeper/SmartScreen warnings), and download the model on first run; moving inference to ONNX Runtime (exported CLIP) would cut them to ~100–200 MB and give GPU via DirectML/CoreML. `multiprocessing.freeze_support()` is already in place for frozen builds.
+12. Writing flags to XMP sidecars in the export folder (never next to the originals), so Lightroom or darktable see the selection.
 
 ### 14.1 Location from phone location history (implemented; design notes)
 
@@ -579,6 +585,94 @@ Implemented as described in §9.8 and §11.3, with the user's choices: the histo
 - ~~Where should imported history files live?~~ Referenced in place; a newer export replaces the file or is added as another one (files are merged).
 - How to handle several people's phones or a missing phone for part of a trip. (Still open.)
 - Finer spots within a town, and "Home"/"Work" labels from the timeline's frequent places (§14 item 3).
+
+### 14.2 Personal taste model (implemented)
+
+**As built** (`taste.py`, 26 Sep 2026), on the first user's fully flagged library (1,889 photos: 61 picks, 1,828 rejects; strict, rejecting everything not display-worthy, including snapshots and listing photos):
+
+- **Per photo it did not work**: a linear model on the embeddings reached a cross-validated AUC of only 0.74 (the untrained CLIP "good photo" score: 0.73), did not transfer between the user's two libraries, and was worse than sharpness at finding the keeper within a stack. The cause: ~250 rejects are near-identical siblings of a pick, i.e. the same content labelled both ways.
+- **Per scene it works**: one sample per stack or single photo (mean embedding; keeper scene = contains a pick or an export; rejected scene = only rejects; unreviewed scenes skipped): 943 scenes, 60 keepers. Balanced L2 logistic regression (L-BFGS, C = 1): cross-validated AUC 0.82 (untrained CLIP score 0.64, random 0.54); reviewing the top 20% of scenes finds 68% of the keeper scenes, the top 30% 77%. Trained on one library, it still ranks the other (AUC 0.78 / 0.66). "Similarity to my picks" (nearest neighbours) was clearly worse (0.68).
+- **As a filter it would be unsafe**: the bottom 30% still held 3 of the 60 keeper scenes, so "likely rejects" is only a sort order and never flags anything (the guardrail below was right).
+- **Choosing the frame within a stack stays with sharpness and the suggested keeper**: the scene model does not address it, so it is not added to `keeper_scores`.
+- **Training on request**: the user presses **Calibrate** (Library → Your taste; `POST /api/taste/calibrate`, ~1.1 s including the cross-validation). The model is saved next to the embeddings (`<model_id>.taste.npz`, weights plus status; derived data) and loaded at startup (~7 ms); scores for new photos are computed from it without retraining. An earlier version retrained in the background after every flag change; an explicit button was preferred as more predictable. `GET /api/taste` reports whether it is on and why not, the cross-validated figures, and `changed_since` (flags and exports changed since calibrating; the Library suggests recalibrating from 25 on); `sort=taste` / `-taste` on the listing; items carry `taste` (0..1). It is offered only with ≥ 20 keeper scenes, ≥ 50 rejected scenes, and a cross-validated AUC ≥ 0.65.
+- **UI**: Sort → "Likely keepers first" / "Likely rejects first" (also switches on Stacks, since scenes are scored as a whole: with Stacks the top fifth of tiles held 55 of 60 picks in-sample, without it 38 of 53), a "Your taste" line in the photo view, and a status section in the Library.
+
+**Original design notes:**
+
+**Idea.** Culling produces labels as a side effect: every pick is a positive example, every reject a negative one, and an export an even stronger positive. With a CLIP embedding already stored for every photo, a small model can learn what this user keeps (subjects, light, composition, style), which the generic quality hints (sharpness, clipping, the CLIP "good photo" score) cannot. This was out of scope for the MVP ("preference learning"); it becomes worthwhile now that flags exist.
+
+**Training data** (all from `selections.sqlite3` plus the stored embeddings; nothing new to collect):
+
+- Standalone photos (not in a stack): pick → positive, reject → negative, exported → positive with extra weight.
+- Stacks need care. Rejecting 11 of 12 near-identical frames means "worse than the keeper", not "a bad photo"; treating those rejects as negatives would teach the model to dislike exactly the subjects the user shoots most. So a culled stack contributes pairwise comparisons (keeper preferred over each rejected frame), not absolute labels. A stack rejected as a whole is a genuine negative.
+- Unflagged photos are unlabelled, not negatives.
+
+**Model.** A linear model on the embeddings (logistic regression for the absolute labels, plus a pairwise ranking term for the stack comparisons, i.e. differences of embeddings), in plain NumPy with L2 regularisation: no new dependency, no GPU, trained in milliseconds. It is retrained whenever flags change (or on the next index), and per CLIP model, since the embedding spaces differ. Optionally the existing hints (relative sharpness, clipping) as extra features. Stored as a small derived file next to the embeddings (`<model_id>.taste.npy`), rebuildable from the flags.
+
+**Uses** (always suggestions, never automatic flags):
+
+1. A sort order for unflagged photos, "likely keepers first", so the promising ones are reviewed first and culling can stop earlier.
+2. "Likely rejects", to confirm obvious misses in batches (the user still presses X).
+3. A personal term in the suggested keeper for stacks and in Curate's quality score (§14.3), next to sharpness, exposure, and the CLIP quality score (§9.7).
+4. Possibly later: "more like my picks" as a search seed (the model's weight vector as a query).
+
+**Guardrails.**
+
+- Enabled only with enough labels (on the order of 100+ flags, including both picks and rejects) and only while it measurably helps: held-out accuracy / ranking quality on the user's own flags (cross-validation), shown in the UI. Below a useful level it stays off and says why.
+- A sort order or hint, never a filter that hides photos: otherwise the user only sees what the model already likes and it reinforces itself.
+- It learns taste, not technical quality, so the sharpness and clipping hints keep their place.
+- Local only, like everything else; the model is derived data and can be deleted.
+
+**Open questions.** How many labels are needed in practice on this user's libraries; whether taste transfers between very different trips or should be weighted towards recent culling sessions; whether a small non-linear model beats the linear one enough to justify it.
+
+### 14.3 Curate: photo book / exhibition drafts (implemented)
+
+**As built** (`curate.py`, `Curate.svelte`, 26 Sep 2026):
+
+- **Candidates**: the photos within the filters, picks and unflagged by default (a switch includes rejects; a locked reject always stays). Each stack or duplicate group enters once: its locked photo, else its pick, else its best frame (CLIP quality, exposure, sharpness).
+- **Quality `q`**: rank percentiles within the candidates: taste 0.45 (when calibrated; otherwise its weight goes to CLIP quality), CLIP quality 0.25, exposure 0.10; bonuses pick +0.15, exported +0.05. Styles add `0.6 · mean(wₖ · (2·pctₖ − 1))` over the active sliders.
+- **Selection**: greedy MMR, `(1 − v)·q − v·max redundancy`, with redundancy = weighted mean of content (CLIP cosine rescaled 0.5 → 0, 0.95 → 1), time closeness `exp(−|Δt| / 3 h)` × time spread, and place closeness `exp(−d / 300 m)` × place spread × position reliability (EXIF/visit 1, route estimates by `accuracy_m`). Locked photos first, removed ones excluded. Deterministic. Instead of the coverage quotas sketched below, time and place act through the redundancy term; on the first real trip this already covered every day.
+- **Styles** (CLIP prompt pairs, `styles:` in `vocabulary.yaml`, score = embedding · (mean towards − mean away)): Scenic, Moody, Calm, Colourful, Golden light, People, Abstract & details. Each was checked on the first real library with top/bottom-12 contact sheets and separates visibly. "Breathtaking" became Scenic; "Artistic" is what CLIP reads as abstract close-ups and details, so it is labelled that way.
+- **API**: `GET /api/styles`; `POST /api/curate?<filters>` `{n, variety, time_spread, place_spread, styles, include_rejects, locked, removed}` → items in reading order (with `q`, `reason`, `day`, `place`, `similar`, `locked`), `cover` (best landscape photo), `sections` (day/place), `candidates`, `used`; `POST /api/curate/alternatives` (other frames of the stack first, then `0.5 · redundancy + 0.5 · q`); `photo_ids` on `POST /api/export` exports exactly a set.
+- **UI**: full-screen view with sliders (Photos 2–60, Best ↔ Most varied, Spread over time, Spread over places when there are locations, a collapsible Style group of −1..+1 sliders, Include rejected), a book-like layout (cover, day/place sections) with Lock / Alternatives / Remove per photo and the reason, **Mark as picks** (undoable) and **Export** (the export dialog in a "these N photos" mode). Removing never changes flags. The draft is remembered per filter set in `localStorage`.
+- **Measured** on the first real library (1,926 photos, 61 picks, taste calibrated): 40–300 ms per draft (the first request with a style encodes its prompts). Sweden trip, defaults: 30 candidates, 12 photos over all 3 days and 5 places (variety 0.8: 7 places); with rejects included (474 candidates) and Moody +1, the draft took in an alley, the underground and a crow at a café table, and kept 10 picks.
+
+**Original design notes:**
+
+**Idea.** An easy, one-click way from "all my photos of this trip" to a first draft of a small, presentable selection: high quality, but also varied (not twelve versions of the best scene, nor twelve photos from the same spot). The user narrows the library with the usual filters (dates, place, tags, "not rejected"), chooses **Curate** and a size (e.g. 12, 24, 48), and gets a dedicated view with the result, ready to refine and export. No training; everything uses signals Riffle already has, and it runs in milliseconds.
+
+**Candidates.** Every photo within the current filters except rejects. Excluded tags are the natural way to shape it (e.g. no "screens and phones", no "signs"), next to dates and places. Each stack and duplicate group enters once, represented by its suggested keeper (§9.7), so a burst cannot flood the selection.
+
+**Quality score** per candidate (weights to tune on real libraries):
+
+- the user's own judgement first: picked (strong bonus), exported before (bonus);
+- the CLIP quality score ("good photo" / "sharp photo" prompt pairs, §9.7), normalised within the candidates;
+- a penalty for heavy clipping;
+- later, the personal taste model (§14.2), which is what makes uncurated trips come out well.
+
+**Diversity and coverage.**
+
+- Greedy selection by maximal marginal relevance on the CLIP embeddings: each next photo maximises `λ · quality − (1 − λ) · (max similarity to the photos already chosen)`. A slider sets λ ("best photos" ↔ "most varied").
+- Coverage quotas so the selection spans the trip: slots spread over the days and places in proportion to how much was shot there (with a minimum of one for any day/place that has a strong candidate), so one busy afternoon cannot dominate. Tags can add subject variety (people, landscape, food, architecture).
+- **Geographic diversity from the coordinates** (`photo_locations`, §9.8: camera GPS or the phone timeline). Place names are too coarse for this: a whole trip can fall into one town (the first real library lies within 1.8 km of one point). The actual positions separate the harbour from the old town or the viewpoint. Two ways to use them, possibly combined:
+  - in the redundancy term: two photos count as more similar when they were also taken close together, e.g. `sim = α · clip_sim + (1 − α) · exp(−distance / d₀)` with `d₀` of a few hundred metres, so the selection moves on to other spots;
+  - as coverage buckets: cluster the positions into spots (a grid or distance-based clustering, ~200 m; the same idea as the "spots" candidate, item 5) and spread the slots over them like over days.
+
+  Positions are weighted by how reliable they are: camera GPS and timeline visits fully, route estimates with their accuracy (`accuracy_m`), so an uncertain position cannot force or block a choice. Photos without a location fall back to time and content only.
+- Alternative worth comparing: cluster the candidates into N groups (k-medoids on embeddings, optionally on embeddings plus position) and take the best of each. MMR is simpler, incremental, and supports locking.
+
+**Sequence and view.** Chronological, grouped by day or place (headings from the date and location groups), with a strong landscape-format photo opening each part and one as the cover. A calm, presentation-style layout (large images, generous spacing) rather than the culling grid. Per photo:
+
+- **Swap**: the next-best alternatives for that slot (similar content and moment, not yet chosen);
+- **Remove**: the next candidate moves up;
+- **Lock**: keep it when regenerating with another size or diversity setting;
+- a short reason, e.g. "best of 14 similar shots · 2 Apr, Visby".
+
+Actions: **Mark as picks**, **Export** (the existing dialog, for exactly this set, including location and "only new"), and **Save as collection** once named collections exist (item 4), so a photo book does not overwrite the global picks. Regenerating is deterministic for the same inputs, so a draft can be reproduced.
+
+**Later.** Layout-aware photo books (spreads, balancing portrait and landscape, a target page count); exhibition-style sequencing by colour or mood; printing-oriented export (a size and colour profile per target).
+
+**Open questions.** Good default weights between the user's picks and the generic quality score; how strongly to enforce day/place coverage for trips with very uneven shooting; whether users want one global "curated" state or always a named collection.
 
 ## 15. Decisions before coding (resolved)
 
