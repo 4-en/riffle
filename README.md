@@ -9,6 +9,7 @@ A local tool for finding the best photos in a large archive and exporting them f
 ## Features
 
 - **Culling:** pick or reject photos one at a time (loupe with auto-advance) or many at once (multi-select), with undo
+- **Your taste:** once you have flagged enough, Riffle learns what you tend to keep and can sort by it ("likely keepers first" / "likely rejects first"); it only orders photos, it never flags anything
 - **Stacks:** bursts and near-identical shots are grouped automatically; compare them side by side with a sharpness hint, exposure clipping, and a suggested keeper
 - **Export:** copy the picks to a new folder as images, images + RAWs, or RAWs only; originals are never touched
 - Text search ("red lanterns at night") and "find similar" from any photo
@@ -80,6 +81,8 @@ To start over, the compare view's **Unflag all** resets the stack you're looking
 With a location history, the export can also **add the location to photos without GPS** (on by default). It goes into the exported JPEG and PNG copies only, appended to their EXIF so nothing already in the file moves or changes (image data, MakerNote, embedded thumbnail). RAW and other files are never modified; they get an `.xmp` sidecar with the position instead, which Lightroom, Capture One, and darktable read.
 
 Riffle remembers which photos you have exported: they get a small ↗ badge (alongside their pick or reject flag), the **Exported** filter shows them or hides them, and the photo view says when and where they last went. In the export dialog, **Only photos not exported before** exports just the picks that are new since last time. The history lives with your flags in `selections.sqlite3`; **Library → Forget export history** clears it (the exported files are not touched).
+
+**Your taste.** Your picks and rejects teach Riffle what you tend to keep: press **Library → Your taste → Calibrate** (a second or two). Once there are enough flags (20 keeper scenes and 50 rejected ones), and the model clearly helps when checked on photos it did not learn from, **Sort → Likely keepers first** shows the promising photos first, and **Likely rejects first** helps clear out misses. It judges scenes (a burst counts once), so choosing it also turns on **Stacks**; which frame of a burst to keep is still up to the sharpness hint and the suggested keeper. **Library → Your taste** shows how well it works for you and how many flags changed since the last calibration; recalibrate when that grows. The calibration is saved (it is derived data, in the cache folder), and it never flags anything on its own.
 
 Exports never overwrite anything: identical files already in the destination are skipped (so an interrupted export can simply be run again), and other name clashes get a `-1` suffix, with an image and its RAW keeping matching names. Each export writes an `export-manifest.csv`. The destination can't be inside a photo folder, where the copies would be indexed again.
 

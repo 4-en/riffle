@@ -20,6 +20,7 @@ export const view = $state({
   filters: emptyFilters(),
   group: '', // '' | 'day' | 'month' | 'year' | 'place' | 'region' | 'country' (browsing only, not search)
   collapse: 'dupes', // 'dupes' | 'stacks': one tile per duplicate group or per stack
+  sort: 'taken_at', // 'taken_at' | '-taken_at' | 'taste' (likely keepers first) | '-taste' (likely rejects first)
   overview: false, // calendar (date grouping) or map (location grouping) instead of the grid
   compare: null, // open compare view: {kind: 'stack', id} | {kind: 'ids', ids} | {kind: 'review'} (not in the URL)
   exporting: false, // export dialog open (not in the URL)
@@ -39,6 +40,7 @@ export function readUrl() {
   view.raws = p.has('raws');
   view.group = GROUPS.includes(p.get('group')) ? p.get('group') : '';
   view.collapse = p.get('collapse') === 'stacks' ? 'stacks' : 'dupes';
+  view.sort = SORTS.includes(p.get('sort')) ? p.get('sort') : 'taken_at';
   view.overview = p.has('overview') && GROUPS.includes(view.group);
   const f = emptyFilters();
   for (const k of FILTER_ARRAYS) f[k] = p.getAll(k);
@@ -56,6 +58,7 @@ export function urlFor(v) {
   for (const k of FILTER_SCALARS) if (v.filters[k] !== '') p.set(k, v.filters[k]);
   if (v.group) p.set('group', v.group);
   if (v.collapse === 'stacks') p.set('collapse', 'stacks');
+  if (v.sort !== 'taken_at') p.set('sort', v.sort);
   if (v.overview) p.set('overview', '');
   if (v.photo) p.set('photo', v.photo);
   if (v.raws) p.set('raws', '');
@@ -64,6 +67,9 @@ export function urlFor(v) {
 }
 
 // ---- date groups -----------------------------------------------------------
+
+export const SORTS = ['taken_at', '-taken_at', 'taste', '-taste'];
+export const isTasteSort = (sort) => sort === 'taste' || sort === '-taste';
 
 export const DATE_GROUPS = ['day', 'month', 'year'];
 export const LOCATION_GROUPS = ['place', 'region', 'country'];

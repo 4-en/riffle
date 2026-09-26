@@ -535,7 +535,7 @@ Short and qualitative, recorded in a one-page note:
 
 In rough order of expected value:
 
-1. **Personal taste model** (see §14.2): learn from the user's own picks, rejects, and exports which photos they tend to keep, and use it to order culling ("likely keepers first", "likely rejects") and to sharpen the suggested keeper. Build once a few hundred photos are culled, so it can be validated on real data.
+1. ~~**Personal taste model**~~: done (§14.2): "likely keepers / rejects first" sorts learned from the user's flags. Still open from its design: using it in Curate (§14.3) and as a "more like my picks" search.
 2. **Curate: automatic photo book / exhibition drafts** (see §14.3): from the current filters (a trip, a timeframe, a place), pick a small set (e.g. 12/24/48) that is both high quality and varied (in content, time, and place, using the photo coordinates), and present it in its own view, ready to refine and export. Best built together with named collections (item 4), and it improves once the taste model (item 1) exists.
 3. Manual tag add/remove, stored separately from zero-shot tags (in the selections DB, like flags).
 4. Named collections (e.g. "Print", "Photo book") on top of the global pick/reject, each with its own export; and optionally star ratings for ranking the picks.
@@ -583,7 +583,18 @@ Implemented as described in §9.8 and §11.3, with the user's choices: the histo
 - How to handle several people's phones or a missing phone for part of a trip. (Still open.)
 - Finer spots within a town, and "Home"/"Work" labels from the timeline's frequent places (§14 item 3).
 
-### 14.2 Personal taste model (planned)
+### 14.2 Personal taste model (implemented)
+
+**As built** (`taste.py`, 26 Sep 2026), on the first user's fully flagged library (1,889 photos: 61 picks, 1,828 rejects; strict, rejecting everything not display-worthy, including snapshots and listing photos):
+
+- **Per photo it did not work**: a linear model on the embeddings reached a cross-validated AUC of only 0.74 (the untrained CLIP "good photo" score: 0.73), did not transfer between the user's two libraries, and was worse than sharpness at finding the keeper within a stack. The cause: ~250 rejects are near-identical siblings of a pick, i.e. the same content labelled both ways.
+- **Per scene it works**: one sample per stack or single photo (mean embedding; keeper scene = contains a pick or an export; rejected scene = only rejects; unreviewed scenes skipped): 943 scenes, 60 keepers. Balanced L2 logistic regression (L-BFGS, C = 1): cross-validated AUC 0.82 (untrained CLIP score 0.64, random 0.54); reviewing the top 20% of scenes finds 68% of the keeper scenes, the top 30% 77%. Trained on one library, it still ranks the other (AUC 0.78 / 0.66). "Similarity to my picks" (nearest neighbours) was clearly worse (0.68).
+- **As a filter it would be unsafe**: the bottom 30% still held 3 of the 60 keeper scenes, so "likely rejects" is only a sort order and never flags anything (the guardrail below was right).
+- **Choosing the frame within a stack stays with sharpness and the suggested keeper**: the scene model does not address it, so it is not added to `keeper_scores`.
+- **Training on request**: the user presses **Calibrate** (Library → Your taste; `POST /api/taste/calibrate`, ~1.1 s including the cross-validation). The model is saved next to the embeddings (`<model_id>.taste.npz`, weights plus status; derived data) and loaded at startup (~7 ms); scores for new photos are computed from it without retraining. An earlier version retrained in the background after every flag change; an explicit button was preferred as more predictable. `GET /api/taste` reports whether it is on and why not, the cross-validated figures, and `changed_since` (flags and exports changed since calibrating; the Library suggests recalibrating from 25 on); `sort=taste` / `-taste` on the listing; items carry `taste` (0..1). It is offered only with ≥ 20 keeper scenes, ≥ 50 rejected scenes, and a cross-validated AUC ≥ 0.65.
+- **UI**: Sort → "Likely keepers first" / "Likely rejects first" (also switches on Stacks, since scenes are scored as a whole: with Stacks the top fifth of tiles held 55 of 60 picks in-sample, without it 38 of 53), a "Your taste" line in the photo view, and a status section in the Library.
+
+**Original design notes:**
 
 **Idea.** Culling produces labels as a side effect: every pick is a positive example, every reject a negative one, and an export an even stronger positive. With a CLIP embedding already stored for every photo, a small model can learn what this user keeps (subjects, light, composition, style), which the generic quality hints (sharpness, clipping, the CLIP "good photo" score) cannot. This was out of scope for the MVP ("preference learning"); it becomes worthwhile now that flags exist.
 

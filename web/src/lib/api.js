@@ -28,7 +28,9 @@ export function fetchResults(view, offset, limit) {
   const common = { ...filterParams(view), collapse: view.collapse, offset, limit };
   if (view.similar) return get(`/api/search/similar/${view.similar}`, common);
   if (view.q) return get('/api/search/text', { ...common, q: view.q });
-  return get('/api/photos', { ...common, group: view.group });
+  // Taste sorts do not apply to grouped views (groups are in date / trip order).
+  const sort = view.group && (view.sort === 'taste' || view.sort === '-taste') ? 'taken_at' : view.sort;
+  return get('/api/photos', { ...common, group: view.group, sort });
 }
 
 /** Tags with counts within the current filter; tags no matching photo carries are omitted. */
@@ -83,6 +85,11 @@ export function postResetFlags(view, scope) {
 export const fetchLocationHistory = () => get('/api/location-history');
 export const addLocationHistory = (path) => send('POST', '/api/location-history', { path });
 export const removeLocationHistory = (path) => send('DELETE', '/api/location-history', { path });
+
+/** The taste model's status: {enabled, reason, keeper_scenes, reject_scenes, auc, top20_recall, training}. */
+export const fetchTaste = () => get('/api/taste');
+/** Learn from the current flags now; resolves to the new status. */
+export const calibrateTaste = () => send('POST', '/api/taste/calibrate');
 
 export const fetchSources = () => get('/api/sources');
 export const addSource = (path) => send('POST', '/api/sources', { path });

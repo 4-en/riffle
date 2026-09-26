@@ -102,6 +102,53 @@ def require_json(request: Request) -> None:
         raise HTTPException(415, "expected application/json")
 
 
+class TasteStore:
+    """The taste model (taste.py): trained only when the user calibrates it, saved
+    next to the embeddings, loaded at startup. Scores for the indexed photos are
+    recomputed (cheaply, without retraining) when the embeddings change."""
+
+    def __init__(self, cfg: Config):
+        from . import taste
+
+        self.cfg = cfg
+        self.path = cfg.embeddings_dir / f"{cfg.model.model_id}.taste.npz"
+        self.lock = threading.Lock()
+        self.model = taste.TasteModel.load(self.path)
+        self.scores: dict[int, float] = {}
+        self.scored_stamp = None
+
+    def _refresh_scores(self, index: Index) -> None:
+        if self.scored_stamp == index.stamp:
+            return
+        scores = {}
+        if self.model and self.model.enabled and self.model.w is not None and index.E.size:
+            if index.E.shape[1] == len(self.model.w):
+                scores = dict(zip((int(i) for i in index.ids), self.model.score(index.E).tolist()))
+        self.scores, self.scored_stamp = scores, index.stamp
+
+    def calibrate(self, index: Index):
+        from . import taste
+
+        conn = db.connect_readonly(self.cfg.db_path, self.cfg.selections_path)
+        try:
+            model = taste.train(conn, index.E, index.ids)
+        finally:
+            conn.close()
+        model.save(self.path)
+        with self.lock:
+            self.model, self.scored_stamp = model, None
+            self._refresh_scores(index)
+        return model
+
+    def current(self, index: Index):
+        with self.lock:
+            self._refresh_scores(index)
+            return self.model
+
+    def score_of(self, photo_id: int) -> float | None:
+        return self.scores.get(photo_id)
+
+
 @dataclass
 class AutoExit:
     """Stop the server once no browser tab is connected any more (the one-click
@@ -126,6 +173,7 @@ def create_app(
     # stopping: the server is shutting down, so the event streams should end now.
     state: dict = {"encoder": text_encoder, "clients": 0, "seen_client": False, "stopping": False}
     job = index_job(cfg, run=index_runner)
+    taste_store = TasteStore(cfg)
     export_job = BackgroundJob(cfg, run_export)
 
     @asynccontextmanager
@@ -215,6 +263,7 @@ def create_app(
                 "clip_shadows": r["clip_shadows"],
                 "flag": r["flag"],
                 "exported": bool(r["exported"]),
+                "taste": taste_store.score_of(r["id"]),
                 "thumb": f"/thumbs/{r['id']}.jpg",
             }
             if scores is not None:
@@ -305,9 +354,12 @@ def create_app(
     ):
         """Paged listing. With ``group`` (day, month, year) photos come in date
         order, each item carries its group key ("" = undated, last), and
-        ``groups`` lists every non-empty group of the filtered set with its count."""
+        ``groups`` lists every non-empty group of the filtered set with its count.
+        ``sort=taste`` / ``-taste``: likely keepers / likely rejects first (taste model)."""
         if group and sort not in ("taken_at", "-taken_at"):
             sort = "taken_at"  # groups must be contiguous
+        if sort in ("taste", "-taste"):
+            return taste_listing(flt, collapse_mode(collapse, dupes), sort, offset, limit, conn)
         cte, shown, order, params = listing(flt, collapse_mode(collapse, dupes), sort, group)
         key = GROUP_KEYS[group] if group else "NULL"
         total = conn.execute(f"{cte} SELECT COUNT(*) {shown}", params).fetchone()[0]
@@ -328,6 +380,19 @@ def create_app(
                 item["group"] = keys[item["id"]]
             result["groups"] = group_summary(conn, cte, shown, params, group, direction)
         return result
+
+    def taste_listing(flt, collapse, sort, offset, limit, conn) -> dict:
+        model = taste_store.current(get_index())
+        if model is None or not model.enabled:
+            raise HTTPException(
+                409, model.reason if model else "Not calibrated yet: Library → Your taste → Calibrate."
+            )
+        cte, shown, order, params = listing(flt, collapse, "taken_at", None)
+        ids = [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY {order}", params)]
+        sign = -1.0 if sort == "taste" else 1.0
+        missing = 2.0  # photos without an embedding go last either way
+        ids.sort(key=lambda i: sign * s if (s := taste_store.score_of(i)) is not None else missing)
+        return {"total": len(ids), "items": items_for(conn, ids[offset : offset + limit])}
 
     def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "") -> list[dict]:
         """Every non-empty group of the listing, in display order, with its count,
@@ -434,6 +499,7 @@ def create_app(
                 "country_key": cc,
             }
         photo["export"] = selections.export_info(cfg.selections_path, r["sha256"]) if r["sha256"] else None
+        photo["taste"] = taste_store.score_of(photo_id)
         photo["flag"] = conn.execute(
             f"SELECT {FLAG_EXPR} FROM photos p WHERE p.id = ?", (photo_id,)
         ).fetchone()[0]
@@ -585,6 +651,7 @@ def create_app(
         conn=Depends(get_conn),
     ):
         """Every id of the listing, in order (for select-all)."""
+        sort = "taken_at" if sort in ("taste", "-taste") else sort
         cte, shown, order, params = listing(flt, collapse_mode(collapse, dupes), sort, None)
         return {"ids": [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY {order}", params)]}
 
@@ -757,6 +824,26 @@ def create_app(
         return StreamingResponse(
             stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
         )
+
+    def taste_summary(conn, model) -> dict:
+        """The model's status plus how many flags / exports changed since calibrating."""
+        if model is None:
+            return {"enabled": False, "calibrated": False, "reason": "Not calibrated yet.", "changed_since": None}
+        since = model.calibrated_at or 0
+        changed = conn.execute("SELECT COUNT(*) FROM sel.flags WHERE updated_at > ?", (since,)).fetchone()[0]
+        changed += conn.execute("SELECT COUNT(*) FROM sel.exported WHERE last_at > ?", (since,)).fetchone()[0]
+        return model.summary() | {"calibrated": True, "changed_since": changed}
+
+    @app.get("/api/taste")
+    def taste_status(conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """Whether the taste model is available, what it learned from, how well it
+        works (checked on scenes it did not learn from), and how stale it is."""
+        return taste_summary(conn, taste_store.current(index))
+
+    @app.post("/api/taste/calibrate", dependencies=[Depends(require_json)])
+    def taste_calibrate(conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """Learn from the current flags and exports (takes a second or two)."""
+        return taste_summary(conn, taste_store.calibrate(index))
 
     @app.get("/api/health")
     def health():

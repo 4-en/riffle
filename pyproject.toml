@@ -21,6 +21,7 @@ dependencies = [
     "tqdm>=4.66",
     "reverse_geocode>=1.6",
     "platformdirs>=4.0",
+    "scipy>=1.10",  # taste model (also used by reverse_geocode)
 ]
 
 [project.optional-dependencies]

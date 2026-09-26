@@ -178,6 +178,13 @@
             <dt class="text-neutral-500">Exposure</dt>
             <dd>{exposure(photo)}</dd>
           {/if}
+          {#if photo.taste != null}
+            <dt class="text-neutral-500">Your taste</dt>
+            <dd title="How likely you are to keep a scene like this, learned from your picks and rejects">
+              {Math.round(photo.taste * 100)}%
+              <span class="text-neutral-500">· {photo.taste >= 0.66 ? 'likely keeper' : photo.taste <= 0.2 ? 'likely reject' : 'maybe'}</span>
+            </dd>
+          {/if}
           {#if photo.export}
             <dt class="text-neutral-500">Exported</dt>
             <dd>

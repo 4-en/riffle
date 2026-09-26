@@ -1,7 +1,7 @@
 <script>
   import { tick, untrack } from 'svelte';
   import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup } from './lib/state.svelte.js';
-  import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds } from './lib/api.js';
+  import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds, fetchTaste } from './lib/api.js';
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import { connection, connect } from './lib/connection.svelte.js';
   import TopBar from './components/TopBar.svelte';
@@ -35,6 +35,13 @@
   let loaded = false; // first page of the current query has arrived
 
   let facets = $state(null);
+  // The taste model's status; refreshed with the sidebar (it retrains in the background).
+  let taste = $state(null);
+  function loadTaste() {
+    fetchTaste()
+      .then((t) => (taste = t))
+      .catch(() => {});
+  }
   let sidebarToken = 0;
   function loadSidebar() {
     const mine = ++sidebarToken;
@@ -43,6 +50,7 @@
         if (mine !== sidebarToken) return;
         tags = t;
         facets = f;
+        loadTaste();
       })
       .catch((e) => (error = e.message));
   }
@@ -147,7 +155,7 @@
 
   // Re-query whenever the search, filters or grouping change.
   $effect(() => {
-    view.q, view.similar, view.tags, view.excludeTags, JSON.stringify(view.filters), view.group, view.collapse;
+    view.q, view.similar, view.tags, view.excludeTags, JSON.stringify(view.filters), view.group, view.collapse, view.sort;
     untrack(reset);
   });
 
@@ -399,7 +407,7 @@
 {/if}
 
 <div class="flex h-full flex-col">
-  <TopBar bind:this={topBar} {total} {loading} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} />
+  <TopBar bind:this={topBar} {total} {loading} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} {taste} />
   <div class="flex min-h-0 flex-1">
     <Sidebar {tags} {facets} />
     <main class="min-w-0 flex-1 overflow-y-auto">
@@ -493,5 +501,15 @@
 {/if}
 
 {#if view.library}
-  <Library status={indexStatus} onchange={() => pollIndex(true)} {tags} {facets} />
+  <Library
+    status={indexStatus}
+    onchange={() => pollIndex(true)}
+    {tags}
+    {facets}
+    {taste}
+    ontaste={(t) => {
+      taste = t;
+      if (view.sort === 'taste' || view.sort === '-taste') reset(); // new scores: new order
+    }}
+  />
 {/if}

@@ -66,7 +66,8 @@
           <strong class="text-neutral-100">Cull.</strong> Mark photos with <kbd>P</kbd> (pick) or <kbd>X</kbd> (reject), one by one in
           the photo view or many at once in the grid. For bursts, turn on <em>Stacks</em> and use <em>Review stacks</em>: the
           similar shots appear side by side, with the sharpest and a ★ suggested keeper marked; choose the keeper(s) and press
-          <kbd>Enter</kbd>. <em>Hide rejected</em> keeps the grid tidy, and <kbd>Ctrl+Z</kbd> undoes any flag change.
+          <kbd>Enter</kbd>. Once you have flagged enough, <em>Sort → Likely keepers first</em> puts the promising photos first,
+          learned from your own picks and rejects. <em>Hide rejected</em> keeps the grid tidy, and <kbd>Ctrl+Z</kbd> undoes any flag change.
         </li>
         <li>
           <strong class="text-neutral-100">Export.</strong> <em>Export</em> (top right) copies your picks into a new folder: images,

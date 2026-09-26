@@ -1,7 +1,8 @@
 <script>
   import { view, search, clearAll, hidingRejected, toggleHideRejected } from '../lib/state.svelte.js';
 
-  let { total, loading, indexStatus = null, textSearch = true, picks = 0 } = $props();
+  // taste: the taste model's status (enables the "likely keepers / rejects" sorts).
+  let { total, loading, indexStatus = null, textSearch = true, picks = 0, taste = null } = $props();
 
   const indexPct = $derived(
     indexStatus?.running && indexStatus.total ? Math.round((100 * indexStatus.done) / indexStatus.total) : null
@@ -90,6 +91,33 @@
       </optgroup>
     </select>
   </label>
+  <label
+    class="flex shrink-0 items-center gap-1 text-xs text-neutral-400 {view.q || view.similar ? 'opacity-40' : ''}"
+    title={view.q || view.similar
+      ? 'Search results are ordered by relevance'
+      : taste?.enabled
+        ? 'Order photos by date, or by how likely you are to keep them (learned from your picks and rejects)'
+        : 'Order photos by date'}
+  >
+    Sort
+    <select
+      bind:value={view.sort}
+      disabled={!!(view.q || view.similar)}
+      onchange={() => {
+        // The model rates scenes, so a burst's siblings rank together: one tile per stack reads best.
+        if (view.sort === 'taste' || view.sort === '-taste') view.collapse = 'stacks';
+      }}
+      class="rounded border border-neutral-700 bg-neutral-900 px-1 py-1 text-neutral-200"
+    >
+      <option value="taken_at">Oldest first</option>
+      <option value="-taken_at">Newest first</option>
+      <optgroup label="Your taste">
+        <option value="taste" disabled={!taste?.enabled || !!view.group}>Likely keepers first</option>
+        <option value="-taste" disabled={!taste?.enabled || !!view.group}>Likely rejects first</option>
+      </optgroup>
+    </select>
+  </label>
+
   {#if view.group}
     {@const isMap = ['place', 'region', 'country'].includes(view.group)}
     <button
