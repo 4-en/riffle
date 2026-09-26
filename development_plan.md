@@ -48,7 +48,7 @@ The tool's actual use case is **making a selection**: going through a library, m
 - captions, OCR, object detection
 - clustering, UMAP maps, outlier detection
 - aesthetic scores (the sharpness hint in §9.7 is the only quality measure)
-- preference learning or any model training
+- preference learning or any model training (now a planned candidate: §14.2)
 - manual tagging, named collections, star ratings
 - maps or reverse geocoding
 - multi-user or remote access
@@ -534,16 +534,18 @@ Short and qualitative, recorded in a one-page note:
 
 In rough order of expected value:
 
-1. Manual tag add/remove, stored separately from zero-shot tags (in the selections DB, like flags).
-2. Named collections (e.g. "Print", "Photo book") on top of the global pick/reject, each with its own export; and optionally star ratings for ranking the picks.
-3. Finer location "spots" within a town (clustering visit positions, e.g. within 200 m), labelled with the town and, where the timeline marks them, "Home"/"Work" from its frequent places (§14.1).
-4. Comparing models on the §13 queries (the default is now ViT-L-14 DFN-2B; SigLIP SO400M or a multilingual model for Chinese queries are the next candidates; SigLIP needs `tags.softmax_scale` and the stack threshold retuned).
-5. Image-prototype tags built from a few example photos, for concepts that text describes badly.
-6. Per-camera clock offset correction (date and camera filters are done). Location matching depends on it: a camera that is 10 minutes off places photos along the wrong part of a route.
-7. A 2D embedding map (UMAP) for exploration. (The location map overview is done; street-level detail, e.g. via a downloaded PMTiles extract, stays out of scope unless needed.)
-8. Captions and OCR through a local vision-language model.
-9. **Distribution.** The package is pure Python with the built UI inside, so one `py3-none-any` wheel serves every platform: publish to PyPI (`pipx install riffle`, then `riffle`), built by a single CI job (tests, `npm run build`, wheel). Standalone binaries (PyInstaller, a Linux/Windows/macOS CI matrix) would be CPU-only and ~0.5–1 GB because of PyTorch, unsigned unless paid for (Gatekeeper/SmartScreen warnings), and download the model on first run; moving inference to ONNX Runtime (exported CLIP) would cut them to ~100–200 MB and give GPU via DirectML/CoreML. `multiprocessing.freeze_support()` is already in place for frozen builds.
-10. Writing flags to XMP sidecars in the export folder (never next to the originals), so Lightroom or darktable see the selection.
+1. **Personal taste model** (see §14.2): learn from the user's own picks, rejects, and exports which photos they tend to keep, and use it to order culling ("likely keepers first", "likely rejects") and to sharpen the suggested keeper. Build once a few hundred photos are culled, so it can be validated on real data.
+2. **Curate: automatic photo book / exhibition drafts** (see §14.3): from the current filters (a trip, a timeframe, a place), pick a small set (e.g. 12/24/48) that is both high quality and varied (in content, time, and place, using the photo coordinates), and present it in its own view, ready to refine and export. Best built together with named collections (item 4), and it improves once the taste model (item 1) exists.
+3. Manual tag add/remove, stored separately from zero-shot tags (in the selections DB, like flags).
+4. Named collections (e.g. "Print", "Photo book") on top of the global pick/reject, each with its own export; and optionally star ratings for ranking the picks.
+5. Finer location "spots" within a town (clustering visit positions, e.g. within 200 m), labelled with the town and, where the timeline marks them, "Home"/"Work" from its frequent places (§14.1).
+6. Comparing models on the §13 queries (the default is now ViT-L-14 DFN-2B; SigLIP SO400M or a multilingual model for Chinese queries are the next candidates; SigLIP needs `tags.softmax_scale` and the stack threshold retuned).
+7. Image-prototype tags built from a few example photos, for concepts that text describes badly.
+8. Per-camera clock offset correction (date and camera filters are done). Location matching depends on it: a camera that is 10 minutes off places photos along the wrong part of a route.
+9. A 2D embedding map (UMAP) for exploration. (The location map overview is done; street-level detail, e.g. via a downloaded PMTiles extract, stays out of scope unless needed.)
+10. Captions and OCR through a local vision-language model.
+11. **Distribution.** The package is pure Python with the built UI inside, so one `py3-none-any` wheel serves every platform: publish to PyPI (`pipx install riffle`, then `riffle`), built by a single CI job (tests, `npm run build`, wheel). Standalone binaries (PyInstaller, a Linux/Windows/macOS CI matrix) would be CPU-only and ~0.5–1 GB because of PyTorch, unsigned unless paid for (Gatekeeper/SmartScreen warnings), and download the model on first run; moving inference to ONNX Runtime (exported CLIP) would cut them to ~100–200 MB and give GPU via DirectML/CoreML. `multiprocessing.freeze_support()` is already in place for frozen builds.
+12. Writing flags to XMP sidecars in the export folder (never next to the originals), so Lightroom or darktable see the selection.
 
 ### 14.1 Location from phone location history (implemented; design notes)
 
@@ -579,6 +581,71 @@ Implemented as described in §9.8 and §11.3, with the user's choices: the histo
 - ~~Where should imported history files live?~~ Referenced in place; a newer export replaces the file or is added as another one (files are merged).
 - How to handle several people's phones or a missing phone for part of a trip. (Still open.)
 - Finer spots within a town, and "Home"/"Work" labels from the timeline's frequent places (§14 item 3).
+
+### 14.2 Personal taste model (planned)
+
+**Idea.** Culling produces labels as a side effect: every pick is a positive example, every reject a negative one, and an export an even stronger positive. With a CLIP embedding already stored for every photo, a small model can learn what this user keeps (subjects, light, composition, style), which the generic quality hints (sharpness, clipping, the CLIP "good photo" score) cannot. This was out of scope for the MVP ("preference learning"); it becomes worthwhile now that flags exist.
+
+**Training data** (all from `selections.sqlite3` plus the stored embeddings; nothing new to collect):
+
+- Standalone photos (not in a stack): pick → positive, reject → negative, exported → positive with extra weight.
+- Stacks need care. Rejecting 11 of 12 near-identical frames means "worse than the keeper", not "a bad photo"; treating those rejects as negatives would teach the model to dislike exactly the subjects the user shoots most. So a culled stack contributes pairwise comparisons (keeper preferred over each rejected frame), not absolute labels. A stack rejected as a whole is a genuine negative.
+- Unflagged photos are unlabelled, not negatives.
+
+**Model.** A linear model on the embeddings (logistic regression for the absolute labels, plus a pairwise ranking term for the stack comparisons, i.e. differences of embeddings), in plain NumPy with L2 regularisation: no new dependency, no GPU, trained in milliseconds. It is retrained whenever flags change (or on the next index), and per CLIP model, since the embedding spaces differ. Optionally the existing hints (relative sharpness, clipping) as extra features. Stored as a small derived file next to the embeddings (`<model_id>.taste.npy`), rebuildable from the flags.
+
+**Uses** (always suggestions, never automatic flags):
+
+1. A sort order for unflagged photos, "likely keepers first", so the promising ones are reviewed first and culling can stop earlier.
+2. "Likely rejects", to confirm obvious misses in batches (the user still presses X).
+3. A personal term in the suggested keeper for stacks and in Curate's quality score (§14.3), next to sharpness, exposure, and the CLIP quality score (§9.7).
+4. Possibly later: "more like my picks" as a search seed (the model's weight vector as a query).
+
+**Guardrails.**
+
+- Enabled only with enough labels (on the order of 100+ flags, including both picks and rejects) and only while it measurably helps: held-out accuracy / ranking quality on the user's own flags (cross-validation), shown in the UI. Below a useful level it stays off and says why.
+- A sort order or hint, never a filter that hides photos: otherwise the user only sees what the model already likes and it reinforces itself.
+- It learns taste, not technical quality, so the sharpness and clipping hints keep their place.
+- Local only, like everything else; the model is derived data and can be deleted.
+
+**Open questions.** How many labels are needed in practice on this user's libraries; whether taste transfers between very different trips or should be weighted towards recent culling sessions; whether a small non-linear model beats the linear one enough to justify it.
+
+### 14.3 Curate: photo book / exhibition drafts (planned)
+
+**Idea.** An easy, one-click way from "all my photos of this trip" to a first draft of a small, presentable selection: high quality, but also varied (not twelve versions of the best scene, nor twelve photos from the same spot). The user narrows the library with the usual filters (dates, place, tags, "not rejected"), chooses **Curate** and a size (e.g. 12, 24, 48), and gets a dedicated view with the result, ready to refine and export. No training; everything uses signals Riffle already has, and it runs in milliseconds.
+
+**Candidates.** Every photo within the current filters except rejects. Each stack and duplicate group enters once, represented by its suggested keeper (§9.7), so a burst cannot flood the selection.
+
+**Quality score** per candidate (weights to tune on real libraries):
+
+- the user's own judgement first: picked (strong bonus), exported before (bonus);
+- the CLIP quality score ("good photo" / "sharp photo" prompt pairs, §9.7), normalised within the candidates;
+- a penalty for heavy clipping;
+- later, the personal taste model (§14.2), which is what makes uncurated trips come out well.
+
+**Diversity and coverage.**
+
+- Greedy selection by maximal marginal relevance on the CLIP embeddings: each next photo maximises `λ · quality − (1 − λ) · (max similarity to the photos already chosen)`. A slider sets λ ("best photos" ↔ "most varied").
+- Coverage quotas so the selection spans the trip: slots spread over the days and places in proportion to how much was shot there (with a minimum of one for any day/place that has a strong candidate), so one busy afternoon cannot dominate. Tags can add subject variety (people, landscape, food, architecture).
+- **Geographic diversity from the coordinates** (`photo_locations`, §9.8: camera GPS or the phone timeline). Place names are too coarse for this: a whole trip can fall into one town (the first real library lies within 1.8 km of one point). The actual positions separate the harbour from the old town or the viewpoint. Two ways to use them, possibly combined:
+  - in the redundancy term: two photos count as more similar when they were also taken close together, e.g. `sim = α · clip_sim + (1 − α) · exp(−distance / d₀)` with `d₀` of a few hundred metres, so the selection moves on to other spots;
+  - as coverage buckets: cluster the positions into spots (a grid or distance-based clustering, ~200 m; the same idea as the "spots" candidate, item 5) and spread the slots over them like over days.
+
+  Positions are weighted by how reliable they are: camera GPS and timeline visits fully, route estimates with their accuracy (`accuracy_m`), so an uncertain position cannot force or block a choice. Photos without a location fall back to time and content only.
+- Alternative worth comparing: cluster the candidates into N groups (k-medoids on embeddings, optionally on embeddings plus position) and take the best of each. MMR is simpler, incremental, and supports locking.
+
+**Sequence and view.** Chronological, grouped by day or place (headings from the date and location groups), with a strong landscape-format photo opening each part and one as the cover. A calm, presentation-style layout (large images, generous spacing) rather than the culling grid. Per photo:
+
+- **Swap**: the next-best alternatives for that slot (similar content and moment, not yet chosen);
+- **Remove**: the next candidate moves up;
+- **Lock**: keep it when regenerating with another size or diversity setting;
+- a short reason, e.g. "best of 14 similar shots · 2 Apr, Visby".
+
+Actions: **Mark as picks**, **Export** (the existing dialog, for exactly this set, including location and "only new"), and **Save as collection** once named collections exist (item 4), so a photo book does not overwrite the global picks. Regenerating is deterministic for the same inputs, so a draft can be reproduced.
+
+**Later.** Layout-aware photo books (spreads, balancing portrait and landscape, a target page count); exhibition-style sequencing by colour or mood; printing-oriented export (a size and colour profile per target).
+
+**Open questions.** Good default weights between the user's picks and the generic quality score; how strongly to enforce day/place coverage for trips with very uneven shooting; whether users want one global "curated" state or always a named collection.
 
 ## 15. Decisions before coding (resolved)
 
