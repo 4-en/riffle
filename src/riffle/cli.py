@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import multiprocessing
 import os
 import sys
 
@@ -11,13 +12,18 @@ from .config import load_config
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="riffle", description="Riffle: find the best photos in your library.")
+    multiprocessing.freeze_support()  # thumbnail workers in a frozen (standalone) build
+    parser = argparse.ArgumentParser(
+        prog="riffle",
+        description="Riffle: find the best photos in your library. Without a command, "
+        "it starts (or reuses) the app and opens it in your browser.",
+    )
     parser.add_argument(
         "-c", "--config", default=None,
         help="config file (default: ./config.yaml if present, else the user config; see `riffle paths`)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
     sub.add_parser("index", help="scan, thumbnail, embed, tag and group duplicates (incremental)")
     sub.add_parser("tag", help="re-tag from stored embeddings after editing vocabulary or thresholds")
     serve = sub.add_parser("serve", help="run the web UI and API")
@@ -36,6 +42,12 @@ def main(argv: list[str] | None = None) -> None:
         cfg = load_config(args.config)
     except FileNotFoundError as e:
         sys.exit(str(e))
+
+    if args.command is None:
+        from .launch import launch
+
+        launch(cfg)
+        return
 
     if args.command == "paths":
         rows = [

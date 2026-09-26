@@ -41,7 +41,7 @@ Next is a short evaluation of search and tag quality (see `development_plan.md` 
 ```sh
 python3.12 -m venv venv              # or reuse the existing venv/
 venv/bin/pip install -e ".[dev]"     # for HEIC support: ".[dev,heic]"
-cd web && npm install && npm run build && cd ..
+cd web && npm install && npm run build && cd ..   # builds the UI into src/riffle/web/
 ```
 
 The first run creates your settings (`~/.config/riffle/config.yaml` on Linux); add photo folders in the UI's **Library**, or edit that file.
@@ -49,8 +49,10 @@ The first run creates your settings (`~/.config/riffle/config.yaml` on Linux); a
 ## Usage
 
 ```sh
-venv/bin/riffle serve    # UI and API on http://localhost:8000
+venv/bin/riffle          # starts Riffle and opens it in your browser
 ```
+
+Run it again while it is running and it just opens another browser tab. It uses port 8000, or a free one if that is taken; Ctrl+C stops it. `riffle serve` starts the server without opening a browser (http://localhost:8000; `--host/--port/--reload`), and `python -m riffle` works like `riffle`.
 
 In the UI, open **Library** (top right) to browse the disk, add or remove photo folders, and run indexing in the background with progress. It opens by itself when no folders are configured. Added folders are saved to `sources` in `config.yaml`.
 
@@ -60,7 +62,7 @@ Indexing can also run from the command line:
 venv/bin/riffle index    # scan, thumbnail, embed, tag, group duplicates and stacks (incremental)
 ```
 
-The server picks up new embeddings without a restart. Other options: `riffle --config PATH ...`, `riffle -v ...` for debug logging, and `riffle serve --host/--port/--reload`.
+The server picks up new embeddings without a restart. Other options: `riffle --config PATH ...` and `riffle -v ...` for debug logging.
 
 The folder browser can list any directory the server can read, so keep `serve` bound to `127.0.0.1` (the default).
 
@@ -149,7 +151,7 @@ venv/bin/riffle serve --reload
 cd web && npm run dev
 ```
 
-Without the dev server, run `npm run build` after changing anything in `web/src/`; `riffle serve` serves the built files from `web/dist`.
+Without the dev server, run `npm run build` after changing anything in `web/src/`. It writes the built UI into `src/riffle/web/`, which the server serves and which ships inside the Python package (build it before `pip wheel` / `python -m build`).
 
 Run tests with `venv/bin/pytest`. They use synthetic images and a fake encoder, so no model download is needed.
 

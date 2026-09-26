@@ -34,7 +34,7 @@ riffle = "riffle.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-riffle = ["defaults/*.yaml"]
+riffle = ["defaults/*.yaml", "web/*", "web/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

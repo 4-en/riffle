@@ -72,7 +72,8 @@ flowchart LR
 
 - **Indexer:** scans, extracts metadata, makes thumbnails, embeds, tags, groups duplicates. Incremental and restartable. Runs from the CLI (`riffle index`) or in a background thread of the server when started from the UI; both use the same pipeline (`index.run_index`), which reports progress through callbacks.
 - **Server (FastAPI):** loads the embedding matrix and CLIP text encoder into memory at startup, serves a JSON API, thumbnails, and the built UI as static files. It reloads the embedding matrix when the files change, so re-indexing does not need a restart.
-- **UI (Svelte + Tailwind, built with Vite, no SvelteKit):** a single-page app that talks to the API. After `npm run build`, the FastAPI server serves it from `web/dist` on the same port.
+- **UI (Svelte + Tailwind, built with Vite, no SvelteKit):** a single-page app that talks to the API. `npm run build` writes it into the Python package (`src/riffle/web/`, package data), so every install carries it and the FastAPI server serves it on the same port.
+- **Launcher:** `riffle` without arguments starts the server on 127.0.0.1 (port 8000, or a free one), waits until `/api/health` answers, and opens the browser. A `server.json` in the data folder records the running instance; a second launch that finds it answering as Riffle for the same config only opens a browser tab.
 
 There is no vector database. The whole embedding matrix is held in memory; a search is a single matrix–vector product.
 
@@ -539,7 +540,8 @@ In rough order of expected value:
 6. Per-camera clock offset correction (date and camera filters are done). Location matching depends on it: a camera that is 10 minutes off places photos along the wrong part of a route.
 7. A 2D embedding map (UMAP) for exploration. (The location map overview is done; street-level detail, e.g. via a downloaded PMTiles extract, stays out of scope unless needed.)
 8. Captions and OCR through a local vision-language model.
-9. Writing flags to XMP sidecars in the export folder (never next to the originals), so Lightroom or darktable see the selection.
+9. **Distribution.** The package is pure Python with the built UI inside, so one `py3-none-any` wheel serves every platform: publish to PyPI (`pipx install riffle`, then `riffle`), built by a single CI job (tests, `npm run build`, wheel). Standalone binaries (PyInstaller, a Linux/Windows/macOS CI matrix) would be CPU-only and ~0.5–1 GB because of PyTorch, unsigned unless paid for (Gatekeeper/SmartScreen warnings), and download the model on first run; moving inference to ONNX Runtime (exported CLIP) would cut them to ~100–200 MB and give GPU via DirectML/CoreML. `multiprocessing.freeze_support()` is already in place for frozen builds.
+10. Writing flags to XMP sidecars in the export folder (never next to the originals), so Lightroom or darktable see the selection.
 
 ### 14.1 Location from phone location history (implemented; design notes)
 

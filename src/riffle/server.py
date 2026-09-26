@@ -29,7 +29,8 @@ from .selections import FLAG_EXPR, flag_expr
 
 log = logging.getLogger(__name__)
 
-WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
+# The built UI (`npm run build` in web/ writes it here; package data in the wheel).
+WEB_DIST = Path(__file__).resolve().parent / "web"
 
 TextEncoder = Callable[[list[str]], np.ndarray]
 
@@ -667,6 +668,17 @@ def create_app(
         if not path.is_absolute():
             raise HTTPException(400, "use an absolute path")
         return path.resolve()
+
+    @app.get("/api/health")
+    def health():
+        """Identifies a running Riffle (and which config it serves) for the launcher."""
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            v = version("riffle")
+        except PackageNotFoundError:
+            v = "dev"
+        return {"app": "riffle", "version": v, "config": str(cfg.path) if cfg.path else None}
 
     @app.get("/api/sources")
     def list_sources(conn=Depends(get_conn)):
