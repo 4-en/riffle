@@ -62,3 +62,54 @@ def test_free_port_falls_back_when_taken():
         taken = s.getsockname()[1]
         port = free_port(taken)
         assert port != taken and port > 0
+
+
+# ---- the AI model loads in the background -------------------------------------
+
+
+def test_model_loads_in_the_background(indexed, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import riffle.embed
+
+    release = threading.Event()
+
+    class SlowClip:
+        def __init__(self, mcfg, text_only=False):
+            release.wait(10)  # e.g. the first-start download
+            self.encode_text = FakeClip().encode_text
+
+    monkeypatch.setattr(riffle.embed, "Clip", SlowClip)
+    with TestClient(create_app(indexed)) as c:
+        info = c.get("/api/health").json()
+        assert info["model"] == "loading" and info["log"] is None  # not the standalone app
+        assert c.get("/api/photos").status_code == 200  # browsing works meanwhile
+        res = c.get("/api/search/text", params={"q": "red"})
+        assert res.status_code == 503 and "still loading" in res.json()["detail"]
+        assert c.get("/api/tags").json()["text_search"] is False
+        release.set()
+        for _ in range(100):
+            if c.get("/api/health").json()["model"] != "loading":
+                break
+            time.sleep(0.05)
+        assert c.get("/api/health").json()["model"] == "ready"
+        assert c.get("/api/search/text", params={"q": "red"}).status_code == 200
+
+
+def test_model_failure_is_reported(indexed, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import riffle.embed
+
+    def broken(*args, **kwargs):
+        raise OSError("no internet connection")
+
+    monkeypatch.setattr(riffle.embed, "Clip", broken)
+    with TestClient(create_app(indexed)) as c:
+        for _ in range(100):
+            info = c.get("/api/health").json()
+            if info["model"] != "loading":
+                break
+            time.sleep(0.05)
+        assert info["model"] == "failed" and info["model_error"] == "no internet connection"
+        assert c.get("/api/photos").status_code == 200

@@ -1,5 +1,6 @@
 """The one-click launch stops once no browser tab is connected (server.AutoExit)."""
 
+import json
 import threading
 import time
 
@@ -104,7 +105,8 @@ def test_serve_mode_never_stops(indexed):
     server, thread, url = run_server(indexed)
     tab = Tab(url)
     time.sleep(0.2)
-    assert tab.lines[1] == 'data: {"auto_exit": false}'
+    first = json.loads(tab.lines[1].removeprefix("data: "))
+    assert first["auto_exit"] is False and first["model"] == "ready"
     tab.close()
     assert not wait_stopped(thread, 3.0)
     server.should_exit = True

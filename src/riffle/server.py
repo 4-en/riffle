@@ -1,11 +1,13 @@
 """FastAPI server: JSON API, thumbnails/previews, and the built Svelte UI.
 
-At startup it loads the embedding matrix and the CLIP text encoder only.
+At startup it loads the embedding matrix; the CLIP text encoder loads in the
+background (the first start downloads it), so the UI is usable at once.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import threading
@@ -197,7 +199,16 @@ def create_app(
     model_id = cfg.model.model_id
     # clients: open /api/events streams (browser tabs); seen_client: one ever connected.
     # stopping: the server is shutting down, so the event streams should end now.
-    state: dict = {"encoder": text_encoder, "clients": 0, "seen_client": False, "stopping": False}
+    state: dict = {
+        "encoder": text_encoder,
+        # The CLIP text encoder loads in the background (the first start downloads it):
+        # "loading" -> "ready" | "failed" (with model_error). Browsing works meanwhile.
+        "model": "ready" if text_encoder else "loading",
+        "model_error": "",
+        "clients": 0,
+        "seen_client": False,
+        "stopping": False,
+    }
     job = index_job(cfg, run=index_runner)
     taste_store = TasteStore(cfg)
     export_job = BackgroundJob(cfg, run_export)
@@ -209,16 +220,32 @@ def create_app(
         selections.ensure(cfg.selections_path)
         state["index"] = Index(cfg)
         if state["encoder"] is None:
-            try:
-                from .embed import Clip
-
-                state["encoder"] = Clip(cfg.model, text_only=True).encode_text
-            except Exception as e:  # noqa: BLE001 - browsing still works without text search
-                log.error("Could not load text encoder: %s", e)
+            threading.Thread(target=load_encoder, name="riffle-model", daemon=True).start()
         watchdog = asyncio.create_task(watch_clients()) if auto_exit else None
         yield
         if watchdog:
             watchdog.cancel()
+
+    def load_encoder() -> None:
+        try:
+            from .embed import Clip
+
+            state["encoder"] = Clip(cfg.model, text_only=True).encode_text
+            state["model"] = "ready"
+        except Exception as e:  # noqa: BLE001 - browsing still works without text search
+            log.error("Could not load the text encoder: %s", e)
+            state["model_error"] = str(e) or type(e).__name__
+            state["model"] = "failed"
+
+    def model_status() -> dict:
+        from . import frozen
+
+        log_file = frozen.log_path()
+        return {
+            "model": state["model"],
+            "model_error": state["model_error"],
+            "log": str(log_file) if log_file else None,
+        }
 
     async def watch_clients():
         """Stop when no tab has been connected for a while (see AutoExit)."""
@@ -584,6 +611,8 @@ def create_app(
     ):
         encoder = state["encoder"]
         if encoder is None:
+            if state["model"] == "loading":
+                raise HTTPException(503, "The AI model is still loading; search works once it is ready.")
             raise HTTPException(503, "text encoder not available")
         query = encoder([q])[0]
         return rank(conn, index, query, flt, None, collapse_mode(collapse, dupes), offset, limit)
@@ -982,9 +1011,10 @@ def create_app(
             state["clients"] += 1
             state["seen_client"] = True  # even a tab that closes before the next watchdog check
             try:
-                yield "retry: 2000\ndata: {}\n\n".format(
-                    '{"auto_exit": %s}' % ("true" if auto_exit else "false")
-                )
+                # The first message says whether the server stops with its last tab; this
+                # and later ones carry the model status whenever it changes.
+                sent = model_status()
+                yield "retry: 2000\ndata: " + json.dumps({"auto_exit": bool(auto_exit), **sent}) + "\n\n"
                 # A closed tab only shows up when writing to it fails (Starlette with
                 # ASGI 2.4 does not listen for disconnects), so write a tiny comment
                 # every 2 s: the stream is then cancelled within ~2 s of the tab closing.
@@ -994,7 +1024,10 @@ def create_app(
                 while not state["stopping"]:
                     await asyncio.sleep(0.25)
                     ticks += 1
-                    if ticks % 8 == 0:
+                    if (now := model_status()) != sent:
+                        sent = now
+                        yield "data: " + json.dumps({"auto_exit": bool(auto_exit), **now}) + "\n\n"
+                    elif ticks % 8 == 0:
                         yield ": keep-alive\n\n"
             finally:
                 state["clients"] -= 1
@@ -1037,6 +1070,7 @@ def create_app(
             "version": v,
             "config": str(cfg.path) if cfg.path else None,
             "tabs": state["clients"],  # open browser tabs (live /api/events streams)
+            **model_status(),
         }
 
     @app.get("/api/sources")

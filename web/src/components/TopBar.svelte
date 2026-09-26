@@ -50,7 +50,7 @@
       bind:value={text}
       type="search"
       disabled={!textSearch}
-      placeholder={textSearch ? 'Search photos, e.g. "red lanterns at night"   ( / )' : 'Text search unavailable (model not loaded)'}
+      placeholder={textSearch ? 'Search photos, e.g. "red lanterns at night"   ( / )' : 'Search works once the AI model is loaded'}
       class="w-full max-w-2xl rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm placeholder-neutral-500 outline-none focus:border-sky-600"
     />
   </form>

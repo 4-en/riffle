@@ -232,3 +232,5 @@ Records.json
 web/node_modules/
 web/dist/
 src/riffle/web/
+# The PyInstaller template ignores *.spec; ours is written by hand.
+!packaging/riffle.spec
