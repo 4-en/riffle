@@ -1,0 +1,1014 @@
+# Names for clusters in the Similar grouping (clusters.py). Not tags: only used to
+# name groups of alike photos. A cluster is named after the phrase that is most
+# distinctive for it (closer to the cluster than to the average photo). A "thing"
+# close behind a "setting" is named first ("birds in flight · a blue sky").
+
+things:
+  # Animals & Wildlife
+  - sheep
+  - lambs
+  - cows
+  - horses
+  - goats
+  - pigs
+  - chickens
+  - ducks
+  - swans
+  - geese
+  - seagulls
+  - pigeons
+  - crows
+  - ravens
+  - magpies
+  - sparrows
+  - songbirds
+  - birds of prey
+  - owls
+  - herons
+  - storks
+  - peacocks
+  - parrots
+  - flamingos
+  - penguins
+  - cats
+  - kittens
+  - dogs
+  - puppies
+  - rabbits
+  - squirrels
+  - deer
+  - foxes
+  - wolves
+  - bears
+  - moose
+  - reindeer
+  - horses grazing
+  - donkeys
+  - camels
+  - elephants
+  - giraffes
+  - zebras
+  - lions
+  - tigers
+  - monkeys
+  - seals
+  - dolphins
+  - whales
+  - fish
+  - koi carp
+  - jellyfish
+  - crabs
+  - snails
+  - frogs
+  - turtles
+  - lizards
+  - snakes
+  - bees
+  - bumblebees
+  - butterflies
+  - moths
+  - dragonflies
+  - ladybirds
+  - spiders
+  - ants
+  - beetles
+  - insects on flowers
+  - birds in flight
+  - a flock of birds
+  - birds on a wire
+
+  # Plants, Flora & Nature
+  - flowers
+  - tulips
+  - roses
+  - daisies
+  - pansies
+  - lilacs
+  - cherry blossoms
+  - apple blossoms
+  - sunflowers
+  - poppies
+  - lavender
+  - orchids
+  - lilies
+  - dandelions
+  - wildflowers
+  - a flower meadow
+  - flower beds
+  - potted plants
+  - houseplants
+  - cacti
+  - succulents
+  - ferns
+  - moss
+  - mushrooms
+  - lichen
+  - leaves
+  - autumn leaves
+  - green leaves
+  - tree bark
+  - tree branches
+  - bare trees
+  - blossoming trees
+  - pine trees
+  - birch trees
+  - palm trees
+  - willows
+  - a forest
+  - a pine forest
+  - woodland paths
+  - reeds
+  - tall grass
+  - a lawn
+  - a meadow
+  - a field of crops
+  - wheat fields
+  - vineyards
+  - hedges
+  - bushes
+  - a garden
+  - a vegetable garden
+  - water lilies
+  - seaweed
+  - driftwood
+
+  # Geology, Minerals & Earth
+  - rocks
+  - pebbles
+  - sand
+  - dunes
+  - cliffs
+  - boulders
+  - mountains
+  - snowy mountains
+  - hills
+  - valleys
+  - canyons
+  - caves
+  - volcanoes
+  - glaciers
+  - icebergs
+  - crystals
+  - a geode
+  - polished gemstones
+  - cracked dry earth
+  - stalactites and stalagmites
+  - fossil imprints
+  - honeycomb patterns
+
+  # Water, Weather & Atmospheric Phenomena
+  - snow
+  - frost
+  - ice
+  - rain
+  - fog
+  - mist
+  - a sunset
+  - a sunrise
+  - the moon
+  - stars at night
+  - the milky way
+  - a rainbow
+  - lightning
+  - a storm
+  - the northern lights
+  - an aurora
+  - sunbeams through trees
+  - a solar eclipse
+  - a lunar eclipse
+  - a blood moon
+  - a shooting star
+  - a meteor shower
+  - a comet
+  - a nebula
+  - deep space
+  - a lake
+  - a calm lake
+  - a river
+  - a stream
+  - a waterfall
+  - a pond
+  - the sea
+  - ocean waves
+  - a beach
+  - a sandy beach
+  - a rocky shore
+  - a coastline
+  - an island
+  - small islands
+  - an archipelago
+  - a harbour
+  - a marina
+  - a pier
+  - a jetty
+  - a canal
+  - a fountain
+  - reflections in water
+  - water droplets
+  - a swimming pool
+  - a bay
+  - a fjord
+
+  # Fire, Fluids & Ephemeral Elements
+  - a campfire
+  - a bonfire
+  - flames
+  - glowing embers
+  - sparks flying
+  - smoke trails
+  - incense smoke
+  - water splashes
+  - liquid pouring
+  - ink dispersing in water
+  - soap bubbles
+  - shattered glass
+
+  # Marine, Aviation & Vehicles
+  - sailboats
+  - yachts
+  - ferries
+  - cruise ships
+  - fishing boats
+  - rowing boats
+  - canoes
+  - kayaks
+  - speedboats
+  - a tall ship
+  - an old sailing ship
+  - warships
+  - tugboats
+  - cargo ships
+  - cars
+  - vintage cars
+  - sports cars
+  - taxis
+  - buses
+  - double-decker buses
+  - trams
+  - trains
+  - steam trains
+  - subway trains
+  - a metro station
+  - train tracks
+  - a railway station
+  - bicycles
+  - parked bicycles
+  - cyclists
+  - motorcycles
+  - scooters
+  - trucks
+  - tractors
+  - airplanes
+  - helicopters
+  - hot air balloons
+  - a road
+  - a highway
+  - a bridge
+  - a car park
+  - traffic lights
+
+  # Architecture, Historic & Public Buildings
+  - a palace
+  - a royal palace
+  - a castle
+  - a fortress
+  - a round fortress tower
+  - city walls
+  - a church
+  - a cathedral
+  - a chapel
+  - church spires
+  - a bell tower
+  - a clock tower
+  - a lighthouse
+  - a windmill
+  - a manor house
+  - a country house
+  - a farmhouse
+  - a barn
+  - a cottage
+  - wooden houses
+  - red wooden houses
+  - colourful houses
+  - townhouses
+  - apartment blocks
+  - skyscrapers
+  - a city skyline
+  - old town streets
+  - a narrow alley
+  - cobblestone streets
+  - a town square
+  - a market square
+  - a street market
+  - shop fronts
+  - cafes
+  - restaurants
+  - a bar
+  - a hotel
+  - a museum
+  - an art gallery
+  - a library
+  - a theatre
+  - a concert hall
+  - a stadium
+  - a school
+  - a university building
+  - an office
+  - a factory
+  - chimneys
+  - an industrial area
+  - a power plant
+  - a harbour crane
+  - warehouses
+  - a construction site
+  - scaffolding
+  - ruins
+  - a monument
+  - a statue
+  - a bronze statue
+  - a marble sculpture
+  - an equestrian statue
+  - a fountain in a square
+  - a park
+  - a formal garden
+  - a palace garden
+  - an avenue of trees
+  - a playground
+  - a cemetery
+  - gravestones
+  - a zoo
+  - an amusement park
+  - a fairground
+  - a ferris wheel
+  - a roller coaster
+  - a campsite
+  - a tent
+
+  # Urban Decay & Urbex
+  - abandoned buildings
+  - an abandoned house
+  - derelict interiors
+  - peeling paint
+  - broken glass
+  - rusted metal
+  - a scrapyard
+  - overgrown ruins
+  - demolition sites
+  - an abandoned factory
+
+  # Interiors & Household Architecture
+  - a palace interior
+  - a grand hall
+  - a ballroom
+  - chandeliers
+  - ornate ceilings
+  - painted ceilings
+  - frescoes
+  - tapestries
+  - wallpaper
+  - a church interior
+  - stained glass windows
+  - an organ
+  - a staircase
+  - a spiral staircase
+  - a corridor
+  - doors
+  - windows
+  - a window view
+  - a living room
+  - a bedroom
+  - a kitchen
+  - a bathroom
+  - a dining table
+  - a desk
+  - a workspace
+  - a bookshelf
+  - books
+  - a sofa
+  - lamps
+  - candles
+  - candlelight
+  - fairy lights
+  - a fireplace
+  - a hotel room
+  - a train interior
+  - an airport
+  - a waiting room
+  - a shop interior
+  - a supermarket
+  - museum exhibits
+  - display cases
+  - a lecture hall
+
+  # Still Life & Classical Compositions
+  - a still life composition
+  - a fruit bowl
+  - draped fabric
+  - a human skull
+  - an hourglass
+  - wilted flowers
+  - glass decanters
+  - tabletop arrangements
+  - antiques
+  - feather quills and ink
+
+  # People, Family & Social Life
+  - people
+  - a crowd
+  - tourists
+  - a portrait
+  - an editorial portrait
+  - a selfie
+  - a man
+  - a woman
+  - a child
+  - children playing
+  - a baby
+  - a family
+  - friends
+  - a couple
+  - elderly people
+  - people walking
+  - people sitting
+  - people eating
+  - people at a table
+  - people on a boat
+  - people on a bench
+  - a person reading
+  - a person photographing
+  - hands
+  - a face close-up
+  - eyes
+  - silhouettes of people
+  - dancers
+  - musicians
+  - a concert
+  - a festival
+  - a wedding
+  - a party
+
+# Life Milestones & Staged Sessions
+  - a corporate headshot
+  - a business portrait
+  - a maternity photoshoot
+  - newborn baby photography
+  - a graduation photo
+  - cap and gown
+  - prom photos
+  - a passport photo
+  - a baptism or christening
+
+  # Travel & Transit Perspectives
+  - an airplane wing through a window
+  - a view from a plane window
+  - a view through a car windshield
+  - a view in a rearview mirror
+  - a hotel balcony view
+  - a packed suitcase
+  - a tourist posing with a landmark
+
+  # Underwater Photography
+  - an underwater photo
+  - scuba diving
+  - snorkeling
+  - a coral reef
+  - a split-level underwater photo
+
+  # Street & Urban Photography
+  - a pedestrian crossing
+  - a subway platform
+  - reflections in sunglasses
+  - puddle reflections on a street
+  - a street performer
+  - a laundromat
+
+  # Culinary Preparation
+  - latte art
+  - coffee brewing
+  - cooking in a pan
+  - chopping vegetables on a cutting board
+  - raw cooking ingredients
+  - a restaurant menu
+
+  # Night & Celebration Lights
+  - fireworks
+  - sparklers at night
+  - light painting
+  - a glowing screen in a dark room
+
+  # Body State, Figure & Movement
+  - a figure study
+  - fine art nude
+  - boudoir photography
+  - sensual portraiture
+  - bare skin
+  - a silhouette of a body
+  - sunbathing
+  - bare-chested
+  - barefoot
+  - a physique portrait
+  - bodybuilding posing
+  - tattoos
+  - body art
+  - face paint
+  - stage makeup
+  - a masquerade mask
+
+# Intimate & Private Photos
+  - an intimate selfie
+  - a nude selfie
+  - an intimate photo
+  - an intimate bedroom photo
+  - in bed
+
+  # Domestic Bathing & Wellness
+  - taking a bath
+  - in the bathtub
+  - taking a shower
+  - a baby in the bath
+  - a sauna
+
+  # Naturism & Outdoor Swimming
+  - skinny dipping
+  - a nudist beach
+  - naturism
+  - swimming naked
+
+  # Erotica & Commercial Adult Media
+  - erotic photography
+  - erotica
+  - glamour photography
+  - a nude model
+  - adult content
+
+  # Clothing: Context, Formalwear & Statement
+  - a wedding dress
+  - suits and tuxedos
+  - formal wear
+  - an evening gown
+  - cocktail dresses
+  - heavy winter coats
+  - puffer jackets
+  - raincoats
+  - a leather jacket
+  - a trench coat
+  - a denim jacket
+  - vintage clothing
+  - retro fashion
+  - goth fashion
+  - punk fashion
+  - a sequin dress
+  - high heels
+  - hiking boots
+  - cowboy boots
+  - gloves
+  - an umbrella
+
+  # Clothing: Loungewear, Intimates & Activewear
+  - lingerie
+  - underwear
+  - a bathrobe
+  - pajamas
+  - a silk robe
+  - a corset
+  - a swimsuit
+  - a bikini
+  - swim trunks
+  - a wetsuit
+  - gym wear
+  - athletic wear
+  - a leotard
+  - a cycling kit
+
+  # Clothing: Traditional, Cultural & Ceremonial
+  - traditional clothing
+  - traditional folk costumes
+  - traditional attire
+  - ceremonial dress
+  - cultural festival costumes
+  - a kimono
+  - a yukata
+  - a hanbok
+  - a cheongsam
+  - hanfu
+  - an áo dài
+  - a kebaya
+  - a sarong
+  - barong tagalog
+  - a sari
+  - a lehenga
+  - a kurta
+  - a sherwani
+  - a chapan
+  - a dirndl
+  - lederhosen
+  - a kilt
+  - a bunad
+  - a flamenco dress
+  - an abaya
+  - a thawb
+  - a keffiyeh
+  - a kaftan
+  - a djellaba
+  - a dashiki
+  - kente cloth
+  - an agbada
+  - Maasai shúkà
+  - a boubou
+  - a poncho
+  - a huipil
+  - a sombrero
+  - a pollera
+  - indigenous regalia
+
+  # Uniforms, Armor & Headwear
+  - uniforms
+  - a military uniform
+  - a lab coat
+  - clerical vestments
+  - protective gear
+  - a hard hat
+  - a helmet
+  - a motorcycle helmet
+  - tactical gear
+  - plate armor
+  - chainmail
+  - a superhero costume
+  - cosplay
+  - a costume party
+  - a baseball cap
+  - a beanie
+  - a fedora
+  - a straw hat
+  - a wide-brim hat
+  - a crown or tiara
+  - a veil
+  - a headscarf
+  - a hat
+  - glasses
+  - sunglasses
+
+  # Sports, Action & Performance
+  - sports
+  - runners
+  - swimmers
+  - skiers
+  - hikers
+  - climbers
+  - rock climbing on a wall
+  - bouldering
+  - skateboarding
+  - a skatepark
+  - surfing a wave
+  - motocross
+  - a rally car race
+  - formula racing
+  - skydiving
+  - paragliding
+  - martial arts
+  - circus performers
+  - aerial acrobatics
+  - a fire performer
+  - a theatrical stage
+
+  # Labor, Trades & Science in Action
+  - welding
+  - blacksmithing
+  - pottery on a wheel
+  - glassblowing
+  - woodworking
+  - a carpenter's workshop
+  - an artist's studio
+  - an easel with an unfinished painting
+  - a science laboratory
+  - beakers and test tubes
+  - a microscope
+
+  # Food & Drink
+  - food
+  - a meal
+  - breakfast
+  - bread
+  - pastries
+  - cakes
+  - cookies
+  - muffins
+  - ice cream
+  - coffee
+  - tea
+  - a cup of coffee
+  - wine
+  - beer
+  - bottles
+  - cocktails
+  - fruit
+  - vegetables
+  - a market stall
+  - pizza
+  - burgers
+  - fries
+  - sushi
+  - seafood
+  - a picnic
+  - a birthday cake
+
+  # Domestic Objects, Gear & Personal Items
+  - toys
+  - figurines
+  - anime figures
+  - dolls
+  - teddy bears
+  - lego
+  - board games
+  - video games
+  - a game controller
+  - a computer
+  - a laptop
+  - a keyboard
+  - a smartphone
+  - a camera
+  - lenses
+  - headphones
+  - a watch
+  - jewellery
+  - shoes
+  - sneakers
+  - clothes
+  - a bag
+  - a backpack
+  - a suitcase
+  - keys
+  - tools
+  - a guitar
+  - a piano
+  - a clock
+  - a mirror
+  - a vase
+  - a bowl
+  - a plate
+  - cups
+  - glasses on a table
+  - a bottle of water
+  - cans
+  - packaging
+  - a box
+  - a parcel
+  - a toy car
+  - a model train
+  - a gift
+  - vinyl records
+  - coin collections
+  - trading cards
+
+  # Everyday Documents, Paper & Utility Labels
+  - a paper receipt
+  - an invoice
+  - a credit card
+  - a bank statement
+  - price tags
+  - shipping labels
+  - an envelope with address
+  - a passport
+  - a driver's license
+  - an ID card
+  - a boarding pass
+  - event tickets
+  - a handwritten note
+  - sticky notes
+  - a whiteboard with notes
+  - a notebook page
+  - a grocery list
+  - a diploma or certificate
+  - sheet music
+  - a user manual
+  - Wi-Fi credentials on a router
+  - a barcode or QR code
+  - a utility meter
+
+  # Fantasy, Sci-Fi & Mythological Entities
+  - a fantasy castle
+  - a floating island
+  - dragons
+  - mythological creatures
+  - angels with wings
+  - demons
+  - a knight in armor
+  - swords and shields
+  - a wizard or sorcerer
+  - a spaceship
+  - a futuristic city
+  - a cyberpunk street
+  - mechs and giant robots
+  - an alien landscape
+  - a surreal landscape
+
+# What kind of image it is (illustration, painting, screenshot…). Not used for the
+# clusters of one kind ("Illustrations: …" would repeat it).
+media:
+  # Traditional Fine Art & Drawing
+  - an illustration
+  - a drawing
+  - a sketch
+  - a pencil drawing
+  - an ink drawing
+  - calligraphy
+  - a painting
+  - an oil painting
+  - a watercolour
+  - an acrylic painting
+  - an ink wash painting
+  - a portrait painting
+  - a landscape painting
+  - graffiti
+  - street art
+  - a mural
+  - a mosaic
+  - a stained glass pattern
+  - linocut print
+  - woodcut print
+  - an etching
+  - screenprint
+  - a risograph print
+  - a cyanotype
+
+  - a polaroid
+  - an instant photo
+  - a disposable camera photo
+  - a 35mm film photograph
+  - film negatives
+  - a double exposure
+
+  # Digital Art, Comics & Animation
+  - digital art
+  - concept art
+  - fan art
+  - an anime illustration
+  - a manga drawing
+  - a cartoon
+  - a comic
+  - a webcomic
+  - pixel art
+  - vector art
+  - isometric art
+  - a 3D render
+  - low-poly 3D
+  - a 3D wireframe
+  - a clay render
+  - a video game scene
+
+  # Graphic Design, Branding & Printed Media
+  - a poster
+  - a sign
+  - a billboard mockup
+  - a product mockup
+  - a logo
+  - an app icon
+  - typography
+  - a color palette
+  - stickers
+  - clip art
+  - geometric shapes
+  - a book cover
+  - an album cover
+  - a vintage postcard
+  - postage stamps
+  - a newspaper
+  - a book page
+
+  # Screenshots & Digital User Interfaces
+  - a screenshot
+  - a user interface
+  - a mobile app interface
+  - a desktop screenshot
+  - a chat screenshot
+  - a text message thread
+  - an email client
+  - a social media feed
+  - a video call screen
+  - code in an editor
+  - a terminal window
+  - a spreadsheet
+  - a slide presentation
+  - a game menu or HUD
+  - an error dialog
+
+  # Data Visualization, Schematics & Technical Imagery
+  - a map
+  - an infographic
+  - a flowchart
+  - a mind map
+  - an organizational chart
+  - a system diagram
+  - a Venn diagram
+  - a bar chart
+  - a pie chart
+  - a line graph
+  - a scatter plot
+  - a candlestick chart
+  - a blueprint
+  - a floor plan
+  - a circuit diagram
+  - a wiring diagram
+  - a patent illustration
+  - a CAD model
+  - an anatomical diagram
+
+  # Scientific, Medical & Specialty Imagery
+  - an X-ray
+  - a dental X-ray
+  - an MRI scan
+  - a CT scan
+  - an ultrasound image
+  - an electron microscope image
+  - optical microscopy
+  - a petri dish culture
+  - a telescope capture
+
+  # Memes & Screen Captures
+  - a meme
+  - an image macro
+  - a reaction image
+  - a movie still
+  - a TV show still with subtitles
+  - a photograph of a photograph
+
+# Light, style, sky, and texture: describe how a photo looks rather than what it shows.
+settings:
+  # Composition, Perspective & Framing
+  - a texture
+  - a pattern
+  - an abstract image
+  - a blurry photo
+  - an out of focus photo
+  - bokeh
+  - a macro photo
+  - an extreme close-up
+  - a view through a window
+  - a view from above
+  - an aerial view
+  - a top-down view
+  - a flat lay
+  - a bird's-eye view
+  - a worm's-eye view
+  - a panorama
+  - a wide landscape
+  - a minimalist photo
+  - negative space
+  - a plain background
+  - isolated on white
+  - symmetry
+  - leading lines
+  - isometric perspective
+  - high angle
+  - low angle
+  - Dutch angle
+
+  # Lighting, Contrast & Exposure
+  - soft light
+  - harsh shadows
+  - dramatic shadows
+  - high contrast
+  - a dark photo
+  - an overexposed photo
+  - backlight
+  - a silhouette
+  - golden hour light
+  - blue hour
+  - studio lighting
+  - seamless backdrop
+  - night lights
+  - city lights at night
+  - neon lights
+  - light trails
+  - motion blur
+  - a long exposure
+  - light rays in a dark room
+  - sunbeams
+
+  # Color Grading & Visual Tone
+  - a black and white photo
+  - a sepia photo
+  - vibrant colors
+  - muted tones
+  - pastel colors
+  - monochrome
+  - scanned paper texture
+  - dark mode interface
+  - light mode interface
+
+  # Environment, Atmosphere & Sky
+  - clouds
+  - a blue sky
+  - an overcast sky
+  - an empty sky
+  - reflections
+  - a mirror reflection
+
+  - film grain
+  - a light leak
+  - lens flare
+  - harsh direct flash
+  - a vignette
+  - a photo with a date stamp
+  - star trails
+  - water caustics

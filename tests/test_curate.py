@@ -46,17 +46,17 @@ class Lib:
     def flag(self, ids, value):
         selections.set_flags(self.conn, self.cfg.selections_path, [(list(ids), value)])
 
-    def pool(self, p, quality=None, styles=None):
+    def pool(self, p, quality=None, styles=None, query=None):
         ids = list(self.vecs)
         where, params = PhotoFilter().where("fake__test")
         return curate.build_pool(
             self.conn, where, params, {pid: k for k, pid in enumerate(ids)}, np.stack([self.vecs[i] for i in ids]), p,
-            taste=None, clip_quality=quality, style_scores=styles or {}, place_labels={},
+            taste=None, clip_quality=quality, style_scores=styles or {}, place_labels={}, query_scores=query,
         )
 
-    def pick(self, quality=None, scores=None, **kw) -> list[int]:
+    def pick(self, quality=None, scores=None, query=None, **kw) -> list[int]:
         p = curate.Params(**kw)
-        pool = self.pool(p, quality, scores)
+        pool = self.pool(p, quality, scores, query)
         return [int(pool.ids[j]) for j in curate.select(pool, p)]
 
 
@@ -156,6 +156,20 @@ def test_style_weight_moves_the_draft(cfg):
     assert not set(lib.pick(quality, moody, n=3, styles={"moody": -1.0}, **FLAT)) & set(ids[:3])
 
 
+def test_a_search_scores_but_does_not_filter(cfg):
+    lib = Lib(cfg)
+    ids = [lib.add() for _ in range(10)]
+    quality = {pid: 0.5 + k / 100 for k, pid in enumerate(ids)}  # later ones slightly better
+    relevance = {pid: (1.0 if k < 3 else 0.0) - k / 1000 for k, pid in enumerate(ids)}  # the first three match
+    assert set(lib.pick(quality, query=relevance, n=3, **FLAT)) == set(ids[:3])
+    assert len(lib.pick(quality, query=relevance, n=8, **FLAT)) == 8  # others still fill the draft
+    p = curate.Params(n=3, **FLAT)
+    pool = lib.pool(p, quality, query=relevance)
+    j = list(pool.ids).index(ids[0])
+    assert "top match for the search" in curate.reason(pool, j, p, {})
+    assert lib.pick(quality, n=3, **FLAT) == ids[::-1][:3]  # without a search: quality
+
+
 def test_alternatives_start_with_the_stack(cfg):
     lib = Lib(cfg)
     a = lib.add(near(axis(0), 1))
@@ -218,3 +232,20 @@ def _wait(c):
     deadline = time.time() + 10
     while c.get("/api/export").json()["running"] and time.time() < deadline:
         time.sleep(0.05)
+
+
+def test_curate_api_with_a_search(indexed):
+    from riffle.embed import load_embeddings
+    from riffle.query import query_vectors, score
+
+    enc = FakeClip().encode_text
+    with TestClient(create_app(indexed, text_encoder=enc)) as c:
+        body = {"n": 2, "variety": 0, "time_spread": 0, "place_spread": 0, "query": "red lanterns -blue"}
+        d = c.post("/api/curate", params={"dupes": "all"}, json=body).json()
+        assert d["used"]["query"] is True
+        E, ids = load_embeddings(indexed)
+        best = int(ids[np.argmax(score(E, query_vectors(body["query"], enc)))])
+        assert best in [i["id"] for i in d["items"]]
+        assert "top match for the search" in next(i["reason"] for i in d["items"] if i["id"] == best)
+        assert c.post("/api/curate", json={"n": 2}).json()["used"]["query"] is None  # no search given
+        assert c.post("/api/curate", json={"n": 2, "query": '-""'}).json()["used"]["query"] is False  # nothing to search for

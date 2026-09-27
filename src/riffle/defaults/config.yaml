@@ -35,6 +35,7 @@ tags:
   subject: { min_prob: 0.15, max_tags: 3 }
   scene:   { min_prob: 0.30, max_tags: 1 }
   look:    { min_prob: 0.30, max_tags: 2 }
+  kind:    { min_prob: 0.70, max_tags: 1 }   # photograph, illustration, painting, document
 
 dupes:
   phash_max_distance: 8

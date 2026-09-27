@@ -46,25 +46,34 @@
     { key: 'aperture', label: 'Aperture', step: 0.1, span: (a, b) => `f/${a}–${b}` },
     { key: 'iso', label: 'ISO', step: 1, span: (a, b) => `${a}–${b}` },
   ];
+  const resolution = { key: 'mp', label: 'Megapixels', step: 0.1, span: (a, b) => `${a}–${b} MP` };
+  const rangeActive = (r) => (f[`${r.key}_min`] !== '' ? 1 : 0) + (f[`${r.key}_max`] !== '' ? 1 : 0);
   const orientationLabels = { landscape: 'Landscape', portrait: 'Portrait', square: 'Square' };
 
   function setValue(key, value) {
     view.filters[key] = value.trim();
   }
 
-  // "/photos/Sweden/day 1/" -> "day 1"
-  const folderName = (key) => key.replace(/\/+$/, '').split('/').pop() || key;
+  // Folders: the first ones, plus any selected further down, until "All" is chosen.
+  const FOLDERS_SHOWN = 15;
+  let allFolders = $state(false);
+  const folders = $derived.by(() => {
+    const list = facets?.folder ?? [];
+    if (allFolders) return list;
+    return list.filter((d, i) => i < FOLDERS_SHOWN || f.folder.includes(d.value));
+  });
 
   const fmt = (n) => (n == null ? '' : Number.isInteger(n) ? String(n) : n.toFixed(1));
 </script>
 
-{#snippet option(key, value, label, count)}
+{#snippet option(key, value, label, count, title = undefined)}
   {@const on = f[key].includes(value)}
   <li>
     <button
       class="flex w-full items-center justify-between rounded px-2 py-0.5 text-left transition-colors
         {on ? 'bg-sky-700 text-white' : 'text-neutral-300 hover:bg-neutral-800'}"
       aria-pressed={on}
+      {title}
       onclick={() => toggleFilterValue(key, value)}
     >
       <span class="truncate {value === '' && !on ? 'italic text-neutral-500' : ''}">{label}</span>
@@ -96,15 +105,31 @@
   </div>
 {/snippet}
 
+{#snippet rangeInputs(r)}
+  {@const avail = facets[r.key]}
+  <p class="mb-1 mt-1.5 px-2 text-[11px] text-neutral-500">
+    {avail.count ? `${r.label} (${r.span(fmt(avail.min), fmt(avail.max))})` : r.label}
+  </p>
+  <div class="grid grid-cols-2 gap-1 px-2">
+    {#each ['min', 'max'] as end (end)}
+      {@const k = `${r.key}_${end}`}
+      <input
+        type="number"
+        inputmode="decimal"
+        step={r.step}
+        min="0"
+        aria-label="{r.label} {end}"
+        placeholder={end === 'min' ? `min ${fmt(avail.min)}` : `max ${fmt(avail.max)}`}
+        value={f[k]}
+        onchange={(e) => setValue(k, e.currentTarget.value)}
+        class="min-w-0 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-xs tabular-nums outline-none placeholder:text-neutral-600 focus:border-sky-600"
+      />
+    {/each}
+  </div>
+{/snippet}
+
 {#if facets}
   <div class="mb-2 border-b border-neutral-800 pb-2">
-    {#if f.folder.length}
-      <div class="mx-2 mb-1 flex items-center justify-between gap-2 rounded bg-sky-900/50 px-2 py-1 text-xs text-sky-100">
-        <span class="truncate" title={f.folder.join(', ')}>Folder: {folderName(f.folder[0])}{f.folder.length > 1 ? ` +${f.folder.length - 1}` : ''}</span>
-        <button class="shrink-0 hover:text-white" aria-label="Clear the folder filter" onclick={() => (view.filters.folder = [])}>✕</button>
-      </div>
-    {/if}
-
     {#if showFlag || (facets.exported && facets.exported.yes > 0) || f.exported !== ''}
       <Section id="flag" title="Flag" active={f.flag.length + (f.exported !== '' ? 1 : 0)}>
         {#if showFlag}
@@ -128,6 +153,21 @@
               </button>
             {/each}
           </div>
+        {/if}
+      </Section>
+    {/if}
+
+    {#if showList('folder')}
+      <Section id="folder" title="Folder" active={f.folder.length}>
+        <ul>
+          {#each folders as d (d.value)}
+            {@render option('folder', d.value, d.label, d.count, d.value)}
+          {/each}
+        </ul>
+        {#if facets.folder.length > FOLDERS_SHOWN}
+          <button class="px-2 text-xs text-sky-400 hover:underline" onclick={() => (allFolders = !allFolders)}>
+            {allFolders ? 'Fewer' : `All ${facets.folder.length} folders`}
+          </button>
         {/if}
       </Section>
     {/if}
@@ -159,31 +199,18 @@
     {/if}
 
     {#if ranges.some((r) => showRange(r.key))}
-      <Section id="exposure" title="Exposure" active={ranges.reduce((n, r) => n + (f[`${r.key}_min`] !== '' ? 1 : 0) + (f[`${r.key}_max`] !== '' ? 1 : 0), 0)}>
+      <Section id="exposure" title="Exposure" active={ranges.reduce((n, r) => n + rangeActive(r), 0)}>
         {#each ranges as r (r.key)}
           {#if showRange(r.key)}
-            {@const avail = facets[r.key]}
-            <p class="mb-1 mt-1.5 px-2 text-[11px] text-neutral-500">
-              {avail.count ? `${r.label} (${r.span(fmt(avail.min), fmt(avail.max))})` : r.label}
-            </p>
-            <div class="grid grid-cols-2 gap-1 px-2">
-              {#each ['min', 'max'] as end (end)}
-                {@const k = `${r.key}_${end}`}
-                <input
-                  type="number"
-                  inputmode="decimal"
-                  step={r.step}
-                  min="0"
-                  aria-label="{r.label} {end}"
-                  placeholder={end === 'min' ? `min ${fmt(avail.min)}` : `max ${fmt(avail.max)}`}
-                  value={f[k]}
-                  onchange={(e) => setValue(k, e.currentTarget.value)}
-                  class="min-w-0 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-xs tabular-nums outline-none placeholder:text-neutral-600 focus:border-sky-600"
-                />
-              {/each}
-            </div>
+            {@render rangeInputs(r)}
           {/if}
         {/each}
+      </Section>
+    {/if}
+
+    {#if showRange('mp')}
+      <Section id="resolution" title="Resolution" active={rangeActive(resolution)}>
+        {@render rangeInputs(resolution)}
       </Section>
     {/if}
 

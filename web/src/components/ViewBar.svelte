@@ -1,10 +1,13 @@
 <script>
   // The toolbar above the grid: how the photos are shown (count, grouping and its
   // overview, sort order, stacks). The top bar keeps search and the workflow actions.
-  import { view, hasOverview, isLocationGroup, sortFits } from '../lib/state.svelte.js';
+  import { view, prefs, setPref, hasOverview, overviewName, sortFits, groupLabel, LEVELS, TILE_SIZES } from '../lib/state.svelte.js';
 
   // taste: the taste model's status (enables the "likely keepers / rejects" sorts).
-  let { total, loading, taste = null } = $props();
+  // groups: the grouped grid's groups (null when not grouped); onjump(key): scroll to one.
+  let { total, loading, taste = null, groups = null, onjump = () => {} } = $props();
+
+  const plural = { day: 'days', month: 'months', year: 'years', place: 'places', region: 'regions', country: 'countries', folder: 'folders', similar: 'groups' };
 
   const searching = $derived(!!(view.q || view.similar));
   const select = 'rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-neutral-200';
@@ -18,7 +21,7 @@
     {#if loading && !total}Loading…{:else}{total.toLocaleString()} {total === 1 ? 'photo' : 'photos'}{/if}
   </span>
 
-  <div class="flex items-center gap-1.5 {searching ? 'opacity-40' : ''}" title={searching ? 'Grouping applies when browsing, not to search results' : 'Group the grid by date, place, or folder'}>
+  <div class="flex items-center gap-1.5 {searching ? 'opacity-40' : ''}" title={searching ? 'Grouping applies when browsing, not to search results' : 'Group the grid by date, place, folder, or similar content'}>
     <label for="viewbar-group">Group</label>
     <select
       id="viewbar-group"
@@ -43,7 +46,27 @@
       <optgroup label="Files">
         <option value="folder">Folder</option>
       </optgroup>
+      <optgroup label="Content">
+        <option value="similar">Similar</option>
+      </optgroup>
     </select>
+    {#if view.group === 'similar'}
+      <div
+        class="flex overflow-hidden rounded border border-neutral-700"
+        role="group"
+        aria-label="How finely to group"
+        title="How finely similar photos are grouped: a few broad themes, or many small, close groups"
+      >
+        {#each LEVELS as level, i (level)}
+          <button
+            class="{segment} {i ? 'border-l border-neutral-700' : ''} {view.level === level ? on : off}"
+            aria-pressed={view.level === level}
+            disabled={searching}
+            onclick={() => (view.level = level)}>{level[0].toUpperCase() + level.slice(1)}</button
+          >
+        {/each}
+      </div>
+    {/if}
     {#if hasOverview(view.group)}
       <div class="flex overflow-hidden rounded border border-neutral-700" role="group" aria-label="Grid or overview">
         <button class="{segment} {view.overview ? off : on}" aria-pressed={!view.overview} disabled={searching} onclick={() => (view.overview = false)}>Grid</button>
@@ -51,8 +74,8 @@
           class="{segment} border-l border-neutral-700 {view.overview ? on : off}"
           aria-pressed={view.overview}
           disabled={searching}
-          title="{isLocationGroup(view.group) ? 'Map' : 'Calendar'} of the groups (O)"
-          onclick={() => (view.overview = true)}>{isLocationGroup(view.group) ? 'Map' : 'Calendar'}</button
+          title="{overviewName(view.group)} of the groups (O)"
+          onclick={() => (view.overview = true)}>{overviewName(view.group)}</button
         >
       </div>
     {/if}
@@ -93,6 +116,17 @@
     </select>
   </div>
 
+  <div class="flex overflow-hidden rounded border border-neutral-700 {view.overview ? 'opacity-40' : ''}" role="group" aria-label="Thumbnail size">
+    {#each Object.keys(TILE_SIZES) as size, i (size)}
+      <button
+        class="{segment} {i ? 'border-l border-neutral-700' : ''} {prefs.tileSize === size ? on : off}"
+        aria-pressed={prefs.tileSize === size}
+        title="{size[0].toUpperCase() + size.slice(1)} thumbnails"
+        onclick={() => setPref('tileSize', size)}>{size[0].toUpperCase()}</button
+      >
+    {/each}
+  </div>
+
   <label class="flex cursor-pointer items-center gap-1.5" title="Show one tile per stack of similar shots (S)">
     <input
       type="checkbox"
@@ -102,4 +136,23 @@
     />
     Stacks
   </label>
+
+  {#if groups?.length > 1}
+    <div class="ml-auto flex items-center gap-1.5">
+      <label for="viewbar-jump">{groups.length} {plural[view.group] ?? 'groups'}</label>
+      <select
+        id="viewbar-jump"
+        class={select}
+        onchange={(e) => {
+          onjump(e.currentTarget.value);
+          e.currentTarget.selectedIndex = 0;
+        }}
+      >
+        <option value="" disabled selected>Jump to…</option>
+        {#each groups as g (g.key)}
+          <option value={g.key}>{groupLabel(g.key, view.group, g.label)} ({g.count})</option>
+        {/each}
+      </select>
+    </div>
+  {/if}
 </div>

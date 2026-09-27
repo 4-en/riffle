@@ -1,8 +1,9 @@
 <script>
-  import { view, search, clearAll } from '../lib/state.svelte.js';
+  import { view, prefs, setPref, search, clearAll } from '../lib/state.svelte.js';
+  import ProfileMenu from './ProfileMenu.svelte';
 
   // The grid's own controls (count, group, sort, stacks) are in ViewBar.
-  let { indexStatus = null, textSearch = true, picks = 0 } = $props();
+  let { indexStatus = null, textSearch = true, picks = 0, profiles = [] } = $props();
 
   const indexPct = $derived(
     indexStatus?.running && indexStatus.total ? Math.round((100 * indexStatus.done) / indexStatus.total) : null
@@ -44,15 +45,28 @@
     Riffle
   </button>
 
-  <form class="relative flex-1" {onsubmit}>
-    <input
-      bind:this={input}
-      bind:value={text}
-      type="search"
-      disabled={!textSearch}
-      placeholder={textSearch ? 'Search photos, e.g. "red lanterns at night"   ( / )' : 'Search works once the AI model is loaded'}
-      class="w-full max-w-2xl rounded-md border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm placeholder-neutral-500 outline-none focus:border-sky-600"
-    />
+  <form class="flex-1" {onsubmit}>
+    <div class="relative max-w-2xl">
+      <input
+        bind:this={input}
+        bind:value={text}
+        type="search"
+        disabled={!textSearch}
+        placeholder={textSearch ? 'Search photos, e.g. "boats at sunset", or leave something out: "street -people"   ( / )' : 'Search works once the AI model is loaded'}
+        class="w-full rounded-md border border-neutral-700 bg-neutral-950 py-1.5 pl-3 pr-20 text-sm placeholder-neutral-500 outline-none focus:border-sky-600"
+      />
+      <button
+        type="button"
+        class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-[11px] {prefs.nameMatch
+          ? 'bg-sky-800 text-sky-100 hover:bg-sky-700'
+          : 'text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300'}"
+        aria-pressed={prefs.nameMatch}
+        title={prefs.nameMatch
+          ? 'File and folder names: on. Photos whose file name (then folder) contains all search words come first. Click to turn off.'
+          : 'File and folder names: off. Search looks at the pictures only. Click to also put name matches first.'}
+        onclick={() => setPref('nameMatch', !prefs.nameMatch)}>Names</button
+      >
+    </div>
   </form>
 
   {#if view.similar}
@@ -77,10 +91,12 @@
     >
     <button
       class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-      title={view.q || view.similar
-        ? 'Curate works on the current filters, not on search results'
-        : 'Draft a small, varied selection (photo book, exhibition) from the current filters'}
-      disabled={!!(view.q || view.similar)}
+      title={view.similar
+        ? 'Curate works on the current filters and a text search, not on "similar to"'
+        : view.q
+          ? 'Draft a small, varied selection from the current filters, leaning towards this search'
+          : 'Draft a small, varied selection (photo book, exhibition) from the current filters'}
+      disabled={!!view.similar}
       onclick={() => (view.curate = true)}>Curate</button
     >
     <button
@@ -93,6 +109,8 @@
   </div>
 
   <div class="h-5 w-px shrink-0 bg-neutral-800"></div>
+
+  <ProfileMenu {profiles} />
 
   <button
     class="flex shrink-0 items-center gap-2 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"

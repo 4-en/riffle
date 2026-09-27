@@ -14,7 +14,7 @@
   let loading = $state(true);
 
   $effect(() => {
-    JSON.stringify(view.filters), view.tags, view.excludeTags, view.collapse; // reload when the filters change
+    JSON.stringify(view.filters), view.tags, view.excludeTags, view.ctags, view.excludeCtags, view.collapse; // reload when the filters change
     untrack(load);
   });
 

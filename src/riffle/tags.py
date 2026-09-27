@@ -6,7 +6,7 @@ Each tag may list alternative phrases; a photo scores a tag by its best-matching
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -28,6 +28,13 @@ class Label:
 class Vocabulary:
     templates: list[str]
     families: dict[str, list[Label]]
+    # Prompt templates for single families (``family_templates:`` in the file). The
+    # "kind" family uses the bare phrase: "a photo of a drawing" confuses the model
+    # (on the first library, it called 167 photos screenshots; the bare phrase, 24).
+    family_templates: dict[str, list[str]] = field(default_factory=dict)
+
+    def templates_for(self, family: str) -> list[str]:
+        return self.family_templates.get(family) or self.templates
 
 
 def _parse_label(entry) -> Label:
@@ -45,6 +52,7 @@ def _parse_label(entry) -> Label:
 def load_vocabulary(path: Path) -> Vocabulary:
     raw = yaml.safe_load(Path(path).read_text()) or {}
     templates = raw.pop("templates", None) or DEFAULT_TEMPLATES
+    family_templates = {k: list(v) for k, v in (raw.pop("family_templates", None) or {}).items() if v}
     raw.pop("styles", None)  # Curate's style sliders, not a tag family (see curate.py)
     families = {
         k: [_parse_label(x) for x in v] for k, v in raw.items() if isinstance(v, list) and v
@@ -53,7 +61,7 @@ def load_vocabulary(path: Path) -> Vocabulary:
         names = [l.name for l in labels]
         if len(names) != len(set(names)):
             raise ValueError(f"duplicate tag names in vocabulary family {family!r}")
-    return Vocabulary(templates=templates, families=families)
+    return Vocabulary(templates=templates, families=families, family_templates=family_templates)
 
 
 def phrase_vectors(phrases: list[str], templates: list[str], encode_text: Callable[[list[str]], np.ndarray]) -> np.ndarray:
@@ -127,7 +135,7 @@ def tag_photos(
         thresholds = tcfg.families.get(family)
         min_prob = thresholds.min_prob if thresholds else 0.2
         max_tags = thresholds.max_tags if thresholds else 1
-        sims = label_similarities(E, labels, vocab.templates, encode_text)
+        sims = label_similarities(E, labels, vocab.templates_for(family), encode_text)
         rows = []
         for pid, picks in zip(ids, assign(sims, tcfg.softmax_scale, min_prob, max_tags)):
             for j, prob, sim in picks:

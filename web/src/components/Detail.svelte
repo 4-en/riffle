@@ -223,6 +223,25 @@
           {/each}
         </dl>
 
+        {#if photo.custom_tags?.length}
+          <section>
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Your tags</h3>
+            <div class="flex flex-wrap gap-1">
+              {#each photo.custom_tags as tag (tag.id)}
+                <button
+                  class="rounded-full border border-neutral-600 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
+                  title="Show the photos with this tag"
+                  onclick={() => {
+                    if (!view.ctags.includes(tag.id)) view.ctags = [...view.ctags, tag.id];
+                    view.excludeCtags = view.excludeCtags.filter((t) => t !== tag.id);
+                    view.photo = null;
+                  }}>{tag.name}</button
+                >
+              {/each}
+            </div>
+          </section>
+        {/if}
+
         {#each Object.entries(families) as [family, list] (family)}
           <section>
             <h3 class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">{family}</h3>

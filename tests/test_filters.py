@@ -55,6 +55,18 @@ def test_ranges_orientation_and_gps(client):
     assert client.get("/api/photos", params={"orientation": "diagonal"}).status_code == 400
 
 
+def test_megapixel_range(client, conn):
+    sizes = {"IMG_0001.jpg": (6000, 4000), "IMG_0002.jpg": (4000, 3000), "IMG_0002_edit.png": (1280, 960), "IMG_0003.png": (1920, 1080)}
+    for name, (w, h) in sizes.items():
+        conn.execute("UPDATE photos SET width = ?, height = ? WHERE rel_path LIKE ?", (w, h, f"%{name}"))
+    conn.commit()
+    assert names(client, mp_min=12) == ["IMG_0001.jpg", "IMG_0002.jpg"]
+    assert names(client, mp_max=2.1) == ["IMG_0002_edit.png", "IMG_0003.png"]
+    assert names(client, mp_min=2, mp_max=20) == ["IMG_0002.jpg", "IMG_0003.png"]
+    # Facet bounds round outwards to the one decimal shown (1.2288 -> 1.2, 24.0 stays).
+    assert client.get("/api/facets").json()["mp"] == {"min": 1.2, "max": 24.0, "count": 4}
+
+
 def test_filters_apply_to_search(client, conn):
     a = photo(conn, "IMG_0002.jpg")["id"]
     assert names(client, f"/api/search/similar/{a}", iso_min=200) == ["IMG_0001.jpg", "IMG_0003.png"]
@@ -102,6 +114,17 @@ def test_grouped_listing(client):
     assert kc(filtered["groups"]) == [{"key": "2024", "count": 2}]
     paged = client.get("/api/photos", params={"group": "day", "dupes": "all", "limit": 1, "offset": 3}).json()
     assert len(paged["groups"]) == 4 and paged["items"][0]["group"] == ""
+
+
+@pytest.mark.parametrize("group", ["day", "month", "year", "folder"])
+@pytest.mark.parametrize("sort", ["taken_at", "-taken_at"])
+def test_groups_match_listing_order(client, conn, group, sort):
+    # The grid lays out every group from the summary and fetches pages out of order,
+    # so the summary must list the groups in the listing's order with its counts.
+    conn.execute("UPDATE photos SET rel_path = 'IMG_0003.png' WHERE rel_path LIKE '%IMG_0003.png'")  # a second folder
+    conn.commit()
+    res = client.get("/api/photos", params={"group": group, "sort": sort, "dupes": "all"}).json()
+    assert [i["group"] for i in res["items"]] == [g["key"] for g in res["groups"] for _ in range(g["count"])]
 
     assert client.get("/api/photos", params={"group": "week"}).status_code == 400
     assert "groups" not in client.get("/api/photos").json()
@@ -183,3 +206,35 @@ def test_group_by_folder(indexed, conn, archive_dir, fake_clip):
         assert names == ["evening.jpg", *sorted(names[1:], key=str.lower, reverse=True)]
         only = c.get("/api/photos", params={"folder": day2, "dupes": "all"}).json()["items"]
         assert [i["rel_path"] for i in only] == ["trip/day 2/evening.jpg"]  # that folder only, not its parent
+
+
+def test_folder_filter_lists_parent_folders(indexed, archive_dir, fake_clip):
+    from PIL import Image
+
+    from conftest import fake_index
+
+    other = archive_dir / "more photos"
+    (other / "sub").mkdir(parents=True)
+    Image.new("RGB", (64, 48), "blue").save(other / "a.jpg")
+    Image.new("RGB", (48, 64), "red").save(other / "sub" / "b.jpg")
+    indexed.sources.append(other)  # added second, although it sorts first by path
+    fake_index(indexed)
+    first = str(indexed.sources[0])
+    with TestClient(create_app(indexed, text_encoder=fake_clip.encode_text)) as c:
+        facet = c.get("/api/facets", params={"dupes": "all"}).json()["folder"]
+        # Each photo's direct parent folder, by photo folder in the Library's order.
+        assert [(d["label"], d["count"]) for d in facet] == [
+            ("photos / trip", 4),
+            ("more photos", 1),
+            ("more photos / sub", 1),
+        ]
+        assert facet[0]["value"] == f"{first}/trip/"
+        top = facet[1]["value"]
+        only = c.get("/api/photos", params={"folder": top, "dupes": "all"}).json()
+        assert [i["rel_path"] for i in only["items"]] == ["a.jpg"]  # not its subfolder
+        both = c.get("/api/photos", params={"folder": [top, facet[2]["value"]], "dupes": "all"}).json()
+        assert both["total"] == 2
+        # Its own options stay selectable; the other filters narrow the counts.
+        narrowed = c.get("/api/facets", params={"folder": top, "orientation": "portrait", "dupes": "all"}).json()
+        assert [(d["label"], d["count"]) for d in narrowed["folder"]] == [("photos / trip", 1), ("more photos / sub", 1)]
+        assert c.get("/api/search/text", params={"q": "x", "folder": top, "dupes": "all"}).json()["total"] == 1

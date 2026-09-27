@@ -1,11 +1,12 @@
 <script>
-  import { view, toggleTag, toggleExcludeTag, activeCount, clearAll } from '../lib/state.svelte.js';
+  import { view, toggleTag, toggleExcludeTag, toggleCtag, toggleExcludeCtag, activeCount, clearAll } from '../lib/state.svelte.js';
   import Filters from './Filters.svelte';
   import Section from './Section.svelte';
 
-  let { tags, facets } = $props();
+  // profile: the active profile's name when it is not the default (shown at the top).
+  let { tags, facets, profile = null } = $props();
 
-  const titles = { subject: 'Subject', scene: 'Scene', look: 'Look' };
+  const titles = { subject: 'Subject', scene: 'Scene', look: 'Look', kind: 'Kind' };
   // Server order follows vocabulary.yaml; only tags present in the current filter are listed.
   const families = $derived(tags ? Object.entries(tags.families) : []);
 </script>
@@ -14,6 +15,11 @@
   {#if !tags}
     <p class="px-2 text-neutral-500">Loading tags…</p>
   {:else}
+    {#if profile}
+      <p class="mb-2 truncate rounded bg-sky-950/60 px-2 py-1 text-xs text-sky-200" title="Picks, rejects, export history and your tags belong to this profile">
+        Profile: {profile}
+      </p>
+    {/if}
     {#if activeCount()}
       <div class="mb-3 flex items-center justify-between rounded bg-neutral-800/60 px-2 py-1.5 text-xs">
         <span class="text-neutral-400">{activeCount()} active</span>
@@ -21,6 +27,53 @@
       </div>
     {/if}
     <Filters {facets} />
+    <Section
+      id="tags-custom"
+      title="Your tags"
+      defaultOpen
+      active={(tags.custom ?? []).filter((t) => view.ctags.includes(t.id) || view.excludeCtags.includes(t.id)).length}
+    >
+      {#if tags.custom?.length}
+        <ul>
+          {#each tags.custom as tag (tag.id)}
+            {@const on = view.ctags.includes(tag.id)}
+            {@const off = view.excludeCtags.includes(tag.id)}
+            <li class="group/tag relative">
+              <button
+                class="flex w-full items-center justify-between rounded px-2 py-1 text-left transition-colors
+                  {on ? 'bg-sky-700 text-white' : off ? 'bg-red-950 text-red-300' : 'text-neutral-300 hover:bg-neutral-800'}"
+                aria-pressed={on || off}
+                title={off ? 'Excluded: click to show these photos again' : on ? 'Included: click to remove' : 'Click: only photos like its examples · Alt+click: hide them'}
+                onclick={(e) => (off || e.altKey ? toggleExcludeCtag(tag.id) : toggleCtag(tag.id))}
+              >
+                <span class="truncate {off ? 'line-through decoration-red-400/70' : ''}">{off ? '−\u2009' : ''}{tag.name}</span>
+                <span class="ml-2 text-xs tabular-nums {on ? 'text-sky-100' : off ? 'text-red-400' : 'text-neutral-500'} {off ? '' : 'group-hover/tag:invisible'}">
+                  {off ? 'hidden' : tag.count}
+                </span>
+              </button>
+              <div class="absolute right-1 top-1/2 hidden -translate-y-1/2 gap-0.5 group-hover/tag:flex">
+                <button
+                  class="rounded px-1.5 text-xs leading-5 {on ? 'text-sky-100 hover:bg-sky-800' : 'text-neutral-400 hover:bg-neutral-700 hover:text-white'}"
+                  title="Edit the tag: name, examples, strictness"
+                  aria-label="Edit {tag.name}"
+                  onclick={() => (view.tagDialog = { mode: 'edit', tag })}>✎</button
+                >
+                {#if !off}
+                  <button
+                    class="rounded px-1.5 text-xs font-bold leading-5 {on ? 'text-sky-100 hover:bg-sky-800' : 'text-neutral-400 hover:bg-red-900 hover:text-white'}"
+                    title="Exclude: hide photos with this tag (Alt+click)"
+                    aria-label="Exclude {tag.name}"
+                    onclick={() => toggleExcludeCtag(tag.id)}>−</button
+                  >
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="px-2 text-xs text-neutral-500">Select photos, right-click → <em>Create tag</em>: photos like them get the tag.</p>
+      {/if}
+    </Section>
     {#each families as [family, list] (family)}
       <Section
         id="tags-{family}"

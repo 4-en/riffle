@@ -6,6 +6,8 @@ are OR-combined; different facets are AND-combined.
 
 from __future__ import annotations
 
+import json
+import math
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -52,7 +54,12 @@ NAME_SORTS = {
     "folder": ("name", "-name"),
 }
 
-RANGE_COLUMNS = {"focal": "p.focal_length", "aperture": "p.aperture", "iso": "p.iso"}
+RANGE_COLUMNS = {
+    "focal": "p.focal_length",
+    "aperture": "p.aperture",
+    "iso": "p.iso",
+    "mp": "(p.width * p.height / 1e6)",  # resolution in megapixels
+}
 
 ORIENTATIONS = {
     "landscape": "p.width > p.height",
@@ -93,6 +100,11 @@ class PhotoFilter:
     place: list[str] = field(default_factory=list)
     loc_source: list[str] = field(default_factory=list)
     folder: list[str] = field(default_factory=list)  # parent folder keys (FOLDER_KEY), not subfolders
+    ctags: list[int] = field(default_factory=list)  # custom tags (example photos): must be in all
+    exclude_ctags: list[int] = field(default_factory=list)  # ...and in none of these
+    # Their members, resolved by the server from the embeddings (custom_tags.py):
+    ctag_members: list[list[int]] = field(default_factory=list)  # one list per tag in ctags
+    ctag_excluded: list[int] = field(default_factory=list)  # union over exclude_ctags
     exposure: list[str] = field(default_factory=list)  # EXPOSURE keys, OR-combined
 
     def where(self, model_id: str, exclude: frozenset[str] = frozenset()) -> tuple[str, list]:
@@ -117,6 +129,15 @@ class PhotoFilter:
                     WHERE model_id = ? AND tag_id IN ({marks}))"""
             )
             params += [model_id, *self.exclude_tags]
+
+        if "tags" not in exclude:
+            # One JSON array per tag keeps the query within SQLite's parameter limit.
+            for ids in self.ctag_members:
+                clauses.append("p.id IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(ids))
+            if self.ctag_excluded:
+                clauses.append("p.id NOT IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(self.ctag_excluded))
 
         if "date" not in exclude:
             if self.date_from:
@@ -202,6 +223,8 @@ def photo_filter(
     aperture_max: float | None = None,
     iso_min: float | None = None,
     iso_max: float | None = None,
+    mp_min: float | None = None,
+    mp_max: float | None = None,
     orientation: list[str] = Query([]),
     gps: bool | None = None,
     flag: list[str] = Query([]),
@@ -212,13 +235,17 @@ def photo_filter(
     loc_source: list[str] = Query([]),
     exposure: list[str] = Query([]),
     folder: list[str] = Query([]),
+    ctags: str | None = None,
+    exclude_ctags: str | None = None,
 ) -> PhotoFilter:
     """FastAPI dependency: the filter from query parameters."""
     try:
         tag_ids = sorted({int(t) for t in (tags or "").split(",") if t.strip()})
         excluded_ids = sorted({int(t) for t in (exclude_tags or "").split(",") if t.strip()} - set(tag_ids))
+        ctag_ids = sorted({int(t) for t in (ctags or "").split(",") if t.strip()})
+        excluded_ctag_ids = sorted({int(t) for t in (exclude_ctags or "").split(",") if t.strip()} - set(ctag_ids))
     except ValueError:
-        raise HTTPException(400, "tags and exclude_tags must be comma-separated tag ids")
+        raise HTTPException(400, "tags, exclude_tags, ctags and exclude_ctags must be comma-separated ids")
     for d in (date_from, date_to):
         if d and not _DATE.match(d):
             raise HTTPException(400, "dates must be YYYY-MM-DD")
@@ -237,6 +264,7 @@ def photo_filter(
             ("focal", focal_min, focal_max),
             ("aperture", aperture_min, aperture_max),
             ("iso", iso_min, iso_max),
+            ("mp", mp_min, mp_max),
         )
         if lo is not None or hi is not None
     }
@@ -258,6 +286,8 @@ def photo_filter(
         loc_source=list(dict.fromkeys(loc_source)),
         exposure=list(dict.fromkeys(exposure)),
         folder=list(dict.fromkeys(folder)),
+        ctags=ctag_ids,
+        exclude_ctags=excluded_ctag_ids,
     )
 
 
@@ -287,11 +317,23 @@ def facets(conn: sqlite3.Connection, flt: PhotoFilter, model_id: str) -> dict:
             )
         ]
 
+    # Each photo's direct parent folder (not its subfolders), in path order.
+    w, p = where("folder")
+    out["folder"] = [
+        {"value": value, "count": count}
+        for value, count in conn.execute(
+            f"SELECT {FOLDER_KEY} AS k, COUNT(*) FROM photos p WHERE {w} GROUP BY k ORDER BY k", p
+        )
+    ]
+
     for name, column in RANGE_COLUMNS.items():
         w, p = where(name)
         lo, hi, n = conn.execute(
             f"SELECT MIN({column}), MAX({column}), COUNT({column}) FROM photos p WHERE {w}", p
         ).fetchone()
+        if name == "mp" and n:
+            # Shown to one decimal: round outwards, so typing the shown bounds keeps every photo.
+            lo, hi = math.floor(lo * 10) / 10, math.ceil(hi * 10) / 10
         out[name] = {"min": lo, "max": hi, "count": n}
 
     w, p = where("orientation")

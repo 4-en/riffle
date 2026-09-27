@@ -22,6 +22,7 @@ dependencies = [
     "reverse_geocode>=1.6",
     "platformdirs>=4.0",
     "scipy>=1.10",  # taste model (also used by reverse_geocode)
+    "scikit-learn>=1.3",  # the Similar map's layout (t-SNE)
 ]
 
 [project.optional-dependencies]

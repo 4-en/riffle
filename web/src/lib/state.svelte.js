@@ -2,7 +2,7 @@
 
 // EXIF filters, keyed by their API query parameter. Arrays are OR-combined values.
 const FILTER_ARRAYS = ['camera', 'lens', 'orientation', 'flag', 'country', 'region', 'place', 'loc_source', 'folder'];
-const FILTER_SCALARS = ['date_from', 'date_to', 'focal_min', 'focal_max', 'aperture_min', 'aperture_max', 'iso_min', 'iso_max', 'gps', 'exported'];
+const FILTER_SCALARS = ['date_from', 'date_to', 'focal_min', 'focal_max', 'aperture_min', 'aperture_max', 'iso_min', 'iso_max', 'mp_min', 'mp_max', 'gps', 'exported'];
 
 export function emptyFilters() {
   return Object.fromEntries([...FILTER_ARRAYS.map((k) => [k, []]), ...FILTER_SCALARS.map((k) => [k, ''])]);
@@ -12,13 +12,42 @@ export function activeFilterCount(f) {
   return FILTER_ARRAYS.filter((k) => f[k].length).length + FILTER_SCALARS.filter((k) => f[k] !== '').length;
 }
 
+// Per-browser preferences (not in the URL).
+function loadPref(key, fallback) {
+  try {
+    const v = localStorage.getItem(`riffle.${key}`);
+    return v === null ? fallback : JSON.parse(v);
+  } catch {
+    return fallback;
+  }
+}
+
+export const prefs = $state({
+  nameMatch: loadPref('nameMatch', true), // text search also puts file / folder name matches first
+  tileSize: loadPref('tileSize', 'medium'), // grid thumbnails: 'small' | 'medium' | 'large'
+});
+
+/** Grid tile sizes: the smallest width a tile may have (the grid fills each row). */
+export const TILE_SIZES = { small: 112, medium: 168, large: 260 };
+
+export function setPref(key, value) {
+  prefs[key] = value;
+  try {
+    localStorage.setItem(`riffle.${key}`, JSON.stringify(value));
+  } catch {}
+}
+
 export const view = $state({
   q: '',
   similar: null, // photo id
   tags: [], // tag ids, AND-combined: photos must have all of them
   excludeTags: [], // tag ids: photos must have none of them
+  ctags: [], // custom tag ids (taught by example photos): photos must be in all of them
+  excludeCtags: [], // custom tag ids: photos must be in none of them
+  tagDialog: null, // custom tag dialog: {mode: 'create', photoIds} | {mode: 'edit', tag} (not in the URL)
   filters: emptyFilters(),
-  group: '', // '' | 'day' | 'month' | 'year' | 'place' | 'region' | 'country' (browsing only, not search)
+  group: '', // '' | 'day' | 'month' | 'year' | 'place' | 'region' | 'country' | 'folder' | 'similar' (browsing only)
+  level: 'medium', // for group 'similar': 'broad' | 'medium' | 'fine'
   collapse: 'dupes', // 'dupes' | 'stacks': one tile per duplicate group or per stack
   sort: 'taken_at', // 'taken_at' | '-taken_at' | 'taste' (likely keepers first) | '-taste' (likely rejects first)
   overview: false, // calendar (date grouping) or map (location grouping) instead of the grid
@@ -37,9 +66,12 @@ export function readUrl() {
   view.similar = p.has('similar') ? Number(p.get('similar')) : null;
   view.tags = (p.get('tags') ?? '').split(',').filter(Boolean).map(Number);
   view.excludeTags = (p.get('xtags') ?? '').split(',').filter(Boolean).map(Number);
+  view.ctags = (p.get('ctags') ?? '').split(',').filter(Boolean).map(Number);
+  view.excludeCtags = (p.get('xctags') ?? '').split(',').filter(Boolean).map(Number);
   view.photo = p.has('photo') ? Number(p.get('photo')) : null;
   view.raws = p.has('raws');
   view.group = GROUPS.includes(p.get('group')) ? p.get('group') : '';
+  view.level = LEVELS.includes(p.get('level')) ? p.get('level') : 'medium';
   view.collapse = p.get('collapse') === 'stacks' ? 'stacks' : 'dupes';
   view.sort = SORTS.includes(p.get('sort')) ? p.get('sort') : 'taken_at';
   view.overview = p.has('overview') && GROUPS.includes(view.group);
@@ -55,9 +87,12 @@ export function urlFor(v) {
   if (v.similar) p.set('similar', v.similar);
   if (v.tags.length) p.set('tags', v.tags.join(','));
   if (v.excludeTags.length) p.set('xtags', v.excludeTags.join(','));
+  if (v.ctags.length) p.set('ctags', v.ctags.join(','));
+  if (v.excludeCtags.length) p.set('xctags', v.excludeCtags.join(','));
   for (const k of FILTER_ARRAYS) for (const x of v.filters[k]) p.append(k, x);
   for (const k of FILTER_SCALARS) if (v.filters[k] !== '') p.set(k, v.filters[k]);
   if (v.group) p.set('group', v.group);
+  if (v.group === 'similar' && v.level !== 'medium') p.set('level', v.level);
   if (v.collapse === 'stacks') p.set('collapse', 'stacks');
   if (v.sort !== 'taken_at') p.set('sort', v.sort);
   if (v.overview) p.set('overview', '');
@@ -82,9 +117,13 @@ export function sortFits(group, sort) {
 
 export const DATE_GROUPS = ['day', 'month', 'year'];
 export const LOCATION_GROUPS = ['place', 'region', 'country'];
-export const GROUPS = [...DATE_GROUPS, ...LOCATION_GROUPS, 'folder'];
+export const GROUPS = [...DATE_GROUPS, ...LOCATION_GROUPS, 'folder', 'similar'];
+/** How finely the "Similar" grouping clusters. */
+export const LEVELS = ['broad', 'medium', 'fine'];
 /** Groupings with an overview: a calendar for dates, a map for locations (none for folders). */
-export const hasOverview = (mode) => DATE_GROUPS.includes(mode) || LOCATION_GROUPS.includes(mode);
+export const hasOverview = (mode) => DATE_GROUPS.includes(mode) || LOCATION_GROUPS.includes(mode) || mode === 'similar';
+/** The overview's name: a calendar for dates, a map for places and for Similar. */
+export const overviewName = (mode) => (DATE_GROUPS.includes(mode) ? 'Calendar' : 'Map');
 export const isLocationGroup = (mode) => LOCATION_GROUPS.includes(mode);
 
 /** The key the API uses to group a photo (detail object) by date or location. */
@@ -100,6 +139,7 @@ export function groupKey(photo, mode) {
 export function groupLabel(key, mode, label = null) {
   if (isLocationGroup(mode)) return label || (key ? key : 'Unknown location');
   if (mode === 'folder') return label || key || 'Unknown folder';
+  if (mode === 'similar') return label || (key ? 'Similar photos' : 'Other');
   if (!key) return 'Undated';
   const [y, m = 1, d = 1] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d);
@@ -170,9 +210,35 @@ export function toggleExcludeTag(id) {
   view.excludeTags = view.excludeTags.includes(id) ? view.excludeTags.filter((t) => t !== id) : [...view.excludeTags, id];
 }
 
+/** Toggle including a custom tag (replaces excluding it). */
+export function toggleCtag(id) {
+  view.excludeCtags = view.excludeCtags.filter((t) => t !== id);
+  view.ctags = view.ctags.includes(id) ? view.ctags.filter((t) => t !== id) : [...view.ctags, id];
+}
+
+/** Toggle excluding a custom tag (replaces including it). */
+export function toggleExcludeCtag(id) {
+  view.ctags = view.ctags.filter((t) => t !== id);
+  view.excludeCtags = view.excludeCtags.includes(id) ? view.excludeCtags.filter((t) => t !== id) : [...view.excludeCtags, id];
+}
+
+/** What a Curate draft is remembered by: tags, custom tags, and filters. (Custom tags
+ * are only added when used, so drafts saved before they existed keep their key.) */
+export function curateKey() {
+  const key = [view.tags, view.excludeTags, view.filters];
+  return view.ctags.length || view.excludeCtags.length ? [...key, view.ctags, view.excludeCtags] : key;
+}
+
 /** How many things narrow the view: search, each included/excluded tag, each filter. */
 export function activeCount() {
-  return (view.q || view.similar ? 1 : 0) + view.tags.length + view.excludeTags.length + activeFilterCount(view.filters);
+  return (
+    (view.q || view.similar ? 1 : 0) +
+    view.tags.length +
+    view.excludeTags.length +
+    view.ctags.length +
+    view.excludeCtags.length +
+    activeFilterCount(view.filters)
+  );
 }
 
 /** Back to the whole library: no search, no tags, no filters. */
@@ -180,12 +246,14 @@ export function clearAll() {
   clearSearch();
   view.tags = [];
   view.excludeTags = [];
+  view.ctags = [];
+  view.excludeCtags = [];
   clearFilters();
 }
 
 /** Any tag included or excluded. */
 export function tagFilterActive() {
-  return view.tags.length > 0 || view.excludeTags.length > 0;
+  return view.tags.length > 0 || view.excludeTags.length > 0 || view.ctags.length > 0 || view.excludeCtags.length > 0;
 }
 
 export function search(q) {

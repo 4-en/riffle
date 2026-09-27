@@ -7,6 +7,8 @@ background (the first start downloads it), so the UI is usable at once.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+from collections import OrderedDict
 import json
 import logging
 import os
@@ -18,6 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
+import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,6 +48,11 @@ from .selections import EXPORTED_EXPR, FLAG_EXPR, flag_expr
 log = logging.getLogger(__name__)
 
 # The built UI (`npm run build` in web/ writes it here; package data in the wheel).
+# The "Similar" grouping's key: a photo's cluster, looked up in a JSON object {photo id:
+# cluster key} held by the clusters CTE (similar_clusters). A lookup by key: a join
+# against a JSON list scanned the whole list per photo (470 ms vs 13 ms for 2,132).
+SIMILAR_KEY = """json_extract((SELECT map FROM clusters), '$."' || p.id || '"')"""
+
 WEB_DIST = Path(__file__).resolve().parent / "web"
 
 TextEncoder = Callable[[list[str]], np.ndarray]
@@ -89,10 +97,40 @@ class CurateIn(BaseModel):
     include_rejects: bool = False
     locked: list[int] = []
     removed: list[int] = []
+    look: dict[str, int | str | None] = {}  # colour and light: see curate.look_scores
+    query: str = ""  # a text search that scores the candidates (query.py syntax)
 
 
 class AlternativesIn(CurateIn):
     id: int
+
+
+class ProfileIn(BaseModel):
+    name: str
+    copy_from: str | None = None  # a profile slug; None = start empty
+    parts: list[str] | None = None  # what to copy: flags, exported, tags (default: all)
+
+
+class ProfileRename(BaseModel):
+    name: str
+
+
+class CustomTagIn(BaseModel):
+    name: str
+    photo_ids: list[int]
+    strictness: str = "normal"
+
+
+class CustomTagEdit(BaseModel):
+    name: str | None = None
+    strictness: str | None = None
+    add: list[int] = []
+    remove: list[int] = []
+
+
+class CustomTagPreview(BaseModel):
+    photo_ids: list[int]
+    strictness: str = "normal"
 
 
 class FlagOp(BaseModel):
@@ -135,15 +173,23 @@ class TasteStore:
     next to the embeddings, loaded at startup. Scores for the indexed photos are
     recomputed (cheaply, without retraining) when the embeddings change."""
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, selections_path, profile: str = "default"):
+        self.cfg = cfg
+        self.lock = threading.Lock()
+        self.use(selections_path, profile)
+
+    def use(self, selections_path, profile: str) -> None:
+        """Switch to a profile: its flags train the model, and its model is its own
+        file (the default profile keeps the original name)."""
         from . import taste
 
-        self.cfg = cfg
-        self.path = cfg.embeddings_dir / f"{cfg.model.model_id}.taste.npz"
-        self.lock = threading.Lock()
-        self.model = taste.TasteModel.load(self.path)
-        self.scores: dict[int, float] = {}
-        self.scored_stamp = None
+        suffix = "" if profile == "default" else f".{profile}"
+        with self.lock:
+            self.selections_path = selections_path
+            self.path = self.cfg.embeddings_dir / f"{self.cfg.model.model_id}{suffix}.taste.npz"
+            self.model = taste.TasteModel.load(self.path)
+            self.scores: dict[int, float] = {}
+            self.scored_stamp = None
 
     def _refresh_scores(self, index: Index) -> None:
         if self.scored_stamp == index.stamp:
@@ -157,7 +203,7 @@ class TasteStore:
     def calibrate(self, index: Index):
         from . import taste
 
-        conn = db.connect_readonly(self.cfg.db_path, self.cfg.selections_path)
+        conn = db.connect_readonly(self.cfg.db_path, self.selections_path)
         try:
             model = taste.train(conn, index.E, index.ids)
         finally:
@@ -213,14 +259,24 @@ def create_app(
         "stopping": False,
     }
     job = index_job(cfg, run=index_runner)
-    taste_store = TasteStore(cfg)
+    # The active profile's selections database (profiles.py); switched at runtime.
+    from . import profiles
+
+    state["profile"] = profiles.active_slug(cfg)
+    state["selections"] = profiles.path_for(cfg, state["profile"])
+    state["profile_version"] = 0
+
+    def sel_path():
+        return state["selections"]
+
+    taste_store = TasteStore(cfg, sel_path(), state["profile"])
     export_job = BackgroundJob(cfg, run_export)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Make sure the catalogue exists so read-only connections work before the first index.
         db.connect(cfg.db_path).close()
-        selections.ensure(cfg.selections_path)
+        selections.ensure(sel_path())
         state["index"] = Index(cfg)
         if state["encoder"] is None:
             threading.Thread(target=load_encoder, name="riffle-model", daemon=True).start()
@@ -248,6 +304,9 @@ def create_app(
             "model": state["model"],
             "model_error": state["model_error"],
             "log": str(log_file) if log_file else None,
+            # tabs reload their data when another tab switches the profile
+            "profile": state["profile"],
+            "profile_version": state["profile_version"],
         }
 
     async def watch_clients():
@@ -269,7 +328,7 @@ def create_app(
     app.state.end_streams = lambda: state.__setitem__("stopping", True)
 
     def get_conn():
-        conn = db.connect_readonly(cfg.db_path, cfg.selections_path)
+        conn = db.connect_readonly(cfg.db_path, sel_path())
         try:
             yield conn
         finally:
@@ -279,6 +338,50 @@ def create_app(
         index: Index = state["index"]
         index.refresh()
         return index
+
+    # ---- custom tags (example photos; custom_tags.py) ------------------------------
+
+    ctag_cache: dict[int, tuple] = {}  # tag id -> (key, member ids)
+
+    def custom_tag_list(conn) -> list[dict]:
+        """Every custom tag with the ids of its examples that are in the library."""
+        tags = [dict(r) for r in conn.execute(
+            "SELECT id, name, strictness, updated_at FROM sel.custom_tags ORDER BY name COLLATE NOCASE"
+        )]
+        examples: dict[int, list[int]] = {}
+        for r in conn.execute(
+            """SELECT e.tag_id, p.id FROM sel.custom_tag_examples e
+               JOIN photos p ON p.sha256 = e.sha256 AND p.status = 'ok' ORDER BY e.added_at, p.id"""
+        ):
+            if r[1] not in examples.setdefault(r[0], []):
+                examples[r[0]].append(r[1])
+        for t in tags:
+            t["examples"] = examples.get(t["id"], [])
+        return tags
+
+    def custom_tag_members(conn, index: Index, tags: list[dict] | None = None) -> dict[int, list[int]]:
+        """Member photo ids per custom tag, cached until the tag or the embeddings change."""
+        from . import custom_tags
+
+        out = {}
+        for t in tags if tags is not None else custom_tag_list(conn):
+            key = (t["updated_at"], t["strictness"], tuple(t["examples"]), index.stamp, cfg.stacks.min_similarity)
+            hit = ctag_cache.get(t["id"])
+            if hit is None or hit[0] != key:
+                rows = custom_tags.example_rows(index.row, t["examples"])
+                limit = custom_tags.threshold(cfg.stacks.min_similarity, t["strictness"])
+                ids, _ = custom_tags.members(index.E, index.ids, rows, limit)
+                ctag_cache[t["id"]] = hit = (key, ids)
+            out[t["id"]] = hit[1]
+        return out
+
+    def resolved_filter(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)) -> PhotoFilter:
+        """The query-string filter with custom tags resolved to their members."""
+        if flt.ctags or flt.exclude_ctags:
+            members = custom_tag_members(conn, index)
+            flt.ctag_members = [members.get(t, []) for t in flt.ctags]
+            flt.ctag_excluded = sorted({i for t in flt.exclude_ctags for i in members.get(t, [])})
+        return flt
 
     # ---- helpers -------------------------------------------------------------
 
@@ -336,17 +439,28 @@ def create_app(
         return mode
 
     def rank(conn, index: Index, query: np.ndarray, flt: PhotoFilter, exclude: int | None,
-             collapse: str, offset: int, limit: int) -> dict:
+             collapse: str, offset: int, limit: int, front: dict[int, str] | None = None) -> dict:
+        """Photos within the filters by similarity to ``query``. ``front``: photos
+        moved ahead ({id: "file" | "folder"}; file-name matches first), keeping the
+        similarity order within each group."""
         if index.E.size == 0:
             return {"total": 0, "items": []}
         where, params = flt.where(model_id)
         allowed = {r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)}
         allowed.discard(exclude)
         mask = np.array([int(p) in allowed for p in index.ids], dtype=bool)
-        scores = index.E @ query
+        if query.ndim == 2:  # text search: the best of its alternatives
+            from .query import score
+
+            scores = score(index.E, query)
+        else:
+            scores = index.E @ query
         scores[~mask] = -np.inf
         order = np.argsort(-scores)[: int(mask.sum())]
         ranked = [int(index.ids[i]) for i in order]
+        if front:
+            tier = {"file": 0, "folder": 1}
+            ranked.sort(key=lambda pid: tier.get(front.get(pid), 2))  # stable: similarity order within
 
         if collapse != "none":
             column = "stack_id" if collapse == "stacks" else "dupe_group"
@@ -366,7 +480,12 @@ def create_app(
 
         page = ranked[offset : offset + limit]
         score_map = {pid: float(scores[index.row[pid]]) for pid in page}
-        return {"total": len(ranked), "items": items_for(conn, page, score_map)}
+        items = items_for(conn, page, score_map)
+        if front:
+            for item in items:
+                if item["id"] in front:
+                    item["name_match"] = front[item["id"]]
+        return {"total": len(ranked), "items": items}
 
     # ---- API -----------------------------------------------------------------
 
@@ -374,8 +493,8 @@ def create_app(
         """SQL pieces for the grid listing: (cte, shown, order, params).
         ``{cte} SELECT ... {shown}`` selects the listed photos as ``p``."""
         where, params = flt.where(model_id)
-        if group and group not in GROUP_KEYS:
-            raise HTTPException(400, f"group must be one of {', '.join(GROUP_KEYS)}")
+        if group and group not in GROUP_KEYS and group != "similar":
+            raise HTTPException(400, f"group must be one of {', '.join([*GROUP_KEYS, 'similar'])}")
         order = {
             "taken_at": "p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
             "-taken_at": "p.taken_at IS NULL, p.taken_at DESC, p.source, p.rel_path",
@@ -383,8 +502,8 @@ def create_app(
             "name": f"{FILENAME_EXPR} COLLATE NOCASE, p.source, p.rel_path",
             "-name": f"{FILENAME_EXPR} COLLATE NOCASE DESC, p.source, p.rel_path",
             # by place name; photos without a location last either way
-            "place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE, p.taken_at IS NULL, p.taken_at",
-            "-place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE DESC, p.taken_at IS NULL, p.taken_at",
+            "place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE, p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
+            "-place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE DESC, p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
             "id": "p.id",
         }.get(sort)
         if order is None:
@@ -405,14 +524,16 @@ def create_app(
 
     @app.get("/api/photos")
     def list_photos(
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
         sort: str = "taken_at",
         group: str | None = None,
+        level: str = "medium",  # for group=similar: broad, medium, or fine
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
         conn=Depends(get_conn),
+        index: Index = Depends(get_index),
     ):
         """Paged listing. With ``group`` (day, month, year) photos come in date
         order, each item carries its group key ("" = undated, last), and
@@ -423,11 +544,14 @@ def create_app(
         if sort in ("taste", "-taste"):
             return taste_listing(flt, collapse_mode(collapse, dupes), sort, offset, limit, conn)
         cte, shown, order, params = listing(flt, collapse_mode(collapse, dupes), sort, group)
-        key = GROUP_KEYS[group] if group else "NULL"
+        names = None
+        if group == "similar":
+            cte, params, names = similar_clusters(conn, cte, shown, params, index, level)
+        key = SIMILAR_KEY if group == "similar" else GROUP_KEYS[group] if group else "NULL"
         total = conn.execute(f"{cte} SELECT COUNT(*) {shown}", params).fetchone()[0]
         direction = "DESC" if sort == "-taken_at" else ""
         by_location = group in LOCATION_KEYS
-        groups = group_summary(conn, cte, shown, params, group, direction, sort) if group else None
+        groups = group_summary(conn, cte, shown, params, group, direction, sort, names) if group else None
         if group and sort in NAME_SORTS.get(group, ()):
             # Groups by name (place or folder), in the order of the summary; the sort within them.
             if groups:
@@ -440,6 +564,9 @@ def create_app(
         elif group == "folder":
             # Folders in path order (each folder's photos together), by date within a folder.
             order = f"grp, {order}"
+        elif group == "similar":
+            # Clusters largest first (their keys are ranks), "Other" last; date order within.
+            order = f"grp IS NULL, grp, {order}"
         rows = conn.execute(
             f"{cte} SELECT p.id, {key} AS grp {shown} ORDER BY {order} LIMIT ? OFFSET ?",
             [*params, limit, offset],
@@ -477,14 +604,15 @@ def create_app(
                 return " / ".join([s.name, *rest.split("/")]) if rest else s.name
         return key.rstrip("/")
 
-    def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "", sort: str = "") -> list[dict]:
+    def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "", sort: str = "", names: dict | None = None) -> list[dict]:
         """Every non-empty group of the listing, in display order, with its count,
         first/last capture time, and a cover photo (a pick if the group has one,
         else its first photo). Location groups add a label and a centre point.
         With a name sort (``NAME_SORTS``), groups are ordered by their label, unknown last."""
-        key = GROUP_KEYS[group]
+        key = SIMILAR_KEY if group == "similar" else GROUP_KEYS[group]
         by_location = group in LOCATION_KEYS
-        group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else f"grp {direction}"
+        # Folders stay in path order and clusters in rank order; the direction flips dates only.
+        group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else "grp" if group in ("similar", "folder") else f"grp {direction}"
         extra = ""
         if by_location:
             lat = "(SELECT l.lat FROM photo_locations l WHERE l.photo_id = p.id)"
@@ -511,6 +639,8 @@ def create_app(
             g = {"key": k or "", "count": r[1], "first": r[2], "last": r[3], "cover": covers.get(k)}
             if group == "folder":
                 g["label"] = folder_label(k)
+            if group == "similar":
+                g["label"] = (names or {}).get(k, "Similar photos") if k else "Other"
             if by_location:
                 g["label"] = labels.get(k, "Unknown location") if k else "Unknown location"
                 g["lat"], g["lon"] = (r[4], r[5]) if k else (None, None)
@@ -523,23 +653,193 @@ def create_app(
     @app.get("/api/groups")
     def list_groups(
         group: str,
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
+        level: str = "medium",
         conn=Depends(get_conn),
+        index: Index = Depends(get_index),
     ):
         """Only the groups of a grouped listing (for the calendar and map overviews)."""
-        if group not in GROUP_KEYS:
-            raise HTTPException(400, f"group must be one of {', '.join(GROUP_KEYS)}")
+        if group not in GROUP_KEYS and group != "similar":
+            raise HTTPException(400, f"group must be one of {', '.join([*GROUP_KEYS, 'similar'])}")
         cte, shown, _, params = listing(flt, collapse_mode(collapse, dupes), "taken_at", group)
-        return {"group": group, "groups": group_summary(conn, cte, shown, params, group)}
+        names = None
+        if group == "similar":
+            cte, params, names = similar_clusters(conn, cte, shown, params, index, level)
+        return {"group": group, "groups": group_summary(conn, cte, shown, params, group, names=names)}
+
+    # ---- "Similar" grouping (clusters.py) ----------------------------------------------
+
+    map_state: dict = {"lock": threading.Lock(), "stamp": None, "xy": {}}
+
+    def map_layout(index: Index) -> dict[int, tuple[float, float]]:
+        """The whole library's 2D layout {photo id: (x, y)}: cached next to the
+        embeddings (derived data) and recomputed when they change."""
+        from . import clusters
+
+        with map_state["lock"]:
+            if map_state["stamp"] == index.stamp:
+                return map_state["xy"]
+            path = cfg.embeddings_dir / f"{model_id}.map.npz"
+            stamp = np.array(index.stamp or (0, 0), dtype=np.int64)
+            xy = None
+            try:
+                with np.load(path) as f:
+                    if np.array_equal(f["stamp"], stamp):
+                        xy = dict(zip(f["ids"].tolist(), map(tuple, f["xy"].tolist())))
+            except (OSError, KeyError, ValueError):
+                pass
+            if xy is None:
+                Y = clusters.layout(index.E)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_suffix(".tmp.npz")
+                np.savez(tmp, ids=index.ids, xy=Y, stamp=stamp)
+                os.replace(tmp, path)
+                xy = dict(zip(index.ids.tolist(), map(tuple, Y.tolist())))
+            map_state["stamp"], map_state["xy"] = index.stamp, xy
+            return xy
+
+    @app.get("/api/similar/map")
+    def similar_map(
+        flt: PhotoFilter = Depends(resolved_filter),
+        dupes: str = "collapse",
+        collapse: str | None = None,
+        level: str = "medium",
+        conn=Depends(get_conn),
+        index: Index = Depends(get_index),
+    ):
+        """The photos of the current listing on the library's 2D map, with their
+        Similar cluster, and each cluster's name, size, and centre."""
+        cte, shown, _, params = listing(flt, collapse_mode(collapse, dupes), "taken_at", "similar")
+        cte, params, names = similar_clusters(conn, cte, shown, params, index, level)
+        xy = map_layout(index)
+        points, members = [], {}
+        for pid, key in conn.execute(f"{cte} SELECT p.id, {SIMILAR_KEY} {shown}", params):
+            if pid in xy:
+                x, y = xy[pid]
+                points.append([pid, round(x, 5), round(y, 5), key])
+                members.setdefault(key, []).append((x, y))
+        groups = [
+            {
+                "key": k,
+                "label": names.get(k, "Similar photos"),
+                "count": len(pts),
+                "x": float(np.median([p[0] for p in pts])),
+                "y": float(np.median([p[1] for p in pts])),
+            }
+            for k, pts in sorted((kv for kv in members.items() if kv[0]), key=lambda kv: kv[0])
+        ]
+        return {"points": points, "groups": groups, "other": len(members.get(None, []))}
+
+    cluster_cache: OrderedDict = OrderedDict()  # (listing, level, embeddings) -> (mapping json, names)
+    tag_vector_cache: dict = {}  # the cluster namer, per embeddings and encoder
+
+    def cluster_namer(index: Index):
+        """The naming vocabulary's text vectors (cached on disk per model, like the
+        embeddings) and the library's mean similarity to each phrase. None without
+        the model."""
+        from . import clusters, paths
+        from .tags import load_vocabulary, phrase_vectors
+
+        encoder = state["encoder"]
+        if encoder is None or index.E.size == 0:
+            return None
+        if tag_vector_cache.get("index") == (index.stamp, id(encoder)):
+            return tag_vector_cache["namer"]
+        raw = yaml.safe_load(paths.default_file("cluster_names.yaml").read_text())
+        things, media, settings = (list(raw.get(k) or []) for k in ("things", "media", "settings"))
+        phrases = things + media + settings
+        templates = load_vocabulary(cfg.vocabulary_path).templates
+        signature = json.dumps([phrases, templates])
+        path = cfg.embeddings_dir / f"{model_id}.names.npz"
+        vecs = None
+        try:
+            with np.load(path) as f:
+                if str(f["signature"]) == signature:
+                    vecs = f["vecs"]
+        except (OSError, KeyError, ValueError):
+            pass
+        if vecs is None:
+            vecs = phrase_vectors(phrases, templates, encoder)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp.npz")
+            np.savez(tmp, vecs=vecs, signature=np.array(signature))
+            os.replace(tmp, path)
+        namer = clusters.Namer(
+            phrases=phrases,
+            vecs=vecs,
+            baseline=index.E.mean(axis=0) @ vecs.T,
+            setting=np.array([False] * (len(things) + len(media)) + [True] * len(settings)),
+            media=np.array([False] * len(things) + [True] * len(media) + [False] * len(settings)),
+        )
+        tag_vector_cache.update(index=(index.stamp, id(encoder)), namer=namer)
+        return namer
+
+    def similar_clusters(conn, cte: str, shown: str, params: list, index: Index, level: str):
+        """Cluster the listing's photos; returns the CTE and params extended with
+        ``clusters(pid, k)``, and the names per cluster key."""
+        from . import clusters
+
+        if level not in clusters.LEVELS:
+            raise HTTPException(400, f"level must be one of {', '.join(clusters.LEVELS)}")
+        tag_versions = tuple(conn.execute("SELECT id, updated_at, strictness FROM sel.custom_tags ORDER BY id").fetchall())
+        cache_key = (cte, shown, json.dumps(params, default=str), level, index.stamp, state["encoder"] is not None, tag_versions)
+        hit = cluster_cache.get(cache_key)
+        if hit is None:
+            ids = [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY p.id", params)]
+            ids = [i for i in ids if i in index.row]
+            rows = [index.row[i] for i in ids]
+            labels = clusters.cluster(index.E[rows], level) if rows else np.zeros(0, int)
+            members: dict[int, list[int]] = {}
+            for pid, lab in zip(ids, labels):
+                if lab >= 0:
+                    members.setdefault(int(lab), []).append(pid)
+            kinds = dict(conn.execute(
+                """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
+                   WHERE t.family = 'kind' AND pt.model_id = ?""", (model_id,)))
+            namer = cluster_namer(index)
+            subjects: dict[int, list[str]] = {}
+            if namer is None:
+                for pid, name in conn.execute(
+                    """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
+                       WHERE t.family = 'subject' AND pt.model_id = ?""", (model_id,)):
+                    subjects.setdefault(pid, []).append(name)
+            # The user's custom tags of each photo (a cluster mostly in one takes its name).
+            ctags = custom_tag_list(conn)
+            tag_members = custom_tag_members(conn, index, ctags)
+            own: dict[int, list[str]] = {}
+            for t in ctags:
+                for pid in tag_members[t["id"]]:
+                    own.setdefault(pid, []).append(t["name"])
+            if namer is not None and rows:
+                # Distinctive within this view (see clusters.names), not the whole library.
+                namer = dataclasses.replace(namer, baseline=index.E[rows].mean(axis=0) @ namer.vecs.T)
+            keys = sorted(members)
+            labels_ = clusters.names(
+                [index.E[[index.row[p] for p in members[k]]].mean(axis=0) for k in keys],
+                namer,
+                member_kinds=[[kinds.get(p) for p in members[k]] for k in keys],
+                member_tags=[[t for p in members[k] for t in subjects.get(p, [])] for k in keys],
+                member_custom=[[own.get(p, []) for p in members[k]] for k in keys],
+            )
+            names = {f"{k:04d}": label for k, label in zip(keys, labels_)}
+            mapping = json.dumps({str(pid): f"{lab:04d}" for lab, pids in members.items() for pid in pids})
+            hit = cluster_cache[cache_key] = (mapping, names)
+            while len(cluster_cache) > 8:
+                cluster_cache.popitem(last=False)
+        cluster_cache.move_to_end(cache_key)
+        mapping, names = hit
+        cte += ", clusters(map) AS (SELECT ?)"
+        return cte, [*params, mapping], names
 
     @app.get("/api/photos/{photo_id}")
-    def photo_detail(photo_id: int, conn=Depends(get_conn)):
+    def photo_detail(photo_id: int, conn=Depends(get_conn), index: Index = Depends(get_index)):
         r = conn.execute("SELECT * FROM photos WHERE id = ?", (photo_id,)).fetchone()
         if r is None:
             raise HTTPException(404, "photo not found")
         photo = dict(r)
+        photo.pop("hues", None)  # binary (colors.py); only Curate uses it
         photo["path"] = str(Path(r["source"]) / r["rel_path"])
         photo["thumb"] = f"/thumbs/{photo_id}.jpg"
         photo["preview"] = f"/previews/{photo_id}.jpg"
@@ -553,6 +853,9 @@ def create_app(
                 (photo_id, model_id),
             )
         ]
+        ctags = custom_tag_list(conn)
+        members = custom_tag_members(conn, index, ctags)
+        photo["custom_tags"] = [{"id": t["id"], "name": t["name"]} for t in ctags if photo_id in members[t["id"]]]
         photo["raws"] = [
             {"path": str(Path(x["source"]) / x["rel_path"]), "size_bytes": x["size_bytes"]}
             for x in conn.execute(
@@ -587,7 +890,7 @@ def create_app(
                 "region_key": f"{cc}|{region}",
                 "country_key": cc,
             }
-        photo["export"] = selections.export_info(cfg.selections_path, r["sha256"]) if r["sha256"] else None
+        photo["export"] = selections.export_info(sel_path(), r["sha256"]) if r["sha256"] else None
         photo["taste"] = taste_store.score_of(photo_id)
         photo["flag"] = conn.execute(
             f"SELECT {FLAG_EXPR} FROM photos p WHERE p.id = ?", (photo_id,)
@@ -605,11 +908,12 @@ def create_app(
     @app.get("/api/search/text")
     def search_text(
         q: str = Query(..., min_length=1),
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
+        names: bool = True,  # also move file / folder name matches to the front
         conn=Depends(get_conn),
         index: Index = Depends(get_index),
     ):
@@ -618,13 +922,22 @@ def create_app(
             if state["model"] == "loading":
                 raise HTTPException(503, "The AI model is still loading; search works once it is ready.")
             raise HTTPException(503, "text encoder not available")
-        query = encoder([q])[0]
-        return rank(conn, index, query, flt, None, collapse_mode(collapse, dupes), offset, limit)
+        from .query import query_vectors
+
+        query = query_vectors(q, encoder)  # "a | b" alternatives, "-term" excludes (query.py)
+        if query is None:
+            raise HTTPException(400, "the search has no words")
+        front = None
+        if names:
+            from .query import name_matches
+
+            front = name_matches(q, conn.execute("SELECT id, source, rel_path FROM photos WHERE status = 'ok'"))
+        return rank(conn, index, query, flt, None, collapse_mode(collapse, dupes), offset, limit, front)
 
     @app.get("/api/search/similar/{photo_id}")
     def search_similar(
         photo_id: int,
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
         offset: int = Query(0, ge=0),
@@ -638,7 +951,7 @@ def create_app(
         return rank(conn, index, index.E[row], flt, photo_id, collapse_mode(collapse, dupes), offset, limit)
 
     @app.get("/api/tags")
-    def list_tags(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+    def list_tags(flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
         """Tags with photo counts within the current filter (tags and EXIF).
         Tags that no matching photo carries are omitted, except the selected ones."""
         selected = flt.tags
@@ -674,8 +987,25 @@ def create_app(
         exported = conn.execute(
             f"SELECT COUNT(*) FROM photos p WHERE p.status = 'ok' AND {EXPORTED_EXPR}"
         ).fetchone()[0]
+        ctags = custom_tag_list(conn)
+        members = custom_tag_members(conn, index, ctags)
+        custom = [
+            {
+                "id": t["id"],
+                "name": t["name"],
+                "strictness": t["strictness"],
+                "examples": t["examples"],
+                "excluded": t["id"] in flt.exclude_ctags,
+                "count": conn.execute(
+                    f"SELECT COUNT(*) FROM photos p WHERE {where} AND p.id IN (SELECT value FROM json_each(?))",
+                    [*params, json.dumps(members[t["id"]])],
+                ).fetchone()[0],
+            }
+            for t in ctags
+        ]
         return {
             "families": families,
+            "custom": custom,
             "photos": photos,
             "picks": picks,
             "rejects": rejects,
@@ -687,10 +1017,19 @@ def create_app(
         }
 
     @app.get("/api/facets")
-    def list_facets(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+    def list_facets(flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn)):
         """EXIF filter options (date range, cameras, lenses, focal length, aperture,
-        ISO, orientation, GPS) within the other active filters."""
-        return facets(conn, flt, model_id)
+        ISO, orientation, GPS, folder) within the other active filters."""
+        out = facets(conn, flt, model_id)
+        # Folders labelled like the folder groups, by photo folder in the Library's order.
+        order = {f"{src}/": k for k, src in enumerate(cfg.sources)}
+
+        def rank(key: str) -> tuple:
+            source = max((s for s in order if key.startswith(s)), key=len, default=None)
+            return (order.get(source, len(order)), key)
+
+        out["folder"] = [f | {"label": folder_label(f["value"])} for f in sorted(out["folder"], key=lambda f: rank(f["value"]))]
+        return out
 
     # ---- culling: flags, selection, stacks ---------------------------------------
 
@@ -700,42 +1039,42 @@ def create_app(
         every affected photo, which the UI keeps for undo."""
         try:
             previous = selections.set_flags(
-                conn, cfg.selections_path, [(op.ids, op.flag) for op in body.ops]
+                conn, sel_path(), [(op.ids, op.flag) for op in body.ops]
             )
         except ValueError as e:
             raise HTTPException(400, str(e))
         return {"previous": {str(k): v for k, v in previous.items()}}
 
     @app.post("/api/exported/reset", dependencies=[Depends(require_json)])
-    def reset_exported(body: ResetIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+    def reset_exported(body: ResetIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn)):
         """Forget the export history, of everything or of the photos within the filters."""
         if body.scope == "all":
-            n = selections.clear_exported(conn, cfg.selections_path)
+            n = selections.clear_exported(conn, sel_path())
         elif body.scope == "filtered":
             where, params = flt.where(model_id)
             ids = [r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)]
-            n = selections.clear_exported(conn, cfg.selections_path, ids)
+            n = selections.clear_exported(conn, sel_path(), ids)
         else:
             raise HTTPException(400, "scope must be all or filtered")
         return {"cleared": n}
 
     @app.post("/api/flags/reset", dependencies=[Depends(require_json)])
-    def reset_flags(body: ResetIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+    def reset_flags(body: ResetIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn)):
         """Unflag everything, or every photo within the filters. Returns the
         previous flags, like /api/flags, so the reset can be undone."""
         if body.scope == "all":
-            previous = selections.clear_flags(conn, cfg.selections_path)
+            previous = selections.clear_flags(conn, sel_path())
         elif body.scope == "filtered":
             where, params = flt.where(model_id)
             ids = [r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)]
-            previous = selections.clear_flags(conn, cfg.selections_path, ids)
+            previous = selections.clear_flags(conn, sel_path(), ids)
         else:
             raise HTTPException(400, "scope must be all or filtered")
         return {"previous": {str(k): v for k, v in previous.items()}}
 
     @app.get("/api/ids")
     def list_ids(
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
         sort: str = "taken_at",
@@ -748,7 +1087,7 @@ def create_app(
 
     @app.get("/api/stacks")
     def list_stacks(
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         unreviewed: bool = False,
         conn=Depends(get_conn),
     ):
@@ -862,29 +1201,149 @@ def create_app(
         )
         where, params = flt.where(model_id)
         model = taste_store.current(index)
+        scores = style_scores(index) if any(p.styles.values()) else {}
+        look, look_weights, look_labels = curate.look_scores(conn, body.look)
+        p.styles.update(look_weights)
+        query_scores = None
+        if body.query.strip() and state["encoder"] is not None and index.E.size:
+            from .query import query_vectors, score
+
+            Q = query_vectors(body.query, state["encoder"])
+            if Q is not None:
+                query_scores = dict(zip((int(i) for i in index.ids), score(index.E, Q).tolist()))
         pool = curate.build_pool(
             conn, where, params, index.row, index.E, p,
             taste=taste_store.scores if model and model.enabled else None,
             clip_quality=clip_quality(index, [int(i) for i in index.ids]),
-            style_scores=style_scores(index) if any(p.styles.values()) else {},
+            style_scores={**scores, **look},
             place_labels=location_labels(conn)["place"],
+            query_scores=query_scores,
         )
-        return pool, p
+        return pool, p, look_labels
+
+    @app.get("/api/hues")
+    def list_hues():
+        """The colours Curate can lean towards (name and a display colour)."""
+        from .colors import HUES
+
+        return [{"name": name, "color": css} for name, (_, css) in HUES.items()]
+
+    def tag_error(e: Exception) -> HTTPException:
+        text = str(e)
+        return HTTPException(404 if text == "no such tag" else 409 if "already exists" in text else 400, text)
+
+    @app.post("/api/custom-tags", dependencies=[Depends(require_json)])
+    def create_custom_tag(body: CustomTagIn, conn=Depends(get_conn)):
+        """A tag from example photos (stored with the flags, by content hash)."""
+        try:
+            tag_id = selections.create_tag(conn, sel_path(), body.name, body.photo_ids, body.strictness)
+        except selections.TagError as e:
+            raise tag_error(e)
+        return {"id": tag_id}
+
+    @app.post("/api/custom-tags/preview", dependencies=[Depends(require_json)])
+    def preview_custom_tag(body: CustomTagPreview, conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """How many photos a tag with these examples would have at each strictness,
+        and the members closest to its edge (the least similar ones still in)."""
+        from . import custom_tags
+
+        rows = custom_tags.example_rows(index.row, body.photo_ids)
+        s = custom_tags.scores(index.E, rows)
+        counts, edge = {}, []
+        for level in selections.STRICTNESS:
+            limit = custom_tags.threshold(cfg.stacks.min_similarity, level)
+            ids, _ = custom_tags.members(index.E, index.ids, rows, limit)
+            counts[level] = len(ids)
+            if level == body.strictness and rows:
+                own = set(rows)
+                inside = [k for k in np.argsort(s) if s[k] >= limit and k not in own]
+                edge = [int(index.ids[k]) for k in inside[:8]]
+        return {"counts": counts, "edge": items_for(conn, edge), "examples": len(rows)}
+
+    @app.post("/api/custom-tags/{tag_id}", dependencies=[Depends(require_json)])
+    def edit_custom_tag(tag_id: int, body: CustomTagEdit, conn=Depends(get_conn)):
+        try:
+            selections.update_tag(
+                conn, sel_path(), tag_id,
+                name=body.name, strictness=body.strictness, add=body.add, remove=body.remove,
+            )
+        except selections.TagError as e:
+            raise tag_error(e)
+        return {"id": tag_id}
+
+    @app.delete("/api/custom-tags/{tag_id}")
+    def delete_custom_tag(tag_id: int):
+        if not selections.delete_tag(sel_path(), tag_id):
+            raise HTTPException(404, "no such tag")
+        ctag_cache.pop(tag_id, None)
+        return {"deleted": tag_id}
+
+    # ---- profiles (profiles.py) ------------------------------------------------------
+
+    def profile_error(e: Exception) -> HTTPException:
+        text = str(e)
+        return HTTPException(404 if text.startswith("no such") else 409 if "already exists" in text else 400, text)
+
+    @app.get("/api/profiles")
+    def list_profiles():
+        return {"profiles": profiles.list_profiles(cfg), "active": state["profile"]}
+
+    @app.post("/api/profiles", dependencies=[Depends(require_json)])
+    def create_profile(body: ProfileIn):
+        try:
+            slug = profiles.create(cfg, body.name, body.copy_from, set(body.parts) if body.parts is not None else None)
+        except profiles.ProfileError as e:
+            raise profile_error(e)
+        return {"slug": slug}
+
+    @app.post("/api/profiles/{slug}/activate", dependencies=[Depends(require_json)])
+    def activate_profile(slug: str):
+        """Switch every tab to this profile's flags, export history, and custom tags."""
+        if job.running or export_job.running:
+            raise HTTPException(409, "wait until indexing or the export has finished")
+        try:
+            path = profiles.switch(cfg, slug)
+        except profiles.ProfileError as e:
+            raise profile_error(e)
+        selections.ensure(path)
+        state["profile"], state["selections"] = slug, path
+        state["profile_version"] += 1
+        ctag_cache.clear()
+        taste_store.use(path, slug)
+        return {"active": slug}
+
+    @app.post("/api/profiles/{slug}", dependencies=[Depends(require_json)])
+    def rename_profile(slug: str, body: ProfileRename):
+        try:
+            profiles.rename(cfg, slug, body.name)
+        except profiles.ProfileError as e:
+            raise profile_error(e)
+        state["profile_version"] += 1  # other tabs show the new name
+        return {"slug": slug}
+
+    @app.delete("/api/profiles/{slug}")
+    def delete_profile(slug: str):
+        try:
+            moved = profiles.delete(cfg, slug)
+        except profiles.ProfileError as e:
+            raise profile_error(e)
+        return {"deleted": slug, "moved_to": str(moved)}
 
     @app.get("/api/styles")
     def list_styles():
         return [{"name": s.name, "label": s.label, "description": s.description} for s in styles_config()]
 
     @app.post("/api/curate", dependencies=[Depends(require_json)])
-    def curate_draft(body: CurateIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
+    def curate_draft(body: CurateIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
         """A draft selection from the photos within the filters (see curate.py)."""
         from . import curate
 
-        pool, p = curate_pool(body, flt, conn, index)
+        pool, p, look_labels = curate_pool(body, flt, conn, index)
+        where, params = flt.where(model_id)
         if pool is None:
             return {"items": [], "cover": None, "sections": [], "candidates": 0, "used": {}}
         d = curate.draft(pool, p)
-        labels = {s.name: s.label for s in styles_config()}
+        labels = {s.name: s.label for s in styles_config()} | look_labels
         ids = [it["id"] for it in d["items"]]
         by_id = {i["id"]: i for i in items_for(conn, ids)}
         items = []
@@ -908,15 +1367,21 @@ def create_app(
                 "taste": bool(taste_store.scores),
                 "locations": bool((pool.loc_w > 0).any()),
                 "styles": sorted(k for k, w in p.styles.items() if w),
+                # false when a search was given but could not be used (the AI model is not ready)
+                "query": pool.query_pct is not None if body.query.strip() else None,
+                # candidates whose colours are not analysed yet (the next index does it)
+                "colors_missing": conn.execute(
+                    f"SELECT COUNT(*) FROM photos p WHERE {where} AND p.brightness IS NULL", params
+                ).fetchone()[0],
             },
         }
 
     @app.post("/api/curate/alternatives", dependencies=[Depends(require_json)])
-    def curate_alternatives(body: AlternativesIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
+    def curate_alternatives(body: AlternativesIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
         """Photos that could take one slot of the draft: its other frames, then similar good ones."""
         from . import curate
 
-        pool, p = curate_pool(body, flt, conn, index)
+        pool, p, _ = curate_pool(body, flt, conn, index)
         if pool is None:
             return {"items": []}
         chosen = {int(pool.ids[j]) for j in curate.select(pool, p)}
@@ -926,7 +1391,7 @@ def create_app(
     # ---- export ------------------------------------------------------------------
 
     @app.post("/api/export", dependencies=[Depends(require_json)])
-    def start_export(body: ExportIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+    def start_export(body: ExportIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn)):
         """Copy the picks (all, or those within the query-string filters) to a folder."""
         if body.content not in CONTENT:
             raise HTTPException(400, f"content must be one of {', '.join(CONTENT)}")
@@ -980,6 +1445,7 @@ def create_app(
             raw_fallback=body.raw_fallback,
             structure=body.structure,
             add_location=body.add_location and bool(cfg.location_history),
+            selections_path=str(sel_path()),  # its history stays in this profile
         )
         if not started:
             raise HTTPException(409, "an export is already running")
@@ -1091,7 +1557,7 @@ def create_app(
             ],
             "editable": cfg.path is not None,
             "config": str(cfg.path) if cfg.path else None,
-            "selections": str(cfg.selections_path),
+            "selections": str(sel_path()),
             "data_dir": str(cfg.data_dir),
         }
 

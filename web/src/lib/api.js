@@ -1,4 +1,4 @@
-import { sortFits } from './state.svelte.js';
+import { sortFits, prefs } from './state.svelte.js';
 
 function query(params) {
   const p = new URLSearchParams();
@@ -10,7 +10,13 @@ function query(params) {
 }
 
 /** The filter part of the view (tags + EXIF filters) as query parameters. */
-const filterParams = (view) => ({ tags: view.tags.join(','), exclude_tags: view.excludeTags.join(','), ...view.filters });
+const filterParams = (view) => ({
+  tags: view.tags.join(','),
+  exclude_tags: view.excludeTags.join(','),
+  ctags: view.ctags.join(','),
+  exclude_ctags: view.excludeCtags.join(','),
+  ...view.filters,
+});
 
 export async function get(path, params = {}) {
   const qs = query(params);
@@ -29,10 +35,10 @@ export async function get(path, params = {}) {
 export function fetchResults(view, offset, limit) {
   const common = { ...filterParams(view), collapse: view.collapse, offset, limit };
   if (view.similar) return get(`/api/search/similar/${view.similar}`, common);
-  if (view.q) return get('/api/search/text', { ...common, q: view.q });
+  if (view.q) return get('/api/search/text', { ...common, q: view.q, names: prefs.nameMatch ? undefined : 'false' });
   // Grouped views allow only the sorts that keep groups together (date, or the groups' names).
   const sort = sortFits(view.group, view.sort) ? view.sort : 'taken_at';
-  return get('/api/photos', { ...common, group: view.group, sort });
+  return get('/api/photos', { ...common, group: view.group, level: view.group === 'similar' ? view.level : undefined, sort });
 }
 
 /** Tags with counts within the current filter; tags no matching photo carries are omitted. */
@@ -55,6 +61,9 @@ async function send(method, path, body = {}) {
 
 /** Just the groups (count, dates, cover; location: label and centre) for an overview. */
 export const fetchGroups = (view, group) => get('/api/groups', { ...filterParams(view), collapse: view.collapse, group });
+/** The Similar map: the view's photos on the library's 2D layout, with their clusters. */
+export const fetchSimilarMap = (view) =>
+  get('/api/similar/map', { ...filterParams(view), collapse: view.collapse, level: view.level });
 export const fetchIds = (view) => get('/api/ids', { ...filterParams(view), collapse: view.collapse });
 export const fetchStacks = (view, unreviewed = true) => get('/api/stacks', { ...filterParams(view), unreviewed });
 export const fetchStack = (id) => get(`/api/stacks/${id}`);
@@ -95,6 +104,7 @@ export const calibrateTaste = () => send('POST', '/api/taste/calibrate');
 
 /** Curate: the styles for the sliders, a draft for the current filters, and alternatives for one slot. */
 export const fetchStyles = () => get('/api/styles');
+export const fetchHues = () => get('/api/hues');
 export function fetchCurate(view, body) {
   const qs = query(filterParams(view));
   return send('POST', qs ? `/api/curate?${qs}` : '/api/curate', body);
@@ -103,6 +113,23 @@ export function fetchAlternatives(view, body) {
   const qs = query(filterParams(view));
   return send('POST', qs ? `/api/curate/alternatives?${qs}` : '/api/curate/alternatives', body);
 }
+
+/** Custom tags (taught by example photos). */
+export const createCustomTag = (name, photoIds, strictness) =>
+  send('POST', '/api/custom-tags', { name, photo_ids: photoIds, strictness });
+export const editCustomTag = (id, changes) => send('POST', `/api/custom-tags/${id}`, changes);
+export const deleteCustomTag = (id) => send('DELETE', `/api/custom-tags/${id}`);
+/** {counts: {strict, normal, loose}, edge: items, examples} for these example photos. */
+export const previewCustomTag = (photoIds, strictness) =>
+  send('POST', '/api/custom-tags/preview', { photo_ids: photoIds, strictness });
+
+/** Profiles: switchable sets of flags, export history, and custom tags. */
+export const fetchProfiles = () => get('/api/profiles');
+export const createProfile = (name, copyFrom = null, parts = null) =>
+  send('POST', '/api/profiles', { name, copy_from: copyFrom, parts });
+export const activateProfile = (slug) => send('POST', `/api/profiles/${slug}/activate`);
+export const renameProfile = (slug, name) => send('POST', `/api/profiles/${slug}`, { name });
+export const deleteProfile = (slug) => send('DELETE', `/api/profiles/${slug}`);
 
 export const fetchSources = () => get('/api/sources');
 export const addSource = (path) => send('POST', '/api/sources', { path });
