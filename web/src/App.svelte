@@ -475,7 +475,7 @@
     <Sidebar {tags} {facets} profile={profiles.find((p) => p.active && p.slug !== 'default')?.name} />
     <div class="flex min-w-0 flex-1 flex-col">
       {#if !(tags && tags.photos === 0 && !loading)}
-        <ViewBar {total} {loading} {taste} />
+        <ViewBar {total} {loading} {taste} groups={grouped && !view.overview ? groups : null} onjump={jumpToGroup} />
       {/if}
       <main class="min-h-0 flex-1 overflow-y-auto">
         {#if error || culling.error}
@@ -515,7 +515,6 @@
             onmore={loadMore}
             groups={grouped ? groups : null}
             {highlight}
-            onjump={jumpToGroup}
             oncontext={openMenu}
           />
           <SelectionBar onselectall={selectAll} />

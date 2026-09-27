@@ -509,7 +509,7 @@ Mutating endpoints accept only JSON bodies, so other sites can't trigger them wi
 A single page without a router. View state lives in a Svelte store mirrored into the URL (search, tags, filters, grouping, sort, open photo), so views can be bookmarked.
 
 - **Top bar**: search; a "similar to" chip; the workflow (**Review stacks**, **Curate**, **Export**); then **Library** (with indexing progress) and **?** (help).
-- **Toolbar above the grid**: result count; **Group** with a **Grid | Calendar/Map** switch (or **Broad · Medium · Fine** for Similar); **Sort**; **Stacks**.
+- **Toolbar above the grid**: result count; **Group** with a **Grid | Calendar/Map** switch (or **Broad · Medium · Fine** for Similar); **Sort**; **Stacks**; and, when grouped, the group count with **Jump to…** at the right end.
 - **Similar grouping** (`clusters.py`; `group=similar&level=`): hierarchical clustering (average linkage, cosine; cuts 0.45 / 0.35 / 0.25) of the photos the listing shows, so filters shape the themes. Above 6,000 photos a fixed sample is clustered and the rest assigned to the nearest centre. Clusters under 5 photos go to Other. Keys rank clusters by size; the photo → key map is a JSON object looked up per row in SQL (13 ms; a join against a JSON list took 470 ms). Cached per listing, level, and embedding file. Names: the kind of image when most members are not photographs, else the nearest subject/scene tags (skipping catch-alls; a second within 0.015), else the members' most common subject tag. On the first library: 300 ms for 2,132 photos (42 ms cached); the Sweden trip 70 ms, 20 medium groups.
   - A grouping keeps groups together, so it allows the date sorts, plus the place sorts for location groups and the file-name sorts for folders. Those order the groups by name, and the photos within them by the same sort.
 - **Sidebar**: "N active · Clear all" when anything narrows the view; then collapsible filter sections (Flag, Folder, Date, Camera, Lens, Exposure, Orientation, Location, Places) and tag families. Subject, Scene, and Look start open; each section remembers its state.
@@ -517,7 +517,7 @@ A single page without a router. View state lives in a Svelte store mirrored into
   - A filter that can't narrow the result is hidden unless in use.
   - The Folder section lists direct parent folders, labelled like the folder groups: the first 15, then "All N folders".
   - Tags include on click and exclude on Alt+click or hover-**−**.
-- **Grid**: infinite scroll, badges (✓, ✕, ↗, RAW, duplicates, ▦ stack count), and multi-select (§8). When grouped: sticky headers with full counts, **Jump to…**, and "Only this day / folder".
+- **Grid**: infinite scroll, badges (✓, ✕, ↗, RAW, duplicates, ▦ stack count), and multi-select (§8). When grouped: sticky headers with full counts, and "Only this day / folder".
   - Groups appear in date order, or trip order for places (by each group's first photo), or path order for folders.
 - **Overviews**: a year calendar (days with a cover and count), or a map with one cluster per place, region, or country. Clicking opens the group in the grid. The map draws bundled Natural Earth outlines (`world-atlas` 50m, loaded lazily) with d3-geo and d3-zoom; street-level detail was left out deliberately.
 - **Photo view**: preview, metadata, tags, location with source and accuracy, taste score, and flag buttons. Actions: Stack, Find similar, Show day, Show place, Copy path.

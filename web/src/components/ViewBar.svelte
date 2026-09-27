@@ -1,10 +1,13 @@
 <script>
   // The toolbar above the grid: how the photos are shown (count, grouping and its
   // overview, sort order, stacks). The top bar keeps search and the workflow actions.
-  import { view, hasOverview, isLocationGroup, sortFits, LEVELS } from '../lib/state.svelte.js';
+  import { view, hasOverview, isLocationGroup, sortFits, groupLabel, LEVELS } from '../lib/state.svelte.js';
 
   // taste: the taste model's status (enables the "likely keepers / rejects" sorts).
-  let { total, loading, taste = null } = $props();
+  // groups: the grouped grid's groups (null when not grouped); onjump(key): scroll to one.
+  let { total, loading, taste = null, groups = null, onjump = () => {} } = $props();
+
+  const plural = { day: 'days', month: 'months', year: 'years', place: 'places', region: 'regions', country: 'countries', folder: 'folders', similar: 'groups' };
 
   const searching = $derived(!!(view.q || view.similar));
   const select = 'rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-neutral-200';
@@ -122,4 +125,23 @@
     />
     Stacks
   </label>
+
+  {#if groups?.length > 1}
+    <div class="ml-auto flex items-center gap-1.5">
+      <label for="viewbar-jump">{groups.length} {plural[view.group] ?? 'groups'}</label>
+      <select
+        id="viewbar-jump"
+        class={select}
+        onchange={(e) => {
+          onjump(e.currentTarget.value);
+          e.currentTarget.selectedIndex = 0;
+        }}
+      >
+        <option value="" disabled selected>Jump to…</option>
+        {#each groups as g (g.key)}
+          <option value={g.key}>{groupLabel(g.key, view.group, g.label)} ({g.count})</option>
+        {/each}
+      </select>
+    </div>
+  {/if}
 </div>

@@ -4,7 +4,7 @@
 
   // `groups`: the result's date groups (key, count) when the grid is grouped, else null.
   // oncontext(event, id): right-click on a photo (App shows the context menu).
-  let { items, loading, hasMore, onmore, groups = null, highlight = null, onjump, oncontext = null } = $props();
+  let { items, loading, hasMore, onmore, groups = null, highlight = null, oncontext = null } = $props();
 
   let sentinel;
   let container;
@@ -52,7 +52,6 @@
     return out;
   });
   const info = $derived(new Map((groups ?? []).map((g) => [g.key, g])));
-  const plural = { day: 'days', month: 'months', year: 'years', place: 'places', region: 'regions', country: 'countries', folder: 'folders' };
   const labelOf = (key) => groupLabel(key, mode, info.get(key)?.label);
   const mode = $derived(view.group);
   const order = $derived(new Map(items.map((item, i) => [item.id, i])));
@@ -164,31 +163,14 @@
   }
 </script>
 
-{#if groups?.length > 1}
-  <div class="flex items-center justify-end gap-2 px-2 pt-2 text-xs text-neutral-400">
-    <label for="jump">{groups.length} {plural[mode]}</label>
-    <select
-      id="jump"
-      class="rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-neutral-200"
-      onchange={(e) => {
-        onjump(e.currentTarget.value);
-        e.currentTarget.selectedIndex = 0;
-      }}
-    >
-      <option value="" disabled selected>Jump to…</option>
-      {#each groups as g (g.key)}
-        <option value={g.key}>{labelOf(g.key)} ({g.count})</option>
-      {/each}
-    </select>
-  </div>
-{/if}
-
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div bind:this={container} class="min-h-full select-none" {onpointerdown} {onpointermove} {onpointerup} onpointercancel={onpointerup}>
   {#each sections as section (section.key ?? 'all')}
     {#if section.key !== null}
+      <!-- The jump target: not the sticky header, which stays stuck at the top once
+           scrolled past, so the browser would think it is already in view. -->
+      <div id="group-{section.key || 'undated'}" class="h-0" aria-hidden="true"></div>
       <h2
-        id="group-{section.key || 'undated'}"
         class="sticky top-0 z-10 flex items-baseline gap-2 bg-neutral-950/90 px-2 pb-1.5 pt-3 backdrop-blur"
       >
         <span class="text-sm font-medium text-neutral-100">{labelOf(section.key)}</span>
