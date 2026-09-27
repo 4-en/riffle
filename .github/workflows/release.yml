@@ -144,6 +144,6 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
           body: |
-            Download the file for your system, unpack it, and start **Riffle** (`Riffle.exe` on Windows, `Riffle.app` on macOS). It opens in your browser and stops by itself when you close its tab. The first start downloads the AI model (about 1.7 GB).
+            Download the file for your system, unpack it, and start **Riffle** (`Riffle.exe` on Windows, `Riffle.app` on macOS). It opens in your browser and stops by itself when you close its tab. The first start downloads the AI model (about 0.6 GB).
 
             These builds run the AI model on the CPU (on a Mac also on its GPU). For an NVIDIA GPU, install with pip instead (see the README). They are not signed: see the README for how to open them the first time.

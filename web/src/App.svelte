@@ -432,7 +432,7 @@
 <div class="flex h-full flex-col">
   {#if connection.model === 'loading' && !connection.down}
     <div class="border-b border-sky-900 bg-sky-950 px-4 py-1.5 text-center text-xs text-sky-100">
-      Preparing the AI model… The first start downloads it (about 1.7 GB), which can take a while. You can browse meanwhile;
+      Preparing the AI model… The first start downloads it once, which can take a few minutes. You can browse meanwhile;
       search and indexing work once it is ready.
     </div>
   {:else if connection.model === 'failed' && !connection.down}

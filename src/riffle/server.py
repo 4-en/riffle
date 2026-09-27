@@ -181,12 +181,15 @@ class TasteStore:
 class AutoExit:
     """Stop the server once no browser tab is connected any more (the one-click
     launch only): ``idle_seconds`` after the last tab closed, or
-    ``first_connect_seconds`` if none ever connected, but never while an index
-    or export is running. ``stop`` asks the server to shut down."""
+    ``first_connect_seconds`` if none ever connected, but never within
+    ``min_uptime_seconds`` of starting (a slow browser start, a tab closed right
+    away) and never while an index or export is running. ``stop`` asks the
+    server to shut down."""
 
     stop: Callable[[], None]
     idle_seconds: float = 30.0
     first_connect_seconds: float = 300.0
+    min_uptime_seconds: float = 60.0
 
 
 def create_app(
@@ -249,10 +252,11 @@ def create_app(
 
     async def watch_clients():
         """Stop when no tab has been connected for a while (see AutoExit)."""
-        idle_since = time.monotonic()
+        started = idle_since = time.monotonic()
         while True:
             await asyncio.sleep(0.5)
-            if state["clients"] > 0 or job.running or export_job.running:
+            young = time.monotonic() - started < auto_exit.min_uptime_seconds
+            if young or state["clients"] > 0 or job.running or export_job.running:
                 idle_since = time.monotonic()
                 continue
             limit = auto_exit.idle_seconds if state["seen_client"] else auto_exit.first_connect_seconds

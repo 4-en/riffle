@@ -60,7 +60,7 @@ def wait_stopped(thread, timeout):
 
 
 def test_stops_after_the_last_tab_closes(indexed):
-    server, thread, url = run_server(indexed, AutoExit(stop=None, idle_seconds=0.8, first_connect_seconds=60))
+    server, thread, url = run_server(indexed, AutoExit(stop=None, min_uptime_seconds=0, idle_seconds=0.8, first_connect_seconds=60))
     tab = Tab(url)
     assert tab.lines[0] == "retry: 2000"
     assert not wait_stopped(thread, 3.0)  # a tab is open: keeps running
@@ -69,7 +69,7 @@ def test_stops_after_the_last_tab_closes(indexed):
 
 
 def test_a_reload_within_the_grace_period_keeps_it_running(indexed):
-    server, thread, url = run_server(indexed, AutoExit(stop=None, idle_seconds=4, first_connect_seconds=60))
+    server, thread, url = run_server(indexed, AutoExit(stop=None, min_uptime_seconds=0, idle_seconds=4, first_connect_seconds=60))
     Tab(url).close()  # "reload": the old page goes away...
     tab = Tab(url)  # ...and the new one connects right after
     assert not wait_stopped(thread, 6.0)
@@ -79,24 +79,37 @@ def test_a_reload_within_the_grace_period_keeps_it_running(indexed):
 
 def test_a_tab_that_closes_quickly_still_counts_as_seen(indexed):
     # Otherwise the server would wait the long "never connected" limit instead.
-    server, thread, url = run_server(indexed, AutoExit(stop=None, idle_seconds=0.5, first_connect_seconds=60))
+    server, thread, url = run_server(indexed, AutoExit(stop=None, min_uptime_seconds=0, idle_seconds=0.5, first_connect_seconds=60))
     Tab(url).close()
     assert wait_stopped(thread, 6.0)
 
 
 def test_stops_if_no_tab_ever_connects(indexed):
-    server, thread, url = run_server(indexed, AutoExit(stop=None, idle_seconds=60, first_connect_seconds=0.8))
+    server, thread, url = run_server(indexed, AutoExit(stop=None, min_uptime_seconds=0, idle_seconds=60, first_connect_seconds=0.8))
     assert wait_stopped(thread, 5.0)
+
+
+def test_never_stops_within_the_minimum_uptime(indexed):
+    server, thread, url = run_server(
+        indexed, AutoExit(stop=None, min_uptime_seconds=10, idle_seconds=0.3, first_connect_seconds=0.3)
+    )
+    Tab(url).close()  # a tab that came and went at once
+    assert not wait_stopped(thread, 3.0)  # (10 s leave room for a slow start)
+    assert wait_stopped(thread, 15.0)  # then the usual limits apply
 
 
 def test_waits_for_a_running_job(indexed):
     def slow_index(cfg, progress=None, report=print):
         time.sleep(2.5)
 
+    # A tab holds the server open until the job runs (a slow CI machine can take
+    # longer to start than any short "never connected" limit).
     server, thread, url = run_server(
-        indexed, AutoExit(stop=None, idle_seconds=0.3, first_connect_seconds=0.3), index_runner=slow_index
+        indexed, AutoExit(stop=None, min_uptime_seconds=0, idle_seconds=0.3, first_connect_seconds=60), index_runner=slow_index
     )
-    httpx.post(f"{url}/api/index", json={})
+    tab = Tab(url)
+    assert httpx.post(f"{url}/api/index", json={}).status_code == 200
+    tab.close()
     assert not wait_stopped(thread, 1.5)  # indexing: not stopped although no tab is open
     assert wait_stopped(thread, 5.0)
 

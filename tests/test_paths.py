@@ -34,3 +34,13 @@ def test_explicit_locations_and_packaged_vocabulary(tmp_path):
     assert cfg.data_dir == tmp_path / "derived" and cfg.selections_path == tmp_path / "flags.sqlite3"
     assert cfg.vocabulary_path == paths.default_file("vocabulary.yaml")  # none next to this config
     assert Path(cfg.vocabulary_path).is_file()
+
+
+def test_standalone_app_starts_with_the_faster_model(isolated_user_dirs, monkeypatch):
+    import sys
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    cfg = load_config()
+    assert (cfg.model.name, cfg.model.pretrained) == ("ViT-B-16", "dfn2b")
+    assert cfg.stacks.min_similarity == 0.90
+    assert "faster model" in cfg.path.read_text()  # says why, in the user's config

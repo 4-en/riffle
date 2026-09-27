@@ -33,11 +33,11 @@ Next is a short evaluation of search and tag quality (see `development_plan.md` 
 
 ## Download
 
-Ready-to-run builds for Windows, macOS (Apple silicon) and Linux are on the [Releases](https://github.com/4-en/image-organizer/releases) page, with no Python needed. Unpack the file and start **Riffle** (`Riffle.exe` on Windows, `Riffle.app` on macOS, `Riffle` on Linux). It opens in your browser and stops by itself about 30 seconds after you close its tab; there is no window of its own. Start it again to reopen it.
+Ready-to-run builds for Windows, macOS (Apple silicon) and Linux are on the [Releases](https://github.com/4-en/image-organizer/releases) page, with no Python needed. Unpack the file and start **Riffle** (`Riffle.exe` on Windows, `Riffle.app` on macOS, `Riffle` on Linux). It opens in your browser and stops by itself about 30 seconds after you close its tab (never within its first minute); there is no window of its own. Start it again to reopen it.
 
-- **The first start downloads the AI model** (about 1.7 GB, once). You can browse meanwhile; search and indexing work once it is ready.
+- **The first start downloads the AI model** (about 0.6 GB, once). You can browse meanwhile; search and indexing work once it is ready.
 - **Size:** about 300 MB to download and about 1 GB unpacked, plus the model.
-- **The AI model runs on the CPU** in the Windows and Linux builds (on a Mac, also on its GPU). That is fine for search, but indexing is slow: about 3 photos per second on a desktop CPU with the default model. With an NVIDIA GPU, install with pip instead ([Setup](#setup)), which is many times faster. Intel Macs are not supported by these builds.
+- **The AI model runs on the CPU** in the Windows and Linux builds (on a Mac, also on its GPU), so these builds start with the faster model, ViT-B-16 (see [Model](#model)): indexing runs at about 11 photos per second on a desktop CPU, so 2,000 photos take about 3 minutes. The larger default model of the pip install finds and tags a little better but is about 4× slower on a CPU; switch in `config.yaml` if you like. With an NVIDIA GPU, install with pip instead ([Setup](#setup)), which is many times faster. Intel Macs are not supported by these builds.
 - **The builds are not signed**, so the system warns the first time:
   - macOS: right-click → **Open**. If that is not offered: System Settings → Privacy & Security → **Open Anyway**, or run `xattr -dr com.apple.quarantine Riffle.app`.
   - Windows: SmartScreen → **More info** → **Run anyway**.
@@ -69,7 +69,7 @@ The first run creates your settings (`~/.config/riffle/config.yaml` on Linux); a
 venv/bin/riffle          # starts Riffle and opens it in your browser
 ```
 
-Run it again while it is running and it just opens another browser tab. It uses port 8000, or a free one if that is taken. It stops by itself about 30 seconds after you close its last browser tab (a reload is fine, and it never stops while indexing or exporting), or press Ctrl+C. If you come back to a tab after it stopped, the page says so and reconnects once you run `riffle` again. `riffle serve` starts the server without opening a browser and keeps running until stopped (http://localhost:8000; `--host/--port/--reload`), and `python -m riffle` works like `riffle`.
+Run it again while it is running and it just opens another browser tab. It uses port 8000, or a free one if that is taken. It stops by itself about 30 seconds after you close its last browser tab (a reload is fine; it never stops within its first minute or while indexing or exporting), or press Ctrl+C. If you come back to a tab after it stopped, the page says so and reconnects once you run `riffle` again. `riffle serve` starts the server without opening a browser and keeps running until stopped (http://localhost:8000; `--host/--port/--reload`), and `python -m riffle` works like `riffle`.
 
 In the UI, open **Library** (top right) to browse the disk, add or remove photo folders, and run indexing in the background with progress. It opens by itself when no folders are configured. Added folders are saved to `sources` in `config.yaml`.
 
