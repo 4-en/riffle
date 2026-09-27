@@ -4,6 +4,7 @@
   // places stay put when filters change), coloured by its cluster. Zoom in and the
   // dots become thumbnails. Click a photo to open it, a cluster name to open that
   // group in the grid. Box or lasso selects photos for the selection bar.
+  // Hovering a photo or a name greys out the other clusters.
   import { untrack } from 'svelte';
   import { select } from 'd3-selection';
   import { zoom as d3zoom, zoomIdentity } from 'd3-zoom';
@@ -24,6 +25,10 @@
   let error = $state('');
   let transform = $state(zoomIdentity);
   let hover = $state(null); // {id, key, x, y}
+  let hoverLabel = $state(undefined); // the cluster key of the name under the pointer
+  // The cluster under the pointer (a photo's or a name's; null = Other): it stays
+  // bright and the rest greys out, so close clusters are easy to tell apart.
+  const focus = $derived(hover ? hover.key : hoverLabel);
   let tool = $state('pan');
 
   // Box / lasso: the photos whose dot or tile centre lies inside the shape.
@@ -94,49 +99,63 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
     const s = tileSize(transform.k);
-    for (const [id, x, y, key] of data.points) {
-      const [sx, sy] = at(x, y);
-      if (sx < -s || sy < -s || sx > width + s || sy > height + s) continue;
-      if (s >= THUMB_FROM) {
-        let img = images.get(id);
-        if (!img) {
-          img = new Image();
-          img.onload = redraw;
-          img.src = `/thumbs/${id}.jpg`;
-          images.set(id, img);
-        }
-        if (img.complete && img.naturalWidth) {
-          const r = img.naturalWidth / img.naturalHeight;
-          const w = r >= 1 ? s : s * r;
-          const h = r >= 1 ? s / r : s;
-          ctx.drawImage(img, sx - w / 2, sy - h / 2, w, h);
-          if (selection.has(id)) {
-            ctx.strokeStyle = '#38bdf8';
-            ctx.lineWidth = 3;
-            ctx.strokeRect(sx - w / 2, sy - h / 2, w, h);
-          } else if (hover?.id === id) {
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(sx - w / 2, sy - h / 2, w, h);
-          }
-          continue;
-        }
+    // With a cluster in focus, the others are drawn first, greyed out, and it goes on top.
+    if (focus === undefined) {
+      for (const [id, x, y, key] of data.points) drawPoint(ctx, s, id, x, y, key, false);
+    } else {
+      for (const [id, x, y, key] of data.points) if (key !== focus) drawPoint(ctx, s, id, x, y, key, true);
+      for (const [id, x, y, key] of data.points) if (key === focus) drawPoint(ctx, s, id, x, y, key, false);
+    }
+  }
+
+  function drawPoint(ctx, s, id, x, y, key, faded) {
+    const [sx, sy] = at(x, y);
+    if (sx < -s || sy < -s || sx > width + s || sy > height + s) return;
+    if (s >= THUMB_FROM) {
+      let img = images.get(id);
+      if (!img) {
+        img = new Image();
+        img.onload = redraw;
+        img.src = `/thumbs/${id}.jpg`;
+        images.set(id, img);
       }
-      const d = Math.max(3, s * 0.7);
-      ctx.fillStyle = key ? colour.get(key) : '#525252';
-      ctx.globalAlpha = 0.85;
-      ctx.fillRect(sx - d / 2, sy - d / 2, d, d);
-      ctx.globalAlpha = 1;
-      if (selection.has(id)) {
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(sx - d / 2 - 1.5, sy - d / 2 - 1.5, d + 3, d + 3);
+      if (img.complete && img.naturalWidth) {
+        const r = img.naturalWidth / img.naturalHeight;
+        const w = r >= 1 ? s : s * r;
+        const h = r >= 1 ? s / r : s;
+        if (faded) {
+          ctx.globalAlpha = 0.25;
+          ctx.filter = 'grayscale(1)';
+        }
+        ctx.drawImage(img, sx - w / 2, sy - h / 2, w, h);
+        ctx.globalAlpha = 1;
+        ctx.filter = 'none';
+        if (selection.has(id)) {
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(sx - w / 2, sy - h / 2, w, h);
+        } else if (hover?.id === id) {
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(sx - w / 2, sy - h / 2, w, h);
+        }
+        return;
       }
+    }
+    const d = Math.max(3, s * 0.7);
+    ctx.fillStyle = key && !faded ? colour.get(key) : '#525252';
+    ctx.globalAlpha = faded ? 0.3 : 0.85;
+    ctx.fillRect(sx - d / 2, sy - d / 2, d, d);
+    ctx.globalAlpha = 1;
+    if (selection.has(id)) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(sx - d / 2 - 1.5, sy - d / 2 - 1.5, d + 3, d + 3);
     }
   }
 
   $effect(() => {
-    data, transform, width, height, hover, selection.size;
+    data, transform, width, height, hover, focus, selection.size;
     untrack(redraw);
   });
 
@@ -207,8 +226,11 @@
       {@const [lx, ly] = at(g.x, g.y)}
       {#if lx > 0 && ly > 0 && lx < width && ly < height}
         <button
-          class="absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-medium hover:bg-black"
+          class="absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-medium transition-opacity hover:bg-black
+            {focus !== undefined && focus !== g.key ? 'opacity-25' : ''}"
           style="left: {lx}px; top: {ly}px; color: {colour.get(g.key)}"
+          onmouseenter={() => (hoverLabel = g.key)}
+          onmouseleave={() => (hoverLabel = undefined)}
           title="Show these {g.count} photos in the grid"
           onclick={() => onopen('similar', g.key)}>{g.label} · {g.count}</button
         >

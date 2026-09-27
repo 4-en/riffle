@@ -22,10 +22,10 @@ from dataclasses import dataclass
 import numpy as np
 
 LEVELS = {"broad": 0.45, "medium": 0.35, "fine": 0.25}  # cosine-distance cuts
-MIN_SIZE = 5
+MIN_SIZE = 4
 MAX_DIRECT = 6000  # above this, cluster a sample (the pairwise distances need memory)
-MAX_SHARE = {"broad": 0.25, "medium": 0.12, "fine": 0.06}  # largest share of the view one cluster may hold
-MIN_CAP = 25  # ...but never split below this many photos
+MAX_SHARE = {"broad": 0.20, "medium": 0.10, "fine": 0.05}  # largest share of the view one cluster may hold
+MIN_CAP = 10  # ...but never split below this many photos
 SPLIT_STEP, MIN_CUT = 0.8, 0.12  # lower the cut by this factor inside a too-large cluster, down to MIN_CUT
 ADDED_RAW_WITHIN = 0.02  # ...and an added phrase must be about as similar to the cluster as the name
 QUALIFIER_WITHIN = 0.04  # a phrase telling apart same-named clusters must fit about as well
