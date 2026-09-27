@@ -10,17 +10,22 @@ import numpy as np
 from PIL import Image
 
 from .config import Config
+from .colors import color_stats
 from .quality import clipping, sharpness
 
 log = logging.getLogger(__name__)
 
 
 def compute_phashes(conn: sqlite3.Connection, cfg: Config, progress=None) -> int:
-    """pHash (for duplicates), sharpness and exposure clipping (for culling) of each
-    preview that lacks them."""
+    """pHash (for duplicates), sharpness and exposure clipping (for culling), and
+    colour and light (for Curate) of each preview that lacks them. Only what is
+    missing is computed, so adding a measure does not redo the others."""
     rows = conn.execute(
-        """SELECT id FROM photos WHERE status = 'ok'
-           AND (phash IS NULL OR sharpness IS NULL OR clip_highlights IS NULL) ORDER BY id"""
+        """SELECT id, phash IS NULL OR sharpness IS NULL OR clip_highlights IS NULL AS basic,
+                  brightness IS NULL AS color
+           FROM photos WHERE status = 'ok'
+           AND (phash IS NULL OR sharpness IS NULL OR clip_highlights IS NULL OR brightness IS NULL)
+           ORDER BY id"""
     ).fetchall()
     it = progress(rows, desc="phash") if progress and rows else rows
     n = 0
@@ -29,13 +34,19 @@ def compute_phashes(conn: sqlite3.Connection, cfg: Config, progress=None) -> int
         if not path.exists():
             continue
         with Image.open(path) as im:
-            h = str(imagehash.phash(im))
-            s = sharpness(im)
-            hi, lo = clipping(im)
-        conn.execute(
-            "UPDATE photos SET phash = ?, sharpness = ?, clip_highlights = ?, clip_shadows = ? WHERE id = ?",
-            (h, s, hi, lo, r["id"]),
-        )
+            if r["basic"]:
+                h = str(imagehash.phash(im))
+                s = sharpness(im)
+                hi, lo = clipping(im)
+                conn.execute(
+                    "UPDATE photos SET phash = ?, sharpness = ?, clip_highlights = ?, clip_shadows = ? WHERE id = ?",
+                    (h, s, hi, lo, r["id"]),
+                )
+            if r["color"]:
+                conn.execute(
+                    "UPDATE photos SET brightness = ?, contrast = ?, colorfulness = ?, hues = ? WHERE id = ?",
+                    (*color_stats(im), r["id"]),
+                )
         n += 1
     conn.commit()
     return n

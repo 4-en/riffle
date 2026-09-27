@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS photos (
@@ -124,7 +123,17 @@ MIGRATIONS = [
     ALTER TABLE photos ADD COLUMN clip_highlights REAL;
     ALTER TABLE photos ADD COLUMN clip_shadows REAL;
     """,
+    # v6: colour and light of the preview (colors.py), derived; for Curate.
+    """
+    ALTER TABLE photos ADD COLUMN brightness REAL;
+    ALTER TABLE photos ADD COLUMN contrast REAL;
+    ALTER TABLE photos ADD COLUMN colorfulness REAL;
+    ALTER TABLE photos ADD COLUMN hues BLOB;
+    """,
 ]
+
+# v1 is SCHEMA; each migration adds one version (so adding one bumps it).
+SCHEMA_VERSION = len(MIGRATIONS) + 1
 
 
 def init_schema(conn: sqlite3.Connection) -> None:

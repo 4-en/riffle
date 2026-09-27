@@ -47,6 +47,47 @@ class Params:
     removed: list[int] = field(default_factory=list)
 
 
+# Colour and light (colors.py): each choice leans the draft one way, like a style
+# slider at full strength. key -> (column, direction, label for the reason text).
+LOOKS = {
+    "brightness": {1: "bright", -1: "dark"},
+    "contrast": {1: "punchy", -1: "soft"},
+    "colorfulness": {1: "vivid", -1: "muted"},
+}
+
+
+def look_scores(conn: sqlite3.Connection, look: dict) -> tuple[dict, dict, dict]:
+    """Scores, weights and labels for the chosen colour/light preferences, in the
+    form of styles: ``({key: {photo id: score}}, {key: weight}, {key: label})``.
+    ``look``: ``{"brightness": -1|0|1, "contrast": ..., "colorfulness": ..., "hue": name}``.
+    Photos not analysed yet get the median, so they are neither favoured nor dropped."""
+    from .colors import HUES, hue_affinity
+
+    wanted = {col: int(look.get(col) or 0) for col in LOOKS if look.get(col) in (1, -1)}
+    hue = look.get("hue") if look.get("hue") in HUES else None
+    if not wanted and not hue:
+        return {}, {}, {}
+    rows = conn.execute(
+        "SELECT id, brightness, contrast, colorfulness, hues FROM photos WHERE status = 'ok'"
+    ).fetchall()
+    scores, weights, labels = {}, {}, {}
+
+    def add(key: str, label: str, values: dict[int, float | None]) -> None:
+        known = [v for v in values.values() if v is not None]
+        fill = float(np.median(known)) if known else 0.0
+        scores[key] = {i: (fill if v is None else v) for i, v in values.items()}
+        weights[key] = 1.0
+        labels[key] = label
+
+    for col, direction in wanted.items():
+        add(f"look.{col}", LOOKS[col][direction],
+            {r["id"]: None if r[col] is None else direction * r[col] for r in rows})
+    if hue:
+        degrees = HUES[hue][0]
+        add("look.hue", hue, {r["id"]: None if r["hues"] is None else hue_affinity(r["hues"], degrees) for r in rows})
+    return scores, weights, labels
+
+
 @dataclass
 class Style:
     name: str

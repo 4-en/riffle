@@ -95,6 +95,7 @@ export const calibrateTaste = () => send('POST', '/api/taste/calibrate');
 
 /** Curate: the styles for the sliders, a draft for the current filters, and alternatives for one slot. */
 export const fetchStyles = () => get('/api/styles');
+export const fetchHues = () => get('/api/hues');
 export function fetchCurate(view, body) {
   const qs = query(filterParams(view));
   return send('POST', qs ? `/api/curate?${qs}` : '/api/curate', body);

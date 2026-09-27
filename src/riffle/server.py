@@ -89,6 +89,7 @@ class CurateIn(BaseModel):
     include_rejects: bool = False
     locked: list[int] = []
     removed: list[int] = []
+    look: dict[str, int | str | None] = {}  # colour and light: see curate.look_scores
 
 
 class AlternativesIn(CurateIn):
@@ -545,6 +546,7 @@ def create_app(
         if r is None:
             raise HTTPException(404, "photo not found")
         photo = dict(r)
+        photo.pop("hues", None)  # binary (colors.py); only Curate uses it
         photo["path"] = str(Path(r["source"]) / r["rel_path"])
         photo["thumb"] = f"/thumbs/{photo_id}.jpg"
         photo["preview"] = f"/previews/{photo_id}.jpg"
@@ -880,14 +882,24 @@ def create_app(
         )
         where, params = flt.where(model_id)
         model = taste_store.current(index)
+        scores = style_scores(index) if any(p.styles.values()) else {}
+        look, look_weights, look_labels = curate.look_scores(conn, body.look)
+        p.styles.update(look_weights)
         pool = curate.build_pool(
             conn, where, params, index.row, index.E, p,
             taste=taste_store.scores if model and model.enabled else None,
             clip_quality=clip_quality(index, [int(i) for i in index.ids]),
-            style_scores=style_scores(index) if any(p.styles.values()) else {},
+            style_scores={**scores, **look},
             place_labels=location_labels(conn)["place"],
         )
-        return pool, p
+        return pool, p, look_labels
+
+    @app.get("/api/hues")
+    def list_hues():
+        """The colours Curate can lean towards (name and a display colour)."""
+        from .colors import HUES
+
+        return [{"name": name, "color": css} for name, (_, css) in HUES.items()]
 
     @app.get("/api/styles")
     def list_styles():
@@ -898,11 +910,12 @@ def create_app(
         """A draft selection from the photos within the filters (see curate.py)."""
         from . import curate
 
-        pool, p = curate_pool(body, flt, conn, index)
+        pool, p, look_labels = curate_pool(body, flt, conn, index)
+        where, params = flt.where(model_id)
         if pool is None:
             return {"items": [], "cover": None, "sections": [], "candidates": 0, "used": {}}
         d = curate.draft(pool, p)
-        labels = {s.name: s.label for s in styles_config()}
+        labels = {s.name: s.label for s in styles_config()} | look_labels
         ids = [it["id"] for it in d["items"]]
         by_id = {i["id"]: i for i in items_for(conn, ids)}
         items = []
@@ -926,6 +939,10 @@ def create_app(
                 "taste": bool(taste_store.scores),
                 "locations": bool((pool.loc_w > 0).any()),
                 "styles": sorted(k for k, w in p.styles.items() if w),
+                # candidates whose colours are not analysed yet (the next index does it)
+                "colors_missing": conn.execute(
+                    f"SELECT COUNT(*) FROM photos p WHERE {where} AND p.brightness IS NULL", params
+                ).fetchone()[0],
             },
         }
 
@@ -934,7 +951,7 @@ def create_app(
         """Photos that could take one slot of the draft: its other frames, then similar good ones."""
         from . import curate
 
-        pool, p = curate_pool(body, flt, conn, index)
+        pool, p, _ = curate_pool(body, flt, conn, index)
         if pool is None:
             return {"items": []}
         chosen = {int(pool.ids[j]) for j in curate.select(pool, p)}

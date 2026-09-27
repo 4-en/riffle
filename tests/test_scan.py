@@ -2,6 +2,8 @@ import os
 
 import pytest
 
+from riffle import db as _db
+
 from riffle.scan import scan
 from conftest import photo
 
@@ -120,3 +122,29 @@ def test_v1_catalogue_is_migrated_and_metadata_backfilled(cfg, archive_dir):
     assert p["phash"] == "keep"  # derived data untouched
     assert scan(conn, cfg).metadata_refreshed == 0
     conn.close()
+
+
+@pytest.mark.parametrize("version", range(1, _db.SCHEMA_VERSION))
+def test_every_older_catalogue_migrates_to_the_current_schema(tmp_path, version):
+    """A catalogue left at any older version ends up with the same tables and
+    columns as a new one (guards against a migration without a version bump)."""
+    import sqlite3
+
+    from riffle import db
+
+    def columns(conn):
+        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")]
+        return {t: [r[1] for r in conn.execute(f"PRAGMA table_info({t})")] for t in tables}
+
+    old = sqlite3.connect(tmp_path / "old.sqlite3")
+    old.executescript(db.SCHEMA)
+    for script in db.MIGRATIONS[: version - 1]:
+        old.executescript(script)
+    old.execute(f"PRAGMA user_version = {version}")
+    old.commit()
+    old.close()
+
+    migrated = db.connect(tmp_path / "old.sqlite3")
+    fresh = db.connect(tmp_path / "new.sqlite3")
+    assert migrated.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    assert {t: sorted(c) for t, c in columns(migrated).items()} == {t: sorted(c) for t, c in columns(fresh).items()}

@@ -75,8 +75,8 @@
         </li>
         <li>
           <strong class="text-neutral-100">Curate (optional).</strong> For a photo book or an exhibition, narrow the library to a trip
-          and press <em>Curate</em>: a draft of good but varied photos, steered with sliders (how many, best ↔ varied, spread over
-          time and places, and styles like moody or colourful). Remove a photo (the next one takes its place; it is not
+          and press <em>Curate</em>: a draft of good but varied photos, steered from the left panel (how many, best ↔ varied, spread over
+          time and places, colours, light and contrast, and styles like moody or colourful). Remove a photo (the next one takes its place; it is not
           rejected), lock the ones to keep, or pick an alternative. <em>Mark as picks</em> or <em>Export</em> when it's right.
         </li>
         <li>
