@@ -1,9 +1,10 @@
 <script>
   import { tick, untrack } from 'svelte';
   import { view, prefs, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, curateKey, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup, hasOverview } from './lib/state.svelte.js';
-  import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds, fetchTaste, fetchProfiles } from './lib/api.js';
+  import { fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds, fetchTaste, fetchProfiles } from './lib/api.js';
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import { connection, connect } from './lib/connection.svelte.js';
+  import { Listing, PAGE } from './lib/listing.svelte.js';
   import TopBar from './components/TopBar.svelte';
   import ViewBar from './components/ViewBar.svelte';
   import Sidebar from './components/Sidebar.svelte';
@@ -23,20 +24,14 @@
   const loadMap = () => import('./components/MapView.svelte');
   const loadSimilarMap = () => import('./components/SimilarMap.svelte');
 
-  const PAGE = 120;
-
   readUrl();
   connect();
 
   let tags = $state(null);
-  let items = $state([]);
-  let total = $state(0);
-  let loading = $state(false);
+  const listing = new Listing(); // the grid's photos, loaded in pages as needed
   let error = $state('');
   let topBar;
   let grid = $state(); // bound inside an {#if}
-  let token = 0;
-  let loaded = false; // first page of the current query has arrived
 
   let facets = $state(null);
   // Profiles (for the top bar switcher and the Library); refreshed on renames and switches.
@@ -129,46 +124,9 @@
     })
     .catch(() => {});
 
-  // Date groups of the whole result set (only when browsing with grouping on).
-  let groups = $state([]);
-  let inflight = null; // the page request in progress, so callers can await it
-
-  function loadMore() {
-    if (inflight) return inflight;
-    if (loaded && items.length >= total) return Promise.resolve();
-    const mine = token;
-    loading = true;
-    inflight = (async () => {
-      try {
-        const page = await fetchResults(view, items.length, PAGE);
-        if (mine !== token) return;
-        items = [...items, ...page.items];
-        total = page.total;
-        groups = page.groups ?? [];
-        loaded = true;
-        error = '';
-      } catch (e) {
-        if (mine === token) error = e.message;
-      } finally {
-        if (mine === token) {
-          loading = false;
-          inflight = null;
-        }
-      }
-    })();
-    return inflight;
-  }
-
   async function reset() {
-    token++;
     clearSelection();
-    items = [];
-    total = 0;
-    groups = [];
-    loaded = false;
-    loading = false;
-    inflight = null;
-    await loadMore();
+    await listing.reset();
     if (pendingJump) {
       const { key, id } = pendingJump;
       pendingJump = null;
@@ -189,26 +147,25 @@
 
   const grouped = $derived(!!view.group && !view.q && !view.similar);
 
-  /** Load pages until the group is in the grid, then scroll to it (and its photo). */
+  /** Scroll to a group, and to one of its photos (loading the group's pages until it turns up). */
   async function jumpToGroup(key, photoId = null) {
-    const i = groups.findIndex((g) => g.key === key);
-    if (i < 0) return;
-    const end = groups.slice(0, i + 1).reduce((n, g) => n + g.count, 0);
-    while (items.length < end && items.length < total) {
-      const before = items.length;
-      await loadMore();
-      if (items.length === before) break; // failed or superseded
+    const g = listing.group(key);
+    if (!g) return;
+    await tick(); // the grid may just have come back
+    grid?.scrollToGroup(key);
+    if (photoId == null) return;
+    let offset = listing.offsetOf(photoId);
+    for (let p = g.start; offset === undefined && p < g.start + g.count; p += PAGE) {
+      await listing.ensure(p);
+      offset = listing.offsetOf(photoId);
     }
+    if (offset === undefined) return;
     await tick();
-    const tile = photoId != null && document.getElementById(`tile-${photoId}`);
-    const target = tile || document.getElementById(`group-${key || 'undated'}`);
-    target?.scrollIntoView({ block: tile ? 'center' : 'start' });
-    if (tile) {
-      highlight = photoId;
-      setTimeout(() => {
-        if (highlight === photoId) highlight = null;
-      }, 2500);
-    }
+    grid?.scrollToOffset(offset, 'center');
+    highlight = photoId;
+    setTimeout(() => {
+      if (highlight === photoId) highlight = null;
+    }, 2500);
   }
 
   /** From an overview (calendar or map): show that group in the grouped grid. */
@@ -286,46 +243,46 @@
     lastSearchKey = urlFor({ ...view, photo: null, raws: false });
   }
 
-  const hasMore = $derived(items.length < total);
-
-  // Flags change locally before the list is re-queried; with a flag filter active
-  // (e.g. Picked + Unflagged), photos whose new flag no longer matches disappear at once.
-  const visibleItems = $derived.by(() => {
-    const wanted = view.filters.flag;
-    if (!wanted.length) return items;
-    return items.filter((item) => wanted.includes(flagOf(item) ?? 'none'));
-  });
-  const itemsById = $derived(new Map(items.map((i) => [i.id, i])));
+  // Compare looks photos up here before asking the server.
+  const itemsById = { get: (id) => listing.byId(id) };
   // While Curate is open, the photo view steps through the draft instead of the grid.
   let curateOrder = $state([]);
-  const navItems = $derived(view.curate ? curateOrder.map((id) => ({ id })) : visibleItems);
-  const index = $derived(navItems.findIndex((i) => i.id === view.photo));
+  const curateIndex = $derived(view.curate ? curateOrder.indexOf(view.photo) : -1);
+  // The open photo's place in the grid's listing (-1: not in it, e.g. opened from a map).
+  const photoOffset = $derived(view.photo == null ? -1 : (listing.offsetOf(view.photo) ?? -1));
+  const neighbour = (dir) => (photoOffset < 0 ? -1 : listing.nextVisible(photoOffset, dir));
+  const hasPrev = $derived(view.curate ? curateIndex > 0 : neighbour(-1) >= 0);
+  const hasNext = $derived(view.curate ? curateIndex >= 0 && curateIndex < curateOrder.length - 1 : neighbour(1) >= 0);
   const shows = (flag) => !view.filters.flag.length || view.filters.flag.includes(flag ?? 'none');
+
+  /** Show the photo at a listing offset in the photo view (if it is still on `from`). */
+  async function openAt(offset, from) {
+    const item = offset >= 0 ? await listing.load(offset) : null;
+    if (item && view.photo === from) view.photo = item.id;
+  }
 
   async function step(delta) {
     if (view.photo == null) return;
-    let i = index + delta;
-    if (i >= navItems.length && hasMore && !view.curate) await loadMore();
-    if (i >= 0 && i < navItems.length) view.photo = navItems[i].id;
+    if (view.curate) {
+      const i = curateIndex + delta;
+      if (curateIndex >= 0 && i >= 0 && i < curateOrder.length) view.photo = curateOrder[i];
+      return;
+    }
+    await openAt(neighbour(delta), view.photo);
   }
 
   /** P / X / U in the loupe: flag, then go on if auto-advance is on (or the photo just got hidden). */
   async function flagInLoupe(flag) {
     const id = view.photo;
     if (view.curate) return setFlag([id], flag); // the draft does not change when flagging
-    const nextId = visibleItems[index + 1]?.id ?? null;
-    const prevId = visibleItems[index - 1]?.id ?? null;
+    const next = neighbour(1);
+    const prev = neighbour(-1);
     setFlag([id], flag);
     if (!culling.autoAdvance && shows(flag)) return;
-    if (nextId != null) view.photo = nextId;
-    else if (hasMore) {
-      await loadMore();
-      view.photo = visibleItems[visibleItems.findIndex((i) => i.id === prevId) + 1]?.id ?? prevId;
-    } else if (!shows(flag)) view.photo = prevId;
+    if (next >= 0) await openAt(next, id);
+    else if (!shows(flag)) await openAt(prev, id);
   }
 
-  /** P / X / U in the grid: flag the selection (or the focused photo). If that hides
-   * them, move the selection to the next visible photo so you can keep going. */
   // Right-click menu on a grid photo. Like a file manager: right-clicking a photo
   // outside the selection selects just it; inside, the selection is kept.
   let menuAt = $state(null); // {x, y, id}
@@ -340,7 +297,19 @@
     menuAt = { x: e.clientX, y: e.clientY, id };
   }
 
-  function flagInGrid(flag) {
+  /** The first shown photo from `offset` in direction dir that is not in `skip`. */
+  async function nextShown(offset, dir, skip) {
+    for (let o = listing.nextVisible(offset, dir); o >= 0; o = listing.nextVisible(o, dir)) {
+      const item = await listing.load(o);
+      if (!item) return null;
+      if (!skip.has(item.id)) return item;
+    }
+    return null;
+  }
+
+  /** P / X / U in the grid: flag the selection (or the focused photo). If that hides
+   * them, move the selection to the next visible photo so you can keep going. */
+  async function flagInGrid(flag) {
     if (view.overview) {
       // On a map there is no grid to move through: flag the selection, that's all.
       if (selection.size) setFlag([...selection], flag);
@@ -349,20 +318,25 @@
     const targets = selection.size ? [...selection] : cursor.focus != null ? [cursor.focus] : [];
     if (!targets.length) return;
     const set = new Set(targets);
-    const last = Math.max(...targets.map((id) => visibleItems.findIndex((i) => i.id === id)));
-    const next = visibleItems.slice(last + 1).find((i) => !set.has(i.id)) ?? visibleItems.slice(0, last).reverse().find((i) => !set.has(i.id));
     setFlag(targets, flag);
-    if (!shows(flag)) {
-      selection.clear();
-      if (next) {
-        selection.add(next.id);
-        cursor.focus = cursor.anchor = next.id;
-      }
+    if (shows(flag)) return;
+    selection.clear();
+    const offsets = targets.map((id) => listing.offsetOf(id)).filter((o) => o !== undefined);
+    if (!offsets.length) return;
+    const last = Math.max(...offsets);
+    const next = (await nextShown(last, 1, set)) ?? (await nextShown(last, -1, set));
+    if (next && !selection.size) {
+      selection.add(next.id);
+      cursor.focus = cursor.anchor = next.id;
     }
   }
 
   async function selectAll() {
-    const ids = view.q || view.similar ? visibleItems.map((i) => i.id) : (await fetchIds(view)).ids;
+    let ids;
+    if (view.q || view.similar) {
+      // Search results: one ranked list, loaded in full only on request.
+      ids = listing.total ? await listing.idsBetween(0, listing.total - 1) : [];
+    } else ids = (await fetchIds(view)).ids;
     selection.clear();
     for (const id of ids) selection.add(id);
   }
@@ -480,19 +454,19 @@
   <div class="flex min-h-0 flex-1">
     <Sidebar {tags} {facets} profile={profiles.find((p) => p.active && p.slug !== 'default')?.name} />
     <div class="flex min-w-0 flex-1 flex-col">
-      {#if !(tags && tags.photos === 0 && !loading)}
-        <ViewBar {total} {loading} {taste} groups={grouped && !view.overview ? groups : null} onjump={jumpToGroup} />
+      {#if !(tags && tags.photos === 0 && !listing.loading)}
+        <ViewBar total={listing.total} loading={listing.loading} {taste} groups={grouped && !view.overview ? listing.groups : null} onjump={jumpToGroup} />
       {/if}
       <main class="min-h-0 flex-1 overflow-y-auto">
-        {#if error || culling.error}
+        {#if error || listing.error || culling.error}
           <div class="m-4 rounded border border-red-900 bg-red-950/50 p-3 text-sm text-red-300">
-            {error || `Could not save flags: ${culling.error}`}
+            {error || listing.error || `Could not save flags: ${culling.error}`}
             {#if view.q || view.similar}
               <button class="ml-2 underline" onclick={clearSearch}>Clear search</button>
             {/if}
           </div>
         {/if}
-        {#if tags && tags.photos === 0 && !loading}
+        {#if tags && tags.photos === 0 && !listing.loading}
           <div class="flex h-full flex-col items-center justify-center gap-3 text-neutral-400">
             {#if indexStatus?.running}
               <p>Indexing… photos appear here when it finishes.</p>
@@ -519,16 +493,7 @@
         {:else if view.overview}
           <Calendar onopen={openGroup} />
         {:else}
-          <Grid
-            bind:this={grid}
-            items={visibleItems}
-            {loading}
-            {hasMore}
-            onmore={loadMore}
-            groups={grouped ? groups : null}
-            {highlight}
-            oncontext={openMenu}
-          />
+          <Grid bind:this={grid} {listing} {highlight} oncontext={openMenu} />
           <SelectionBar onselectall={selectAll} />
         {/if}
       </main>
@@ -546,8 +511,8 @@
 {#if view.photo != null}
   <Detail
     id={view.photo}
-    hasPrev={index > 0}
-    hasNext={index >= 0 && (index < navItems.length - 1 || (hasMore && !view.curate))}
+    {hasPrev}
+    {hasNext}
     onstep={step}
     ontimeline={showInTimeline}
     onflag={flagInLoupe}

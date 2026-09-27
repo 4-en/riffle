@@ -1,7 +1,7 @@
 <script>
   // The toolbar above the grid: how the photos are shown (count, grouping and its
   // overview, sort order, stacks). The top bar keeps search and the workflow actions.
-  import { view, hasOverview, overviewName, sortFits, groupLabel, LEVELS } from '../lib/state.svelte.js';
+  import { view, prefs, setPref, hasOverview, overviewName, sortFits, groupLabel, LEVELS, TILE_SIZES } from '../lib/state.svelte.js';
 
   // taste: the taste model's status (enables the "likely keepers / rejects" sorts).
   // groups: the grouped grid's groups (null when not grouped); onjump(key): scroll to one.
@@ -114,6 +114,17 @@
         <option value="-taste" disabled={!taste?.enabled || !!view.group}>Likely rejects first</option>
       </optgroup>
     </select>
+  </div>
+
+  <div class="flex overflow-hidden rounded border border-neutral-700 {view.overview ? 'opacity-40' : ''}" role="group" aria-label="Thumbnail size">
+    {#each Object.keys(TILE_SIZES) as size, i (size)}
+      <button
+        class="{segment} {i ? 'border-l border-neutral-700' : ''} {prefs.tileSize === size ? on : off}"
+        aria-pressed={prefs.tileSize === size}
+        title="{size[0].toUpperCase() + size.slice(1)} thumbnails"
+        onclick={() => setPref('tileSize', size)}>{size[0].toUpperCase()}</button
+      >
+    {/each}
   </div>
 
   <label class="flex cursor-pointer items-center gap-1.5" title="Show one tile per stack of similar shots (S)">

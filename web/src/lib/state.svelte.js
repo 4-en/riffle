@@ -24,7 +24,11 @@ function loadPref(key, fallback) {
 
 export const prefs = $state({
   nameMatch: loadPref('nameMatch', true), // text search also puts file / folder name matches first
+  tileSize: loadPref('tileSize', 'medium'), // grid thumbnails: 'small' | 'medium' | 'large'
 });
+
+/** Grid tile sizes: the smallest width a tile may have (the grid fills each row). */
+export const TILE_SIZES = { small: 112, medium: 168, large: 260 };
 
 export function setPref(key, value) {
   prefs[key] = value;

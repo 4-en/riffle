@@ -502,8 +502,8 @@ def create_app(
             "name": f"{FILENAME_EXPR} COLLATE NOCASE, p.source, p.rel_path",
             "-name": f"{FILENAME_EXPR} COLLATE NOCASE DESC, p.source, p.rel_path",
             # by place name; photos without a location last either way
-            "place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE, p.taken_at IS NULL, p.taken_at",
-            "-place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE DESC, p.taken_at IS NULL, p.taken_at",
+            "place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE, p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
+            "-place": f"{PLACE_NAME} IS NULL, {PLACE_NAME} COLLATE NOCASE DESC, p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
             "id": "p.id",
         }.get(sort)
         if order is None:
@@ -611,7 +611,8 @@ def create_app(
         With a name sort (``NAME_SORTS``), groups are ordered by their label, unknown last."""
         key = SIMILAR_KEY if group == "similar" else GROUP_KEYS[group]
         by_location = group in LOCATION_KEYS
-        group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else "grp" if group == "similar" else f"grp {direction}"
+        # Folders stay in path order and clusters in rank order; the direction flips dates only.
+        group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else "grp" if group in ("similar", "folder") else f"grp {direction}"
         extra = ""
         if by_location:
             lat = "(SELECT l.lat FROM photo_locations l WHERE l.photo_id = p.id)"

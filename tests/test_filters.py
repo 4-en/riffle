@@ -103,6 +103,17 @@ def test_grouped_listing(client):
     paged = client.get("/api/photos", params={"group": "day", "dupes": "all", "limit": 1, "offset": 3}).json()
     assert len(paged["groups"]) == 4 and paged["items"][0]["group"] == ""
 
+
+@pytest.mark.parametrize("group", ["day", "month", "year", "folder"])
+@pytest.mark.parametrize("sort", ["taken_at", "-taken_at"])
+def test_groups_match_listing_order(client, conn, group, sort):
+    # The grid lays out every group from the summary and fetches pages out of order,
+    # so the summary must list the groups in the listing's order with its counts.
+    conn.execute("UPDATE photos SET rel_path = 'IMG_0003.png' WHERE rel_path LIKE '%IMG_0003.png'")  # a second folder
+    conn.commit()
+    res = client.get("/api/photos", params={"group": group, "sort": sort, "dupes": "all"}).json()
+    assert [i["group"] for i in res["items"]] == [g["key"] for g in res["groups"] for _ in range(g["count"])]
+
     assert client.get("/api/photos", params={"group": "week"}).status_code == 400
     assert "groups" not in client.get("/api/photos").json()
 

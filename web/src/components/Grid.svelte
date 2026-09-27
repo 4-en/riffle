@@ -1,71 +1,122 @@
 <script>
-  import { view, groupLabel, filterToGroup, isLocationGroup, dateSpan } from '../lib/state.svelte.js';
+  // The photo grid, virtualised: the listing's layout (groups, rows) is computed from
+  // its counts, only the rows near the viewport are in the page, and their photos'
+  // pages are fetched as they come into view. Rows not loaded yet show placeholders.
+  import { untrack } from 'svelte';
+  import { view, prefs, TILE_SIZES, groupLabel, filterToGroup, isLocationGroup, dateSpan } from '../lib/state.svelte.js';
   import { selection, cursor, flagOf } from '../lib/culling.svelte.js';
+  import { GAP, HEADER, columns, blocks, totalHeight, blockAt, rowsBetween, rowTop, move, hits } from '../lib/listing-layout.js';
 
-  // `groups`: the result's date groups (key, count) when the grid is grouped, else null.
+  // listing: the Listing (listing.svelte.js) shown.
   // oncontext(event, id): right-click on a photo (App shows the context menu).
-  let { items, loading, hasMore, onmore, groups = null, highlight = null, oncontext = null } = $props();
+  let { listing, highlight = null, oncontext = null } = $props();
 
-  let sentinel;
   let container;
+  let scroller = null; // the scrolling <main> around the grid
+  let width = $state(0);
+  let scrollY = $state(0); // the viewport's top, in grid coordinates
+  let viewH = $state(800);
 
-  function nearBottom() {
-    return sentinel && sentinel.getBoundingClientRect().top < window.innerHeight + 800;
+  // Where the grid starts within the scroller's content (an error box may sit above it).
+  const gridTop = () => container.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+
+  function measure() {
+    if (!scroller || !container) return;
+    width = container.clientWidth;
+    viewH = scroller.clientHeight;
+    scrollY = scroller.scrollTop - gridTop();
   }
 
-  // Infinite scroll: fetch the next page as the sentinel approaches the viewport.
   $effect(() => {
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) onmore();
-      },
-      { root: sentinel.closest('main'), rootMargin: '800px' }
-    );
-    io.observe(sentinel);
-    return () => io.disconnect();
+    scroller = container.closest('main');
+    measure();
+    let frame = 0;
+    const onscroll = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    };
+    scroller.addEventListener('scroll', onscroll, { passive: true });
+    const ro = new ResizeObserver(onscroll);
+    ro.observe(scroller);
+    ro.observe(container);
+    return () => {
+      cancelAnimationFrame(frame);
+      scroller.removeEventListener('scroll', onscroll);
+      ro.disconnect();
+    };
   });
 
-  // If a page did not fill the screen, the observer will not fire again; keep loading.
+  // A new query empties the grid (the scroller snaps back to the top): measure again.
   $effect(() => {
-    items.length;
-    if (!loading && hasMore && nearBottom()) onmore();
+    listing.loaded;
+    untrack(measure);
   });
+
+  // ---- layout --------------------------------------------------------------------
+
+  // Tile size (Small / Medium / Large in the toolbar). Large tiles may use the 1600 px
+  // preview on sharp screens: the 320 px thumbnail, cropped square, would look soft.
+  const minTile = $derived(TILE_SIZES[prefs.tileSize] ?? TILE_SIZES.medium);
+  const large = $derived(prefs.tileSize === 'large');
+  const metrics = $derived(columns(width, minTile));
+  const cols = $derived(metrics.cols);
+  const tile = $derived(metrics.tile);
+  const grouped = $derived(!!listing.groups);
+  const bs = $derived(blocks(listing.sections, cols, tile, grouped));
+  const height = $derived(totalHeight(bs));
+  // The rows in view, plus a screen above and below.
+  const rows = $derived(width ? rowsBetween(bs, cols, tile, scrollY - viewH, scrollY + 2 * viewH) : []);
+  const shownBlocks = $derived(grouped ? bs.filter((b) => b.top + b.height > scrollY - viewH && b.top < scrollY + 2 * viewH) : []);
+  const current = $derived(grouped && bs.length ? bs[blockAt(bs, Math.max(0, scrollY))] : null);
+
+  // Fetch the pages of the rows in view, once scrolling pauses briefly (dragging the
+  // scrollbar through the library should not request every page on the way).
+  $effect(() => {
+    if (!rows.length) return;
+    const from = listing.offsetAt(rows[0].from);
+    const to = listing.offsetAt(Math.max(rows[0].from, rows.at(-1).to - 1));
+    const timer = setTimeout(() => untrack(() => listing.ensure(from, to)), 60);
+    return () => clearTimeout(timer);
+  });
+
+  const mode = $derived(view.group);
+  const labelOf = (key) => groupLabel(key, mode, listing.group(key)?.label);
+  const range = (from, to) => Array.from({ length: to - from }, (_, i) => from + i);
+
+  /** Scroll so that a group's header is at the top. */
+  export function scrollToGroup(key) {
+    const b = bs.find((b) => b.key === key);
+    if (b && scroller) scroller.scrollTop = gridTop() + b.top;
+  }
+
+  /** Scroll a photo (by listing offset) into view: 'nearest' or 'center'. */
+  export function scrollToOffset(offset, block = 'nearest') {
+    if (!scroller) return;
+    const top = gridTop() + rowTop(bs, cols, tile, listing.visibleIndex(offset));
+    const h = scroller.clientHeight;
+    const cover = grouped ? HEADER : 0; // the sticky header hides the top of the view
+    if (block === 'center') scroller.scrollTop = top - (h - tile) / 2;
+    else if (top < scroller.scrollTop + cover) scroller.scrollTop = top - cover - GAP;
+    else if (top + tile > scroller.scrollTop + h) scroller.scrollTop = top + tile + GAP - h;
+  }
 
   // Keep the open photo in view (and focused) while stepping through the loupe.
   $effect(() => {
     const id = view.photo;
-    if (id != null) {
-      cursor.focus = id;
-      tileEl(id)?.scrollIntoView({ block: 'nearest' });
-    }
+    if (id == null) return;
+    cursor.focus = id;
+    const o = listing.offsetOf(id);
+    if (o !== undefined) untrack(() => scrollToOffset(o));
   });
-
-  // Consecutive items with the same group key form a section (items arrive in group order).
-  const sections = $derived.by(() => {
-    if (!groups) return [{ key: null, items }];
-    const out = [];
-    for (const item of items) {
-      const last = out.at(-1);
-      if (last && last.key === item.group) last.items.push(item);
-      else out.push({ key: item.group, items: [item] });
-    }
-    return out;
-  });
-  const info = $derived(new Map((groups ?? []).map((g) => [g.key, g])));
-  const labelOf = (key) => groupLabel(key, mode, info.get(key)?.label);
-  const mode = $derived(view.group);
-  const order = $derived(new Map(items.map((item, i) => [item.id, i])));
-
-  const tileEl = (id) => document.getElementById(`tile-${id}`);
 
   // ---- selection -----------------------------------------------------------------
 
-  function selectRange(fromId, toId, add = false) {
-    const a = order.get(fromId) ?? order.get(toId);
-    const b = order.get(toId);
+  async function selectRange(fromId, toId, add = false) {
+    const b = listing.offsetOf(toId);
     if (b === undefined) return;
+    const ids = await listing.idsBetween(listing.offsetOf(fromId) ?? b, b);
     if (!add) selection.clear();
-    for (let i = Math.min(a, b); i <= Math.max(a, b); i++) selection.add(items[i].id);
+    for (const id of ids) selection.add(id);
   }
 
   let suppressClick = false;
@@ -89,48 +140,51 @@
   }
 
   /** Arrow-key navigation, called by App. Left/right follow the listing order;
-   * up/down go to the nearest tile in the row above or below (across sections). */
-  export function moveFocus(dir, extend = false) {
-    if (!items.length) return;
-    let next;
-    const current = cursor.focus != null && order.has(cursor.focus) ? cursor.focus : null;
-    if (current === null) {
-      next = items[0].id;
-    } else if (dir === 'left' || dir === 'right') {
-      const i = order.get(current) + (dir === 'right' ? 1 : -1);
-      if (i < 0 || i >= items.length) return;
-      next = items[i].id;
-    } else {
-      const r = tileEl(current)?.getBoundingClientRect();
-      if (!r) return;
-      const cx = r.left + r.width / 2;
-      const tiles = [...container.querySelectorAll('[data-tile]')].map((el) => ({ id: Number(el.dataset.tile), r: el.getBoundingClientRect() }));
-      const rows = tiles.filter((t) => (dir === 'down' ? t.r.top > r.top + 5 : t.r.top < r.top - 5));
-      if (!rows.length) return;
-      const rowTop = dir === 'down' ? Math.min(...rows.map((t) => t.r.top)) : Math.max(...rows.map((t) => t.r.top));
-      const row = rows.filter((t) => Math.abs(t.r.top - rowTop) < 5);
-      next = row.reduce((best, t) => (Math.abs(t.r.left + t.r.width / 2 - cx) < Math.abs(best.r.left + best.r.width / 2 - cx) ? t : best)).id;
-    }
+   * up/down go to the same column in the row above or below (across groups). */
+  export async function moveFocus(dir, extend = false) {
+    if (!listing.visibleTotal) return;
+    const current = cursor.focus != null ? listing.offsetOf(cursor.focus) : undefined;
+    const v = current === undefined ? 0 : move(bs, cols, listing.visibleIndex(current), dir);
+    if (v < 0) return;
+    const offset = listing.offsetAt(v);
+    const item = await listing.load(offset);
+    if (!item) return;
+    const next = item.id;
     if (extend) {
-      selectRange(cursor.anchor ?? current ?? next, next);
+      await selectRange(cursor.anchor ?? cursor.focus ?? next, next);
     } else {
       selection.clear();
       selection.add(next);
       cursor.anchor = next;
     }
     cursor.focus = next;
-    tileEl(next)?.scrollIntoView({ block: 'nearest' });
+    scrollToOffset(offset);
   }
 
   // ---- marquee (drag to select) -------------------------------------------------
 
-  let marquee = $state(null); // {x0, y0, x1, y1} in client coordinates
+  let marquee = $state(null); // {x0, y0, x1, y1} in grid coordinates
   let dragStart = null;
   let baseSelection = [];
+  let marked = []; // visible positions inside the marquee
+
+  const local = (e) => {
+    const r = container.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  };
+
+  function applyMarquee() {
+    selection.clear();
+    for (const id of baseSelection) selection.add(id);
+    for (const v of marked) {
+      const item = listing.itemAt(listing.offsetAt(v));
+      if (item) selection.add(item.id);
+    }
+  }
 
   function onpointerdown(e) {
     if (e.button !== 0 || e.target.closest('button, a, select, input')) return;
-    dragStart = { x: e.clientX, y: e.clientY, add: e.shiftKey || e.ctrlKey || e.metaKey };
+    dragStart = { x: e.clientX, y: e.clientY, at: local(e), add: e.shiftKey || e.ctrlKey || e.metaKey };
   }
 
   function onpointermove(e) {
@@ -140,135 +194,163 @@
       baseSelection = dragStart.add ? [...selection] : [];
       e.currentTarget.setPointerCapture?.(e.pointerId);
     }
-    marquee = { x0: dragStart.x, y0: dragStart.y, x1: e.clientX, y1: e.clientY };
-    const [l, r] = [Math.min(marquee.x0, marquee.x1), Math.max(marquee.x0, marquee.x1)];
-    const [t, b] = [Math.min(marquee.y0, marquee.y1), Math.max(marquee.y0, marquee.y1)];
-    selection.clear();
-    for (const id of baseSelection) selection.add(id);
-    for (const el of container.querySelectorAll('[data-tile]')) {
-      const rect = el.getBoundingClientRect();
-      if (rect.right > l && rect.left < r && rect.bottom > t && rect.top < b) selection.add(Number(el.dataset.tile));
-    }
+    const [x, y] = local(e);
+    marquee = { x0: dragStart.at[0], y0: dragStart.at[1], x1: x, y1: y };
+    marked = hits(bs, cols, tile, marquee.x0, marquee.y0, x, y);
+    applyMarquee();
   }
 
-  function onpointerup() {
-    if (marquee) {
-      suppressClick = true; // the click that ends a drag must not reset the selection
-      setTimeout(() => (suppressClick = false), 0);
-      const last = [...selection].at(-1);
-      if (last != null) cursor.focus = cursor.anchor = last;
-    }
+  async function onpointerup() {
+    const dragged = !!marquee;
     marquee = null;
     dragStart = null;
+    if (!dragged) return;
+    suppressClick = true; // the click that ends a drag must not reset the selection
+    setTimeout(() => (suppressClick = false), 0);
+    if (marked.length) {
+      // Photos in rows not loaded yet: load them, then select them too.
+      await listing.ensure(listing.offsetAt(marked[0]), listing.offsetAt(marked.at(-1)));
+      applyMarquee();
+    }
+    const last = [...selection].at(-1);
+    if (last != null) cursor.focus = cursor.anchor = last;
+    marked = [];
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div bind:this={container} class="min-h-full select-none" {onpointerdown} {onpointermove} {onpointerup} onpointercancel={onpointerup}>
-  {#each sections as section (section.key ?? 'all')}
-    {#if section.key !== null}
-      <!-- The jump target: not the sticky header, which stays stuck at the top once
-           scrolled past, so the browser would think it is already in view. -->
-      <div id="group-{section.key || 'undated'}" class="h-0" aria-hidden="true"></div>
-      <h2
-        class="sticky top-0 z-10 flex items-baseline gap-2 bg-neutral-950/90 px-2 pb-1.5 pt-3 backdrop-blur"
-      >
-        <span class="text-sm font-medium text-neutral-100">{labelOf(section.key)}</span>
-        {#if isLocationGroup(mode) && info.get(section.key)?.first}
-          <span class="text-xs text-neutral-400">{dateSpan(info.get(section.key).first, info.get(section.key).last)}</span>
-        {/if}
-        <span class="text-xs tabular-nums text-neutral-500">{info.get(section.key)?.count ?? section.items.length}</span>
-        {#if section.key && mode !== 'similar'}
-          <button
-            class="ml-auto text-xs text-neutral-500 hover:text-sky-400"
-            title={isLocationGroup(mode) ? `Show only this ${mode}` : `Set the date filter to this ${mode}`}
-            onclick={() => filterToGroup(section.key, mode)}>Only this {mode}</button
-          >
-        {/if}
-      </h2>
+{#snippet header(b, sticky)}
+  <!-- The sticky copy is decoration: the header in the flow is the real one. -->
+  <svelte:element
+    this={sticky ? 'div' : 'h2'}
+    class="absolute inset-x-0 flex items-baseline gap-2 px-2 pt-3 {sticky ? 'z-20 bg-neutral-950/90 backdrop-blur' : 'bg-neutral-950'}"
+    style="top: {sticky ? 0 : b.top}px; height: {HEADER}px"
+    aria-hidden={sticky ? 'true' : undefined}
+  >
+    <span class="text-sm font-medium text-neutral-100">{labelOf(b.key)}</span>
+    {#if isLocationGroup(mode) && listing.group(b.key)?.first}
+      <span class="text-xs text-neutral-400">{dateSpan(listing.group(b.key).first, listing.group(b.key).last)}</span>
     {/if}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-1 p-1">
-      {#each section.items as item (item.id)}
-        {@const flag = flagOf(item)}
-        {@const selected = selection.has(item.id)}
-        <div
-          id="tile-{item.id}"
-          data-tile={item.id}
-          role="button"
-          tabindex="-1"
-          aria-pressed={selected}
-          class="group relative aspect-square cursor-pointer overflow-hidden bg-neutral-900 outline-none
-            {selected ? 'ring-2 ring-sky-500' : ''}
-            {cursor.focus === item.id ? 'outline-2 outline-offset-2 outline-white/70' : ''}
-            {highlight === item.id ? 'ring-4 ring-amber-400' : ''}"
-          onclick={(e) => onTileClick(e, item.id)}
-          oncontextmenu={(e) => oncontext?.(e, item.id)}
-          ondblclick={() => (view.photo = item.id)}
-          onkeydown={(e) => e.key === 'Enter' && (view.photo = item.id)}
-          title={item.rel_path}
-        >
-          <img
-            src={item.thumb}
-            alt={item.rel_path}
-            loading="lazy"
-            decoding="async"
-            draggable="false"
-            class="h-full w-full object-cover transition duration-200 group-hover:scale-[1.03] {flag === 'reject' ? 'opacity-30 grayscale' : ''}"
-          />
-          {#if selected}
-            <div class="pointer-events-none absolute inset-0 bg-sky-500/15"></div>
-          {/if}
-          <div class="pointer-events-none absolute left-1 top-1 flex gap-1">
-            {#if item.name_match}
-              <!-- the file (or its folder) name matches the search: why it comes first -->
-              <span class="rounded bg-sky-900/80 px-1 text-[10px] font-medium text-sky-100">{item.name_match === 'file' ? 'name' : 'folder'}</span>
+    <span class="text-xs tabular-nums text-neutral-500">{b.total}</span>
+    {#if b.key && mode !== 'similar'}
+      <button
+        class="ml-auto text-xs text-neutral-500 hover:text-sky-400"
+        title={isLocationGroup(mode) ? `Show only this ${mode}` : `Set the date filter to this ${mode}`}
+        tabindex={sticky ? -1 : undefined}
+        onclick={() => filterToGroup(b.key, mode)}>Only this {mode}</button
+      >
+    {/if}
+  </svelte:element>
+{/snippet}
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  bind:this={container}
+  class="relative select-none"
+  style="height: {height + 48}px"
+  {onpointerdown}
+  {onpointermove}
+  {onpointerup}
+  onpointercancel={onpointerup}
+>
+  {#if current}
+    <!-- The current group's header stays at the top while its photos scroll by. -->
+    <div class="sticky top-0 z-20 h-0">{@render header(current, true)}</div>
+  {/if}
+
+  {#each shownBlocks as b (b.key)}
+    {@render header(b, false)}
+  {/each}
+
+  {#each rows as r (`${r.block}:${r.row}`)}
+    <div class="absolute inset-x-0 grid px-1" style="top: {r.top}px; gap: {GAP}px; grid-template-columns: repeat({cols}, minmax(0, 1fr))">
+      {#each range(r.from, r.to) as v (listing.itemAt(listing.offsetAt(v))?.id ?? `slot-${v}`)}
+        {@const item = listing.itemAt(listing.offsetAt(v))}
+        {#if !item}
+          <div class="aspect-square bg-neutral-900"></div>
+        {:else}
+          {@const flag = flagOf(item)}
+          {@const selected = selection.has(item.id)}
+          <div
+            id="tile-{item.id}"
+            data-tile={item.id}
+            role="button"
+            tabindex="-1"
+            aria-pressed={selected}
+            class="group relative aspect-square cursor-pointer overflow-hidden bg-neutral-900 outline-none
+              {selected ? 'ring-2 ring-sky-500' : ''}
+              {cursor.focus === item.id ? 'outline-2 outline-offset-2 outline-white/70' : ''}
+              {highlight === item.id ? 'ring-4 ring-amber-400' : ''}"
+            onclick={(e) => onTileClick(e, item.id)}
+            oncontextmenu={(e) => oncontext?.(e, item.id)}
+            ondblclick={() => (view.photo = item.id)}
+            onkeydown={(e) => e.key === 'Enter' && (view.photo = item.id)}
+            title={item.rel_path}
+          >
+            <img
+              src={item.thumb}
+              srcset={large ? `${item.thumb} 320w, /previews/${item.id}.jpg 1600w` : undefined}
+              sizes={large ? `${Math.round(tile * 1.5)}px` : undefined}
+              alt={item.rel_path}
+              loading="lazy"
+              decoding="async"
+              draggable="false"
+              class="h-full w-full object-cover transition duration-200 group-hover:scale-[1.03] {flag === 'reject' ? 'opacity-30 grayscale' : ''}"
+            />
+            {#if selected}
+              <div class="pointer-events-none absolute inset-0 bg-sky-500/15"></div>
             {/if}
-            {#if item.has_raw}
-              <span class="rounded bg-black/70 px-1 text-[10px] font-semibold tracking-wide text-amber-300">RAW</span>
+            <div class="pointer-events-none absolute left-1 top-1 flex gap-1">
+              {#if item.name_match}
+                <!-- the file (or its folder) name matches the search: why it comes first -->
+                <span class="rounded bg-sky-900/80 px-1 text-[10px] font-medium text-sky-100">{item.name_match === 'file' ? 'name' : 'folder'}</span>
+              {/if}
+              {#if item.has_raw}
+                <span class="rounded bg-black/70 px-1 text-[10px] font-semibold tracking-wide text-amber-300">RAW</span>
+              {/if}
+              {#if item.dupe_count > 1 && view.collapse !== 'stacks'}
+                <span class="rounded bg-black/70 px-1 text-[10px] font-semibold text-neutral-200">×{item.dupe_count}</span>
+              {/if}
+            </div>
+            <div class="pointer-events-none absolute right-1 top-1 flex gap-1">
+              {#if item.exported}
+                <span class="rounded-full bg-sky-600 px-1.5 text-[11px] font-bold text-white" title="Exported before">↗</span>
+              {/if}
+              {#if flag === 'pick'}
+                <span class="rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-black" title="Picked">✓</span>
+              {:else if flag === 'reject'}
+                <span class="rounded-full bg-red-600 px-1.5 text-[11px] font-bold text-white" title="Rejected">✕</span>
+              {/if}
+            </div>
+            {#if item.stack_count > 1}
+              <button
+                class="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 text-[10px] font-semibold text-sky-200 hover:bg-sky-700 hover:text-white"
+                title="Compare the {item.stack_count} photos in this stack"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  view.compare = { kind: 'stack', id: item.stack_id };
+                }}>▦ {item.stack_count}</button
+              >
             {/if}
-            {#if item.dupe_count > 1 && view.collapse !== 'stacks'}
-              <span class="rounded bg-black/70 px-1 text-[10px] font-semibold text-neutral-200">×{item.dupe_count}</span>
+            {#if item.score !== undefined}
+              <span class="pointer-events-none absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] tabular-nums text-neutral-300 opacity-0 group-hover:opacity-100">
+                {item.score.toFixed(3)}
+              </span>
             {/if}
           </div>
-          <div class="pointer-events-none absolute right-1 top-1 flex gap-1">
-            {#if item.exported}
-              <span class="rounded-full bg-sky-600 px-1.5 text-[11px] font-bold text-white" title="Exported before">↗</span>
-            {/if}
-            {#if flag === 'pick'}
-              <span class="rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-black" title="Picked">✓</span>
-            {:else if flag === 'reject'}
-              <span class="rounded-full bg-red-600 px-1.5 text-[11px] font-bold text-white" title="Rejected">✕</span>
-            {/if}
-          </div>
-          {#if item.stack_count > 1}
-            <button
-              class="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 text-[10px] font-semibold text-sky-200 hover:bg-sky-700 hover:text-white"
-              title="Compare the {item.stack_count} photos in this stack"
-              onclick={(e) => {
-                e.stopPropagation();
-                view.compare = { kind: 'stack', id: item.stack_id };
-              }}>▦ {item.stack_count}</button
-            >
-          {/if}
-          {#if item.score !== undefined}
-            <span class="pointer-events-none absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] tabular-nums text-neutral-300 opacity-0 group-hover:opacity-100">
-              {item.score.toFixed(3)}
-            </span>
-          {/if}
-        </div>
+        {/if}
       {/each}
     </div>
   {/each}
 
-  <div bind:this={sentinel} class="h-12 py-4 text-center text-xs text-neutral-500">
-    {#if loading}Loading…{:else if !items.length}No photos{/if}
+  <div class="absolute inset-x-0 py-4 text-center text-xs text-neutral-500" style="top: {height}px">
+    {#if !listing.loaded && listing.loading}Loading…{:else if listing.loaded && !listing.visibleTotal}No photos{/if}
   </div>
-</div>
 
-{#if marquee}
-  <div
-    class="pointer-events-none fixed z-20 border border-sky-400 bg-sky-400/10"
-    style="left: {Math.min(marquee.x0, marquee.x1)}px; top: {Math.min(marquee.y0, marquee.y1)}px;
-           width: {Math.abs(marquee.x1 - marquee.x0)}px; height: {Math.abs(marquee.y1 - marquee.y0)}px"
-  ></div>
-{/if}
+  {#if marquee}
+    <div
+      class="pointer-events-none absolute z-30 border border-sky-400 bg-sky-400/10"
+      style="left: {Math.min(marquee.x0, marquee.x1)}px; top: {Math.min(marquee.y0, marquee.y1)}px;
+             width: {Math.abs(marquee.x1 - marquee.x0)}px; height: {Math.abs(marquee.y1 - marquee.y0)}px"
+    ></div>
+  {/if}
+</div>

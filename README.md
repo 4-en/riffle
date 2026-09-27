@@ -11,6 +11,7 @@ You search and browse by image content, cull by picking and rejecting photos, co
 - **Your tags**: select a few photos, right-click → **Create tag**, and photos like them get the tag. Works like the other tags in the sidebar and in every filter.
 - **Filters** for flag, folder, date, camera, lens, focal length, aperture, ISO, orientation, and location. Counts reflect the other active filters; filters that can't narrow the result are hidden.
 - **Grouping** by day, month, year, place, region, country, or folder, with a calendar or map overview; or by **Similar** content (clusters of alike photos, Broad · Medium · Fine), named after their tags, with a map of the library by similarity.
+- **Thumbnails** in three sizes (S · M · L next to Sort).
 - **Culling**: pick or reject one photo at a time in the loupe or many at once in the grid, with undo.
 - **Stacks**: bursts and near-identical shots are grouped automatically and compared side by side, with sharpness, clipping warnings, and a suggested keeper.
 - **Taste model**: once you have flagged enough, Riffle can sort by what you tend to keep. It only orders photos; it never flags them.
