@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 FLAGS = ("pick", "reject")
+VERSION = 6  # PRAGMA user_version: the tables in SCHEMA are created when missing
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS flags (
@@ -80,6 +81,20 @@ CREATE TABLE IF NOT EXISTS fixed_tags (
   PRIMARY KEY (sha256, tag)
 );
 CREATE INDEX IF NOT EXISTS fixed_tags_tag ON fixed_tags(tag);
+
+-- v6: text read from the photo (OCR) and its English translation. text '' means
+-- read, no text found (so filling gaps does not read it again).
+CREATE TABLE IF NOT EXISTS photo_text (
+  sha256      TEXT PRIMARY KEY,
+  text        TEXT NOT NULL,
+  translation TEXT NOT NULL DEFAULT '',
+  language    TEXT,
+  method      TEXT,
+  edited      INTEGER NOT NULL DEFAULT 0,
+  source      TEXT,
+  rel_path    TEXT,
+  updated_at  REAL NOT NULL
+);
 """
 
 STRICTNESS = ("strict", "normal", "loose")
@@ -108,7 +123,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
-    conn.execute("PRAGMA user_version = 5")
+    conn.execute(f"PRAGMA user_version = {VERSION}")
     conn.commit()
     return conn
 
@@ -381,8 +396,9 @@ def clean_tags(tags) -> list[str]:
 
 
 def _state(conn: sqlite3.Connection, shas: list[str]) -> dict[str, dict]:
-    """{sha256: {caption, method, edited, tags: [(tag, method)]}} for these photos."""
-    out = {s: {"caption": None, "method": None, "edited": False, "tags": []} for s in shas}
+    """{sha256: {caption, method, edited, tags: [(tag, method)], ocr}} for these photos;
+    ocr is None (never read) or {text, translation, language, method, edited}."""
+    out = {s: {"caption": None, "method": None, "edited": False, "tags": [], "ocr": None} for s in shas}
     for i in range(0, len(shas), 500):
         chunk = shas[i : i + 500]
         marks = ",".join("?" * len(chunk))
@@ -392,11 +408,30 @@ def _state(conn: sqlite3.Connection, shas: list[str]) -> dict[str, dict]:
             f"SELECT sha256, tag, method FROM fixed_tags WHERE sha256 IN ({marks}) ORDER BY position, added_at", chunk
         ):
             out[r["sha256"]]["tags"].append((r["tag"], r["method"]))
+        for r in conn.execute(
+            f"SELECT sha256, text, translation, language, method, edited FROM photo_text WHERE sha256 IN ({marks})", chunk
+        ):
+            out[r["sha256"]]["ocr"] = {
+                "text": r["text"], "translation": r["translation"], "language": r["language"],
+                "method": r["method"], "edited": bool(r["edited"]),
+            }
     return out
 
 
 def _public(st: dict) -> dict:
-    return {"caption": st["caption"], "method": st["method"], "edited": st["edited"], "tags": [t for t, _ in st["tags"]]}
+    ocr = st["ocr"] or {}
+    return {
+        "caption": st["caption"],
+        "method": st["method"],
+        "edited": st["edited"],
+        "tags": [t for t, _ in st["tags"]],
+        # text in the photo: None = never read, "" = read, none found
+        "text": ocr.get("text"),
+        "translation": ocr.get("translation", ""),
+        "language": ocr.get("language"),
+        "text_method": ocr.get("method"),
+        "text_edited": ocr.get("edited", False),
+    }
 
 
 def captions_for(catalogue: sqlite3.Connection, path: str | Path, photo_ids: list[int]) -> dict[int, dict]:
@@ -434,9 +469,27 @@ def _write(conn: sqlite3.Connection, r, caption=..., tags=..., *, method: str, e
         )
 
 
+def _write_text(conn: sqlite3.Connection, r, ocr: dict | None, *, method: str | None, edited: bool, now: float) -> None:
+    """Replace a photo's read text ({text, translation, language}); None forgets it."""
+    if ocr is None:
+        conn.execute("DELETE FROM photo_text WHERE sha256 = ?", (r["sha256"],))
+        return
+    conn.execute(
+        """INSERT INTO photo_text (sha256, text, translation, language, method, edited, source, rel_path, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (sha256) DO UPDATE SET text = excluded.text, translation = excluded.translation,
+             language = excluded.language, method = excluded.method, edited = excluded.edited,
+             source = excluded.source, rel_path = excluded.rel_path, updated_at = excluded.updated_at""",
+        (r["sha256"], (ocr.get("text") or "").strip(), (ocr.get("translation") or "").strip(), ocr.get("language") or None,
+         method, int(edited), r["source"], r["rel_path"], now),
+    )
+
+
 def set_captions(catalogue: sqlite3.Connection, path: str | Path, items: list[dict]) -> dict[int, dict]:
-    """Manual edits: ``[{id, caption?, tags?}]``; a missing key leaves that part as it is.
-    Also used for undo, when an item may carry ``method`` and ``edited`` to restore.
+    """Manual edits: ``[{id, caption?, tags?, text?, translation?}]``; a missing key
+    leaves that part as it is (``text: None`` forgets the read text). Also used for
+    undo, when an item may carry ``method``/``edited`` (and ``text_method``,
+    ``text_edited``, ``language``) to restore.
     Returns the previous state of every changed photo (for undo)."""
     by_id = {it["id"]: it for it in items}
     rows = _photos(catalogue, list(by_id))
@@ -455,6 +508,22 @@ def set_captions(catalogue: sqlite3.Connection, path: str | Path, items: list[di
                     old = {t.casefold(): m for t, m in before[r["sha256"]]["tags"]}
                     tags = [(t, old.get(t.casefold(), m)) for t, m in tags]  # keep where each came from
                 _write(conn, r, caption, tags, method=method, edited=edited, now=now)
+                if "text" in it or "translation" in it:
+                    cur = before[r["sha256"]]["ocr"] or {}
+                    if "text" in it and it["text"] is None:
+                        ocr = None
+                    else:
+                        ocr = {
+                            "text": it["text"] if "text" in it else cur.get("text", ""),
+                            "translation": it["translation"] if "translation" in it else cur.get("translation", ""),
+                            "language": it.get("language", cur.get("language")),
+                        }
+                    _write_text(
+                        conn, r, ocr,
+                        method=it.get("text_method", cur.get("method") or "manual"),
+                        edited=it.get("text_edited", True),
+                        now=now,
+                    )
         return {r["id"]: _public(before[r["sha256"]]) | {"id": r["id"]} for r in rows}
     finally:
         conn.close()
@@ -508,10 +577,15 @@ def bulk_tags(
 def store_generated(
     catalogue: sqlite3.Connection, path: str | Path, results: dict[int, dict], method: str, mode: str = "add"
 ) -> int:
-    """Store generated ``{photo id: {caption?, tags?}}``. Modes:
-    add: a caption only where there is none, tags appended (repeats skipped);
-    replace: generated captions and tags replaced, typed or edited ones kept;
-    replace_all: everything replaced. Returns how many photos changed."""
+    """Store generated ``{photo id: {caption?, tags?, text?, translation_only?}}``.
+    Modes:
+    add: a caption only where there is none, tags appended (repeats skipped), text
+    only for photos never read;
+    replace: generated captions, tags and text replaced, typed or edited ones kept;
+    replace_all: everything replaced.
+    ``text`` is {text, translation, language} ("" text: read, none found);
+    ``translation_only`` (translating the current text again) always replaces the
+    translation of text that was read. Returns how many photos changed."""
     if mode not in GENERATE_MODES:
         raise ValueError(f"mode must be one of {', '.join(GENERATE_MODES)}")
     rows = _photos(catalogue, list(results))
@@ -544,9 +618,23 @@ def store_generated(
                             tags.append((t, method))
                     if tags == st["tags"]:
                         tags = ...
-                if caption is ... and tags is ...:
+                ocr = ...
+                if isinstance(res.get("text"), dict):
+                    old = st["ocr"]
+                    keep = old is not None and (mode == "add" or (mode == "replace" and old["edited"]))
+                    if not keep:
+                        ocr = res["text"]
+                elif "translation_only" in res and st["ocr"] is not None:
+                    ocr = {**st["ocr"], "translation": res["translation_only"] or ""}
+                    if ocr == st["ocr"]:
+                        ocr = ...
+                if caption is ... and tags is ... and ocr is ...:
                     continue
                 _write(conn, r, caption, tags, method=method, edited=False, now=now)
+                if ocr is not ...:
+                    edited = st["ocr"]["edited"] if "translation_only" in res and st["ocr"] else False
+                    text_method = st["ocr"]["method"] if "translation_only" in res and st["ocr"] else method
+                    _write_text(conn, r, ocr, method=text_method, edited=edited, now=now)
                 n += 1
         return n
     finally:

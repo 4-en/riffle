@@ -45,18 +45,20 @@ def test_selections_migrate_from_v4(tmp_path):
     old.commit()
     old.close()
     conn = selections.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == selections.VERSION
     assert conn.execute("SELECT flag FROM flags").fetchone()[0] == "pick"
     assert conn.execute("SELECT COUNT(*) FROM captions").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM fixed_tags").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM photo_text").fetchone()[0] == 0
 
 
 def test_edit_bulk_and_undo(client, conn):
     a, b = pid(conn, "IMG_0001.jpg"), pid(conn, "IMG_0003.png")
     res = client.post("/api/captions", json={"items": [{"id": a, "caption": " A boat at dusk ", "tags": ["boat", " dusk", "Boat", ""]}]})
-    assert res.json()["previous"] == [{"id": a, "caption": None, "method": None, "edited": False, "tags": []}]
+    NO_TEXT = {"text": None, "translation": "", "language": None, "text_method": None, "text_edited": False}
+    assert res.json()["previous"] == [{"id": a, "caption": None, "method": None, "edited": False, "tags": []} | NO_TEXT]
     got = captions(client, a, b)
-    assert got[str(a)] == {"caption": "A boat at dusk", "method": "manual", "edited": True, "tags": ["boat", "dusk"], "rel_path": "trip/IMG_0001.jpg"}
+    assert got[str(a)] == {"caption": "A boat at dusk", "method": "manual", "edited": True, "tags": ["boat", "dusk"], "rel_path": "trip/IMG_0001.jpg"} | NO_TEXT
     assert got[str(b)]["tags"] == [] and got[str(b)]["caption"] is None
 
     # Add to all (skips the photo that has it), rename onto an existing tag (merges), remove.
@@ -91,7 +93,7 @@ def test_generated_modes_keep_edits(indexed, conn):
     # replace_all: everything
     selections.store_generated(conn, path, {a: {"caption": "fourth", "tags": ["v"]}}, "wd", "replace_all")
     got = selections.captions_for(conn, path, [a])[a]
-    assert got == {"caption": "fourth", "method": "wd", "edited": False, "tags": ["v"]}
+    assert {k: got[k] for k in ("caption", "method", "edited", "tags")} == {"caption": "fourth", "method": "wd", "edited": False, "tags": ["v"]}
 
 
 def test_fixed_tag_filter_counts_and_detail(client, conn):
@@ -141,7 +143,7 @@ def test_model_method_runs_as_a_job(client, conn, monkeypatch):
     seen = []
 
     def fake_load(options):
-        def run(images):
+        def run(images, ids):
             seen.extend(im.size for im in images)
             return [{"tags": ["1girl", "Blue Sky", "meta:foo"]} for _ in images]
 
@@ -149,7 +151,7 @@ def test_model_method_runs_as_a_job(client, conn, monkeypatch):
 
     monkeypatch.setitem(captioning.LOADERS, "wd", fake_load)
     status = client.get("/api/captioning").json()
-    assert {m["key"] for m in status["methods"]} == {"riffle", "phrases", "joycaption", "wd"}
+    assert {m["key"] for m in status["methods"]} == {"riffle", "phrases", "joycaption", "ocr", "wd"}
     res = client.post("/api/captioning", json={"ids": [a, b], "method": "wd", "mode": "add"})
     assert res.status_code == 200 and res.json()["done"] is False
     deadline = time.time() + 10
@@ -158,6 +160,13 @@ def test_model_method_runs_as_a_job(client, conn, monkeypatch):
     assert job["error"] is None and job["result"]["photos"] == 2
     assert len(seen) == 2 and max(seen[0]) <= 1600  # the preview, not the original
     assert captions(client, a)[str(a)]["tags"] == ["1girl", "Blue Sky", "meta:foo"]
+    # booru tags are stored with spaces unless asked to keep the underscores
+    monkeypatch.setitem(captioning.LOADERS, "wd", lambda o: (lambda images, ids: [{"tags": ["long_hair", "^_^"]} for _ in ids], lambda: None))
+    for underscores, expected in ((False, ["long hair", "^_^"]), (True, ["long_hair", "^_^"])):
+        client.post("/api/captioning", json={"ids": [b], "method": "wd", "mode": "replace_all", "options": {"underscores": underscores}})
+        while client.get("/api/captioning").json()["job"]["running"]:
+            time.sleep(0.05)
+        assert captions(client, b)[str(b)]["tags"] == expected
 
 
 def test_taglist_filters_by_list_alias_and_spelling(tmp_path):
@@ -179,6 +188,12 @@ def test_split_tags():
     assert captioning.split_tags(many, booru=False) == [f"k{i}" for i in range(captioning.KEYWORD_MAX)]
     assert captioning.split_tags("copyright:original, meta:photoshop_(medium), character:miku, blue sky", booru=True) == ["miku", "blue_sky"]
     assert captioning.split_tags("artist:x, solo", booru=True, keep_prefixed=True) == ["x", "solo"]
+
+
+def test_booru_style():
+    tags = ["long_hair", "blue sky", "^_^", ">_<", "1girl"]
+    assert captioning.booru_style(tags) == ["long hair", "blue sky", "^_^", ">_<", "1girl"]
+    assert captioning.booru_style(tags, underscores=True) == ["long_hair", "blue_sky", "^_^", ">_<", "1girl"]
 
 
 def test_caption_text_styles():
@@ -259,3 +274,120 @@ def test_profile_copy_includes_captions(client, conn):
     empty = client.post("/api/profiles", json={"name": "Empty", "copy_from": "default", "parts": ["flags"]}).json()["slug"]
     client.post(f"/api/profiles/{empty}/activate", json={})
     assert captions(client, a)[str(a)]["tags"] == []
+
+
+# ---- text in the photo (OCR) -----------------------------------------------------------
+
+
+def test_parse_ocr():
+    p = captioning.parse_ocr
+    assert p('{"text": "欢迎来到北京", "language": "Chinese", "english": "Welcome to Beijing"}') == {
+        "text": "欢迎来到北京", "translation": "Welcome to Beijing", "language": "Chinese"
+    }
+    fenced = '```json\n{"text": "EXIT", "language": "English", "english": "EXIT"}\n```'
+    assert p(fenced) == {"text": "EXIT", "translation": "", "language": "English"}  # English: no translation
+    assert p('{"text": ""}') == {"text": "", "translation": "", "language": None}
+    assert p("No readable text.")["text"] == "" and p("none")["text"] == ""
+    assert p("OPEN 9-5\nClosed Sundays")["text"] == "OPEN 9-5\nClosed Sundays"  # prose: the whole answer
+
+
+def test_text_modes_edits_and_undo(indexed, conn):
+    path = indexed.selections_path
+    a, b = pid(conn, "IMG_0001.jpg"), pid(conn, "IMG_0003.png")
+    zh = {"text": "欢迎来到北京", "translation": "Welcome to Beijing", "language": "Chinese"}
+    selections.store_generated(conn, path, {a: {"text": zh}, b: {"text": {"text": ""}}}, "ocr", "add")
+    got = selections.captions_for(conn, path, [a, b])
+    assert (got[a]["text"], got[a]["translation"], got[a]["language"]) == ("欢迎来到北京", "Welcome to Beijing", "Chinese")
+    assert got[b]["text"] == ""  # read, nothing found: not None
+    # add: read photos are not read again; replace keeps an edited text
+    selections.store_generated(conn, path, {b: {"text": {"text": "late"}}}, "ocr", "add")
+    assert selections.captions_for(conn, path, [b])[b]["text"] == ""
+    prev = selections.set_captions(conn, path, [{"id": a, "text": "欢迎来到北京!"}])
+    selections.store_generated(conn, path, {a: {"text": {"text": "other"}}}, "ocr", "replace")
+    got = selections.captions_for(conn, path, [a])[a]
+    assert got["text"] == "欢迎来到北京!" and got["text_edited"] and got["translation"] == "Welcome to Beijing"
+    # translating again changes only the translation, and keeps the edit mark
+    selections.store_generated(conn, path, {a: {"translation_only": "Welcome to Beijing!"}}, "ocr", "add")
+    got = selections.captions_for(conn, path, [a])[a]
+    assert got["translation"] == "Welcome to Beijing!" and got["text_edited"]
+    # undo the typed edit: the generated text and its marks come back
+    selections.set_captions(conn, path, list(prev.values()))
+    got = selections.captions_for(conn, path, [a])[a]
+    assert got["text"] == "欢迎来到北京" and not got["text_edited"] and got["text_method"] == "ocr"
+    selections.set_captions(conn, path, [{"id": b, "text": None}])  # forget: never read
+    assert selections.captions_for(conn, path, [b])[b]["text"] is None
+
+
+def test_search_finds_text_in_the_photo(client, conn):
+    a, b, c = pid(conn, "IMG_0001.jpg"), pid(conn, "IMG_0002.jpg"), pid(conn, "IMG_0003.png")
+    client.post("/api/captions", json={"items": [
+        {"id": a, "text": "欢迎来到北京", "translation": "Welcome to Beijing"},
+        {"id": b, "caption": "Beijing at night"},
+        {"id": c, "tags": ["北京"]},
+    ]})
+    items = client.get("/api/search/text", params={"q": "北京", "dupes": "all"}).json()["items"]
+    assert [(i["id"], i.get("name_match")) for i in items[:2]] == [(c, "tag"), (a, "text")]
+    items = client.get("/api/search/text", params={"q": "beijing", "dupes": "all"}).json()["items"]
+    assert [(i["id"], i.get("name_match")) for i in items[:2]] == [(b, "caption"), (a, "text")]
+    detail = client.get(f"/api/photos/{a}").json()
+    assert detail["text"] == {"text": "欢迎来到北京", "translation": "Welcome to Beijing", "language": None}
+
+
+def test_ocr_job_and_retranslate(client, conn, monkeypatch):
+    a, b = pid(conn, "IMG_0001.jpg"), pid(conn, "IMG_0003.png")
+    monkeypatch.setattr(captioning, "_has", lambda m: True)
+    monkeypatch.setattr(captioning, "_cuda", lambda: True)
+    calls = []
+
+    def fake_load(options):
+        def run(images, ids):
+            calls.append((len(images), list(ids), options.get("texts")))
+            if options.get("retranslate"):
+                return [{"translation_only": f"EN:{options['texts'][str(i)]}"} for i in ids]
+            return [{"text": captioning.parse_ocr('{"text": "出口", "language": "Chinese", "english": "Exit"}' if i == a else '{"text": ""}')} for i in ids]
+
+        return run, lambda: None
+
+    monkeypatch.setitem(captioning.LOADERS, "ocr", fake_load)
+
+    def run(body):
+        assert client.post("/api/captioning", json=body).status_code == 200
+        while client.get("/api/captioning").json()["job"]["running"]:
+            time.sleep(0.05)
+
+    run({"ids": [a, b], "method": "ocr"})
+    got = captions(client, a, b)
+    assert (got[str(a)]["text"], got[str(a)]["translation"]) == ("出口", "Exit") and got[str(b)]["text"] == ""
+    client.post("/api/captions", json={"items": [{"id": a, "text": "出口 2"}]})
+    run({"ids": [a, b], "method": "ocr", "options": {"retranslate": True}})
+    assert calls[-1] == (0, [a], {str(a): "出口 2"})  # only photos with text; no images loaded
+    assert captions(client, a)[str(a)]["translation"] == "EN:出口 2"
+    res = client.post("/api/captioning", json={"ids": [b], "method": "ocr", "options": {"retranslate": True}})
+    assert res.status_code == 400
+
+
+def test_export_with_text(client, conn, tmp_path):
+    a = pid(conn, "IMG_0001.jpg")
+    client.post("/api/captions", json={"items": [{"id": a, "caption": "A gate", "text": "出口", "translation": "Exit"}]})
+    out, _ = export(client, tmp_path / "t", [a], captions="txt", caption_text="caption", with_text=True)
+    assert (out / "IMG_0001.txt").read_text() == "A gate\n出口\nExit\n"
+    out, _ = export(client, tmp_path / "j", [a], captions="jsonl")
+    row = json.loads((out / "metadata.jsonl").read_text())
+    assert row["ocr_text"] == "出口" and row["ocr_translation"] == "Exit"
+
+
+def test_selections_migrate_from_v5(tmp_path):
+    path = tmp_path / "selections.sqlite3"
+    old = sqlite3.connect(path)
+    old.executescript(
+        """CREATE TABLE captions (sha256 TEXT PRIMARY KEY, text TEXT NOT NULL, method TEXT, edited INTEGER NOT NULL DEFAULT 0,
+             source TEXT, rel_path TEXT, updated_at REAL NOT NULL);
+           INSERT INTO captions VALUES ('abc', 'kept', 'manual', 1, 's', 'a.jpg', 1);
+           PRAGMA user_version = 5;"""
+    )
+    old.commit()
+    old.close()
+    conn = selections.connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert conn.execute("SELECT text FROM captions").fetchone()[0] == "kept"
+    assert conn.execute("SELECT COUNT(*) FROM photo_text").fetchone()[0] == 0

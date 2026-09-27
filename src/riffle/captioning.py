@@ -7,6 +7,8 @@ Methods, photos first:
   photo: similarity minus the library's mean similarity (CLIP text vectors).
 - ``joycaption``: a caption and/or keywords from JoyCaption Beta One (an 8B vision
   language model; needs the ``captions`` extra and an NVIDIA GPU).
+- ``ocr``: the text in the photo, in its own script, with an English translation,
+  from Qwen3-VL-8B (same requirements). Stored apart from the caption.
 
 For illustrations, low-key: ``wd`` (the WD EVA02 tagger: booru tags, ONNX, also on
 the CPU) and JoyCaption's Danbooru preset, optionally kept to a master tag list
@@ -22,6 +24,7 @@ from __future__ import annotations
 import csv
 import gc
 import importlib.util
+import json
 import re
 import threading
 from dataclasses import dataclass, field
@@ -32,6 +35,7 @@ import numpy as np
 
 WD_REPO = "SmilingWolf/wd-eva02-large-tagger-v3"
 JOY_REPO = "fancyfeast/llama-joycaption-beta-one-hf-llava"
+QWEN_REPO = "Qwen/Qwen3-VL-8B-Instruct"
 DANBOORU_URL = "https://raw.githubusercontent.com/DominikDoom/a1111-sd-webui-tagcomplete/main/tags/danbooru.csv"
 BATCH = 8  # photos per stored batch
 
@@ -61,7 +65,7 @@ class Method:
     key: str
     label: str
     group: str  # photo | illustration
-    outputs: tuple[str, ...]  # caption and/or tags
+    outputs: tuple[str, ...]  # caption, tags, text (read from the photo)
     needs: str  # shown when unavailable
     download: str = ""  # model size to download on first use
     repo: str | None = None
@@ -71,7 +75,7 @@ class Method:
         ok, reason = True, ""
         if self.key == "wd" and not _has("onnxruntime"):
             ok, reason = False, 'needs the captions extra: pip install -e ".[captions]"'
-        elif self.key == "joycaption":
+        elif self.key in ("joycaption", "ocr"):
             if not _has("transformers"):
                 ok, reason = False, 'needs the captions extra: pip install -e ".[captions]"'
             elif not _cuda():
@@ -93,6 +97,7 @@ METHODS = {
         Method("riffle", "Riffle's tags", "photo", ("tags",), ""),
         Method("phrases", "Scene phrases", "photo", ("tags",), "needs the AI model"),
         Method("joycaption", "JoyCaption", "photo", ("caption", "tags"), "", "16 GB", JOY_REPO, True),
+        Method("ocr", "Read text", "photo", ("text",), "", "17 GB", QWEN_REPO, True),
         Method("wd", "WD tagger", "illustration", ("tags",), "", "1.2 GB", WD_REPO, True),
     )
 }
@@ -238,6 +243,19 @@ def download_danbooru(root: Path) -> Path:
 
 # ---- output clean-up ------------------------------------------------------------------
 
+# Emoticon tags keep their underscore (it is part of the face); the list the common
+# taggers and training scripts use.
+KAOMOJI = {"0_0", "(o)_(o)", "+_+", "+_-", "._.", "<o>_<o>", "<|>_<|>", "=_=", ">_<", "3_3", "6_9", ">_o", "@_@", "^_^", "o_o", "u_u", "x_x", "|_|", "||_||"}
+
+
+def booru_style(tags: list[str], underscores: bool = False) -> list[str]:
+    """Booru tags as stored: with spaces ("blue sky"), as training tools mostly
+    expect today, or with underscores (the Danbooru spelling). Emoticons stay."""
+    if underscores:
+        return [t if t in KAOMOJI else t.replace(" ", "_") for t in tags]
+    return [t if t in KAOMOJI else t.replace("_", " ") for t in tags]
+
+
 
 def split_tags(text: str, *, booru: bool, keep_prefixed: bool = False) -> list[str]:
     """A model's comma-separated answer as tags. Keywords are lowercased with
@@ -267,7 +285,7 @@ def split_tags(text: str, *, booru: bool, keep_prefixed: bool = False) -> list[s
 
 
 def load_wd(options: dict):
-    """The WD tagger as ``run(images) -> [{tags}]``."""
+    """The WD tagger as ``run(images, ids) -> [{tags}]``."""
     import onnxruntime as ort
     from huggingface_hub import hf_hub_download
     from PIL import Image
@@ -286,7 +304,7 @@ def load_wd(options: dict):
     characters = float(options.get("character_threshold", 0.85)) if options.get("characters") else None
     rating = bool(options.get("rating"))
 
-    def run(images):
+    def run(images, ids):
         batch = []
         for img in images:
             side = max(img.size)
@@ -310,7 +328,7 @@ def load_wd(options: dict):
 
 
 def load_joycaption(options: dict):
-    """JoyCaption as ``run(images) -> [{caption?, tags?}]``. Options: caption
+    """JoyCaption as ``run(images, ids) -> [{caption?, tags?}]``. Options: caption
     ("short" | "medium" | "detailed" | None), tags ("keywords" | "booru" | None),
     prompt (replaces the caption prompt), keep_prefixed."""
     import torch
@@ -333,7 +351,7 @@ def load_joycaption(options: dict):
             ids = model.generate(**x, max_new_tokens=300, do_sample=False)
         return proc.batch_decode(ids[:, x["input_ids"].shape[1]:], skip_special_tokens=True)[0].strip()
 
-    def run(images):
+    def run(images, ids):
         out = []
         for img in images:
             res = {}
@@ -354,7 +372,84 @@ def load_joycaption(options: dict):
     return run, free
 
 
-LOADERS: dict[str, Callable] = {"wd": load_wd, "joycaption": load_joycaption}
+OCR_PROMPT = (
+    "Read all text visible in this image (signs, labels, screens, documents, handwriting) exactly as written, "
+    "in its original language and script, keeping line breaks. Answer only with JSON: "
+    '{"text": "...", "language": "...", "english": "..."}. "language" is the language of the text in English '
+    '(e.g. "Chinese"). "english" is an English translation, or "" if the text is already English. '
+    'If there is no readable text, answer {"text": ""}.'
+)
+OCR_PROMPT_NO_TRANSLATION = (
+    "Read all text visible in this image (signs, labels, screens, documents, handwriting) exactly as written, "
+    "in its original language and script, keeping line breaks. Answer only with JSON: "
+    '{"text": "...", "language": "..."}. If there is no readable text, answer {"text": ""}.'
+)
+TRANSLATE_PROMPT = "Translate this text into English. Keep the line breaks. Answer with the translation only.\n\n"
+NO_TEXT = re.compile(r"^\W*(no (readable |visible )?text\b.*|none|n/?a)\W*$", re.I)
+
+
+def parse_ocr(answer: str) -> dict:
+    """The model's answer as {text, translation, language}: the JSON object in it
+    (code fences and prose around it ignored), else the whole answer as the text.
+    "No text"-style answers give an empty text (read, none found)."""
+    raw = answer.strip()
+    start, end = raw.find("{"), raw.rfind("}")
+    data = None
+    if start >= 0 and end > start:
+        try:
+            data = json.loads(raw[start : end + 1])
+        except json.JSONDecodeError:
+            data = None
+    if not isinstance(data, dict):
+        text = re.sub(r"^```\w*\n?|\n?```$", "", raw).strip()
+        data = {"text": "" if NO_TEXT.match(text) else text}
+    text = str(data.get("text") or "").strip()
+    if NO_TEXT.match(text):
+        text = ""
+    english = str(data.get("english") or "").strip() if text else ""
+    language = str(data.get("language") or "").strip() or None
+    if english.casefold() == text.casefold():
+        english = ""  # "translated" English text
+    return {"text": text, "translation": english, "language": language if text else None}
+
+
+def load_qwen_ocr(options: dict):
+    """Qwen3-VL as ``run(images, ids) -> [{text: {text, translation, language}}]``.
+    With ``retranslate``, it translates ``options["texts"][id]`` instead (the current,
+    possibly edited, text; no image) -> [{translation_only}]."""
+    import torch
+    from huggingface_hub import snapshot_download
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    path = snapshot_download(QWEN_REPO)
+    proc = AutoProcessor.from_pretrained(path)
+    model = AutoModelForImageTextToText.from_pretrained(path, dtype=torch.bfloat16, device_map="cuda").eval()
+    translate = options.get("translate", True)
+    texts = options.get("texts") or {}
+
+    def ask(prompt: str, img=None) -> str:
+        content = ([{"type": "image"}] if img is not None else []) + [{"type": "text", "text": prompt}]
+        chat = proc.apply_chat_template([{"role": "user", "content": content}], add_generation_prompt=True, tokenize=False)
+        x = proc(text=[chat], images=[img] if img is not None else None, return_tensors="pt").to("cuda")
+        with torch.inference_mode():
+            ids = model.generate(**x, max_new_tokens=1024, do_sample=False)
+        return proc.batch_decode(ids[:, x["input_ids"].shape[1]:], skip_special_tokens=True)[0].strip()
+
+    def run(images, ids):
+        if options.get("retranslate"):
+            return [{"translation_only": ask(TRANSLATE_PROMPT + texts[str(i)]) if texts.get(str(i)) else ""} for i in ids]
+        return [{"text": parse_ocr(ask(OCR_PROMPT if translate else OCR_PROMPT_NO_TRANSLATION, img))} for img in images]
+
+    def free():
+        nonlocal model
+        del model
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    return run, free
+
+
+LOADERS: dict[str, Callable] = {"wd": load_wd, "joycaption": load_joycaption, "ocr": load_qwen_ocr}
 
 
 def run_captioning(
@@ -387,17 +482,23 @@ def run_captioning(
             batch = photos[i : i + BATCH]
             images, ids = [], []
             for pid, path in batch:
+                if options.get("retranslate"):  # text only: no image needed
+                    ids.append(pid)
+                    continue
                 try:
                     with Image.open(path) as im:
                         images.append(im.convert("RGB"))
                     ids.append(pid)
                 except OSError:
                     failed += 1
-            results = dict(zip(ids, run(images))) if images else {}
-            if tl is not None:
-                for r in results.values():
-                    if r.get("tags"):
+            results = dict(zip(ids, run(images, ids))) if ids else {}
+            booru = method == "wd" or options.get("tags") == "booru"
+            for r in results.values():
+                if r.get("tags"):
+                    if tl is not None:
                         r["tags"] = tl.filter(r["tags"])
+                    if booru:
+                        r["tags"] = booru_style(r["tags"], bool(options.get("underscores")))
             changed += store(results)
             done += len(batch)
             if bar:

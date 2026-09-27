@@ -7,8 +7,8 @@
   //
   // Photos checked here (checkboxes, Shift for a range) are the working set: every
   // operation (generating, the tag panel, clearing) applies to them, or to all when
-  // none are checked. Each photo is a card with one field per kind of text (caption,
-  // tags); text read from the photo (OCR) is meant to become one more field.
+  // none are checked. Each photo is a card with one field per kind of text: the
+  // caption, the tags, and the text read from the photo (OCR) with its translation.
   import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { view } from '../lib/state.svelte.js';
@@ -104,6 +104,15 @@
     }
   }
 
+  // Text read from the photo, or its English translation (field: 'text' | 'translation').
+  function saveText(id, field, value) {
+    if ((data[id]?.[field] ?? '') === value.trim()) return;
+    change(() => saveCaptions([{ id, [field]: value }]));
+  }
+  // So CJK text is drawn with the right font (the model names the language in English).
+  const LANG = { chinese: 'zh', japanese: 'ja', korean: 'ko', thai: 'th', russian: 'ru', arabic: 'ar', greek: 'el', hebrew: 'he' };
+  const langOf = (language) => LANG[(language ?? '').toLowerCase().split(/[ (,]/)[0]];
+
   function saveCaption(id, text) {
     if ((data[id]?.caption ?? '') === text.trim()) return;
     change(() => saveCaptions([{ id, caption: text }]));
@@ -147,9 +156,15 @@
     change(() => bulkTags(work, 'rename', from, to));
   }
 
-  // Clear the tags or the captions of the working set (undo with Ctrl+Z).
+  // Clear the tags, captions, or read text of the working set (undo with Ctrl+Z).
+  const CLEAR = {
+    tags: [(d) => d.tags.length, { tags: [] }],
+    captions: [(d) => d.caption, { caption: '' }],
+    text: [(d) => d.text != null, { text: null }], // forgotten: "not read" again
+  };
   function clearAll(what) {
-    const items = work.filter((id) => (what === 'tags' ? data[id]?.tags.length : data[id]?.caption)).map((id) => ({ id, [what === 'tags' ? 'tags' : 'caption']: what === 'tags' ? [] : '' }));
+    const [has, change_] = CLEAR[what];
+    const items = work.filter((id) => data[id] && has(data[id])).map((id) => ({ id, ...change_ }));
     if (items.length) change(() => saveCaptions(items));
   }
 
@@ -192,18 +207,25 @@
   let wdRating = $state(setting('wdRating', false));
   let keepPrefixed = $state(false);
   let taglist = $state(setting('taglist', ''));
+  let booruUnderscores = $state(setting('booruUnderscores', false)); // booru tags as long_hair instead of long hair
+  let ocrTranslate = $state(setting('ocrTranslate', true));
+  let retranslate = $state(false); // translate the current text again instead of reading
   let booruOpen = $state(untrack(() => choice === 'wd' || choice === 'joy-booru')); // open if last used
   let downloading = $state(false);
 
   const method = (key) => methods.find((m) => m.key === key);
   const booru = $derived(choice === 'wd' || choice === 'joy-booru');
-  const chosen = $derived(method({ riffle: 'riffle', phrases: 'phrases', joy: 'joycaption', wd: 'wd', 'joy-booru': 'joycaption' }[choice]));
+  const chosen = $derived(method({ riffle: 'riffle', phrases: 'phrases', joy: 'joycaption', ocr: 'ocr', wd: 'wd', 'joy-booru': 'joycaption' }[choice]));
   const makesCaption = $derived(choice === 'joy' && !!joyCaption);
-  const makesTags = $derived(choice !== 'joy' || joyKeywords);
+  const makesText = $derived(choice === 'ocr');
+  const makesTags = $derived(choice !== 'ocr' && (choice !== 'joy' || joyKeywords));
   // Photos still missing what this method makes (a choice only when adding: replacing
-  // is for photos that have something).
-  const missing = $derived(work.filter((id) => data[id] && ((makesCaption && !data[id].caption) || (makesTags && !data[id].tags.length))));
-  const targets = $derived(mode === 'add' && scope === 'empty' ? missing : work);
+  // is for photos that have something). Read text counts once read, even if none was found.
+  const missing = $derived(
+    work.filter((id) => data[id] && ((makesCaption && !data[id].caption) || (makesTags && !data[id].tags.length) || (makesText && data[id].text == null)))
+  );
+  const withText = $derived(work.filter((id) => data[id]?.text));
+  const targets = $derived(makesText && retranslate ? withText : mode === 'add' && scope === 'empty' ? missing : work);
 
   async function refreshStatus() {
     try {
@@ -237,15 +259,19 @@
     else if (choice === 'joy') {
       body.method = 'joycaption';
       body.options = { caption: joyCaption || null, tags: joyKeywords ? 'keywords' : null, prompt: joyPrompt };
+    } else if (choice === 'ocr') {
+      body.method = 'ocr';
+      body.options = retranslate ? { retranslate: true } : { translate: ocrTranslate };
     } else if (choice === 'joy-booru') {
       body.method = 'joycaption';
-      body.options = { caption: null, tags: 'booru', keep_prefixed: keepPrefixed };
+      body.options = { caption: null, tags: 'booru', keep_prefixed: keepPrefixed, underscores: booruUnderscores };
     } else {
       body.method = 'wd';
-      body.options = { threshold: Number(wdThreshold), characters: wdCharacters, rating: wdRating };
+      body.options = { threshold: Number(wdThreshold), characters: wdCharacters, rating: wdRating, underscores: booruUnderscores };
     }
     if (booru && taglist) body.taglist = taglist;
-    for (const [k, v] of Object.entries({ choice, mode, scope, joyCaption, joyKeywords, wdThreshold, wdCharacters, wdRating, taglist })) saveSetting(`caption.${k}`, v);
+    for (const [k, v] of Object.entries({ choice, mode, scope, joyCaption, joyKeywords, wdThreshold, wdCharacters, wdRating, taglist, ocrTranslate, booruUnderscores }))
+      saveSetting(`caption.${k}`, v);
     error = notice = '';
     try {
       const res = await startCaptioning(body);
@@ -345,6 +371,19 @@
           </div>
         {/if}
 
+        {@render methodCard('ocr', 'ocr', 'Read text', 'The text in the photo (signs, labels, documents; any script, e.g. Chinese), with an English translation. Qwen3-VL, a few seconds per photo.')}
+        {#if choice === 'ocr'}
+          <div class="space-y-1.5 rounded border border-neutral-800 p-2">
+            <label class="flex items-center gap-2"><input type="radio" bind:group={retranslate} value={false} /> Read the text</label>
+            {#if !retranslate}
+              <label class="ml-5 flex items-center gap-2"><input type="checkbox" bind:checked={ocrTranslate} /> Translate into English</label>
+            {/if}
+            <label class="flex items-center gap-2" title="After editing the text: translate what is there now">
+              <input type="radio" bind:group={retranslate} value={true} /> Translate the current text again ({withText.length})
+            </label>
+          </div>
+        {/if}
+
         <details bind:open={booruOpen} class="rounded border border-neutral-800">
           <summary class="cursor-pointer px-2.5 py-1.5 text-neutral-400">Illustrations / booru tags</summary>
           <div class="space-y-2 p-2 pt-0">
@@ -363,6 +402,9 @@
             {#if choice === 'joy-booru'}
               <label class="flex items-center gap-2 px-1"><input type="checkbox" bind:checked={keepPrefixed} /> Keep artist: / copyright: / meta: tags</label>
             {/if}
+            <label class="flex items-center gap-2 px-1" title="Tags are stored with spaces (long hair), as most training tools expect; emoticons like ^_^ keep theirs">
+              <input type="checkbox" bind:checked={booruUnderscores} /> Keep underscores (long_hair)
+            </label>
             <label class="block">
               <span class="text-neutral-400">Master tag list</span>
               <select bind:value={taglist} class="mt-0.5 w-full rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5">
@@ -387,7 +429,7 @@
             <option value="replace_all">replace everything</option>
           </select>
         </label>
-        {#if mode === 'add'}
+        {#if mode === 'add' && !(makesText && retranslate)}
           <label class="flex items-center justify-between gap-2">
             Photos
             <select bind:value={scope} class="rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5">
@@ -448,6 +490,7 @@
         <div class="flex gap-1">
           <button class={btn} title="Remove every tag from them (Ctrl+Z undoes)" onclick={() => clearAll('tags')}>Clear tags</button>
           <button class={btn} title="Remove their captions (Ctrl+Z undoes)" onclick={() => clearAll('captions')}>Clear captions</button>
+          <button class={btn} title="Forget the text read from them, so they can be read again (Ctrl+Z undoes)" onclick={() => clearAll('text')}>Clear text</button>
         </div>
         {#if !tagCounts.length}
           <p class="text-neutral-500">No tags yet.</p>
@@ -502,6 +545,8 @@
           <button class="text-sky-400 hover:underline" onclick={() => checkAll(shown)}>all{only ? ' shown' : ''}</button>
           <button class="text-sky-400 hover:underline" onclick={() => checkAll(pageIds)}>this page</button>
           <button class="text-sky-400 hover:underline" onclick={() => checkAll(shown.filter(isEmpty))}>without caption or tags</button>
+          <button class="text-sky-400 hover:underline" onclick={() => checkAll(shown.filter((id) => data[id]?.text))}>with text</button>
+          <button class="text-sky-400 hover:underline" onclick={() => checkAll(shown.filter((id) => data[id] && data[id].text == null))}>text not read</button>
           {#if checked.size}
             <button class="text-sky-400 hover:underline" onclick={() => checked.clear()}>none</button>
             <span class="text-sky-300">{checked.size} checked: the panel on the left works on them</span>
@@ -577,6 +622,37 @@
                       onblur={(e) => addTags(id, e.currentTarget)}
                     />
                   </div>
+                  <!-- Text in the photo (OCR) and its English translation -->
+                  {#if d.text == null}
+                    <p class="text-[11px] text-neutral-600">Text in the photo: not read</p>
+                  {:else if d.text === ''}
+                    <p class="text-[11px] text-neutral-600">Text in the photo: none found</p>
+                  {:else}
+                    <div class="space-y-1 rounded border border-neutral-800/80 p-1.5">
+                      <p class="text-[11px] text-neutral-500">
+                        Text in the photo{d.language ? ` · ${d.language}` : ''}{d.text_edited ? ' · edited' : ''}
+                      </p>
+                      {#key d.text}
+                        <textarea
+                          rows={Math.min(6, d.text.split('\n').length)}
+                          lang={langOf(d.language)}
+                          value={d.text}
+                          onblur={(e) => saveText(id, 'text', e.currentTarget.value)}
+                          class="w-full resize-y rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none focus:border-sky-700"
+                        ></textarea>
+                      {/key}
+                      {#key d.translation}
+                        <textarea
+                          rows={Math.max(1, Math.min(6, (d.translation || '').split('\n').length))}
+                          lang="en"
+                          placeholder="English translation"
+                          value={d.translation}
+                          onblur={(e) => saveText(id, 'translation', e.currentTarget.value)}
+                          class="w-full resize-y rounded border border-neutral-800 bg-neutral-900/60 px-2 py-1 text-xs text-neutral-300 outline-none placeholder:text-neutral-600 focus:border-sky-700"
+                        ></textarea>
+                      {/key}
+                    </div>
+                  {/if}
                 </div>
               </li>
             {/if}

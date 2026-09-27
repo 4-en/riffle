@@ -179,23 +179,29 @@ def add_metadata(files: list[_File], locations: dict[int, tuple], texts: dict[in
     files.extend(sidecars)
 
 
-def caption_text(caption: str, tags: list[str], what: str, underscores: bool) -> str:
+def caption_text(caption: str, tags: list[str], what: str, underscores: bool, read: tuple[str, str] | None = None) -> str:
     """The text of a caption file: tags (comma-separated), the caption, or both
-    (the caption, then the tags on the next line)."""
+    (the caption, then the tags on the next line); with ``read`` (text from the
+    photo, translation), those follow on their own lines."""
     tags = [t.replace("_", " ") for t in tags] if underscores else tags
     parts = {"tags": [", ".join(tags)], "caption": [caption], "both": [caption, ", ".join(tags)]}[what]
+    if read:
+        parts = [*parts, *read]
     return "\n".join(p for p in parts if p)
 
 
-def add_caption_files(files: list[_File], texts: dict[int, tuple[str, list[str]]], what: str, underscores: bool) -> None:
-    """A text file per photo, named like its first file (the image, or the RAW)."""
+def add_caption_files(
+    files: list[_File], texts: dict[int, tuple[str, list[str]]], what: str, underscores: bool, read: dict[int, tuple[str, str]] | None = None
+) -> None:
+    """A text file per photo, named like its first file (the image, or the RAW);
+    ``read``: {id: (text, translation)} to append the text read from the photo."""
     first: dict[int, _File] = {}
     for f in files:
         if f.kind in ("image", "raw"):
             first.setdefault(f.photo_id, f)
     for pid, f in first.items():
         caption, tags = texts.get(pid, ("", []))
-        text = caption_text(caption, tags, what, underscores)
+        text = caption_text(caption, tags, what, underscores, (read or {}).get(pid))
         if text:
             content = (text + "\n").encode()
             side = _File(pid, "caption", f.src.with_suffix(".txt"), len(content), f.rel_dir, content=content)
@@ -256,6 +262,7 @@ def run_export(
     captions: str | None = None,
     caption_text: str = "tags",
     underscores: bool = False,
+    with_text: bool = False,
 ) -> dict:
     """Copy the files. Runs as a BackgroundJob; returns the summary. The export
     history goes to ``selections_path`` (the profile active when it started),
@@ -278,10 +285,14 @@ def run_export(
         if captions:
             found = selections.captions_for(conn, sel, photo_ids)
             texts = {pid: (c["caption"] or "", c["tags"]) for pid, c in found.items() if c["caption"] or c["tags"]}
+            # Text read from the photo (OCR) and its translation: in .txt on request, always in the JSONL.
+            read = {pid: (c["text"], c["translation"]) for pid, c in found.items() if c["text"]}
+        else:
+            read = {}
         locations = timeline_locations(conn, sorted({f.photo_id for f in files})) if add_location else {}
         add_metadata(files, locations, texts if captions in ("embed", "xmp") else {}, embed_text=captions == "embed")
         if captions == "txt":
-            add_caption_files(files, texts, caption_text, underscores)
+            add_caption_files(files, texts, caption_text, underscores, read if with_text else None)
     finally:
         conn.close()
 
@@ -326,18 +337,20 @@ def run_export(
         conn.close()
 
     metadata = None
-    if captions == "jsonl" and texts:
+    if captions == "jsonl" and (texts or read):
         # Hugging Face imagefolder: file_name relative to the folder, plus the text.
         metadata = _unique(dest / "metadata.jsonl")
         with open(metadata, "w", encoding="utf-8") as fh:
             done: set[int] = set()
             for f in files:
-                if f.kind not in ("image", "raw") or f.photo_id in done or f.photo_id not in texts:
+                if f.kind not in ("image", "raw") or f.photo_id in done or (f.photo_id not in texts and f.photo_id not in read):
                     continue
                 done.add(f.photo_id)
-                caption, tags = texts[f.photo_id]
+                caption, tags = texts.get(f.photo_id, ("", []))
                 tags = [t.replace("_", " ") for t in tags] if underscores else tags
                 row = {"file_name": f.target.relative_to(dest).as_posix(), "text": caption or ", ".join(tags), "tags": tags}
+                if f.photo_id in read:
+                    row["ocr_text"], row["ocr_translation"] = read[f.photo_id]
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
                 f.caption = "jsonl"
 
@@ -360,7 +373,7 @@ def run_export(
         "geotagged": len({f.photo_id for f in files if f.location}),
         "sidecars": sum(f.kind == "sidecar" for f in files),
         "captioned": len({f.photo_id for f in files if f.caption}),
-        "without_caption": len(set(photo_ids) - set(texts)) if captions else 0,
+        "without_caption": len(set(photo_ids) - set(texts) - (set(read) if captions == "jsonl" or with_text else set())) if captions else 0,
         "metadata": str(metadata) if metadata else None,
         "manifest": str(manifest),
     }

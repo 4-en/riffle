@@ -34,6 +34,7 @@
   let captionFormat = $state(setting('captionFormat', 'embed')); // embed | xmp | txt | jsonl
   let captionText = $state(setting('captionText', 'tags')); // for txt: tags | caption | both
   let underscores = $state(setting('underscores', false));
+  let withText = $state(setting('withText', false)); // for txt: the text read from the photo too
   // Picks in the chosen scope that were not exported before.
   let newCount = $state(null);
   const filtered = tagFilterActive() || activeFilterCount(view.filters) > 0;
@@ -57,7 +58,7 @@
 
   async function start() {
     error = '';
-    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, withCaptions, captionFormat, captionText, underscores, folder: dir.path }))
+    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, withCaptions, captionFormat, captionText, underscores, withText, folder: dir.path }))
       saveSetting(`export.${k}`, v);
     try {
       status = await startExport(view, {
@@ -72,6 +73,7 @@
         captions: withCaptions ? captionFormat : null,
         caption_text: captionText,
         underscores,
+        with_text: withText,
         ...(draft ? { photo_ids: draft.ids } : {}),
       });
       while (status.running) {
@@ -207,7 +209,10 @@
                   </select>
                 </label>
               {/if}
-              <label class="flex items-center gap-1.5"><input type="checkbox" bind:checked={underscores} /> Spaces instead of _ in tags</label>
+              <label class="flex items-center gap-1.5"><input type="checkbox" bind:checked={underscores} /> Spaces instead of _ in tags (for tags stored with underscores)</label>
+              {#if captionFormat === 'txt'}
+                <label class="flex items-center gap-1.5"><input type="checkbox" bind:checked={withText} /> Text in the photo and its translation</label>
+              {/if}
             </div>
           {/if}
         {/if}

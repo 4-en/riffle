@@ -138,8 +138,13 @@ class CaptionItem(BaseModel):
     id: int
     caption: str | None = None
     tags: list[str] | None = None
+    text: str | None = None  # read from the photo; null (explicitly) forgets it
+    translation: str | None = None
     method: str | None = None  # undo restores where a caption came from
     edited: bool | None = None
+    language: str | None = None  # undo restores these for the read text
+    text_method: str | None = None
+    text_edited: bool | None = None
 
 
 class CaptionsIn(BaseModel):
@@ -187,6 +192,7 @@ class ExportIn(BaseModel):
     captions: str | None = None  # also write captions/tags: embed | xmp | txt | jsonl (None: no)
     caption_text: str = "tags"  # for txt: tags | caption | both
     underscores: bool = False  # for txt and jsonl: write tags with spaces instead of "_"
+    with_text: bool = False  # for txt: also the text read from the photo and its translation
 
 
 COLLAPSE = ("dupes", "stacks", "none")
@@ -473,7 +479,7 @@ def create_app(
     def rank(conn, index: Index, query: np.ndarray, flt: PhotoFilter, exclude: int | None,
              collapse: str, offset: int, limit: int, front: dict[int, str] | None = None) -> dict:
         """Photos within the filters by similarity to ``query``. ``front``: photos
-        moved ahead ({id: "file" | "folder" | "tag" | "caption"}, in that order),
+        moved ahead ({id: "file" | "folder" | "tag" | "caption" | "text"}, in that order),
         keeping the similarity order within each group."""
         if index.E.size == 0:
             return {"total": 0, "items": []}
@@ -491,8 +497,8 @@ def create_app(
         order = np.argsort(-scores)[: int(mask.sum())]
         ranked = [int(index.ids[i]) for i in order]
         if front:
-            tier = {"file": 0, "folder": 1, "tag": 2, "caption": 3}
-            ranked.sort(key=lambda pid: tier.get(front.get(pid), 4))  # stable: similarity order within
+            tier = {"file": 0, "folder": 1, "tag": 2, "caption": 3, "text": 4}
+            ranked.sort(key=lambda pid: tier.get(front.get(pid), 5))  # stable: similarity order within
 
         if collapse != "none":
             column = "stack_id" if collapse == "stacks" else "dupe_group"
@@ -890,6 +896,8 @@ def create_app(
         photo["custom_tags"] = [{"id": t["id"], "name": t["name"]} for t in ctags if photo_id in members[t["id"]]]
         cap = conn.execute("SELECT text, method, edited FROM sel.captions WHERE sha256 = ?", (r["sha256"],)).fetchone()
         photo["caption"] = dict(cap) if cap else None
+        ocr = conn.execute("SELECT text, translation, language FROM sel.photo_text WHERE sha256 = ?", (r["sha256"],)).fetchone()
+        photo["text"] = dict(ocr) if ocr and ocr["text"] else None
         photo["fixed_tags"] = [
             t[0] for t in conn.execute("SELECT tag FROM sel.fixed_tags WHERE sha256 = ? ORDER BY position, added_at", (r["sha256"],))
         ]
@@ -972,6 +980,10 @@ def create_app(
                 q,
                 conn.execute("SELECT p.id, c.text FROM sel.captions c JOIN photos p ON p.sha256 = c.sha256 WHERE p.status = 'ok'"),
                 conn.execute("SELECT p.id, t.tag FROM sel.fixed_tags t JOIN photos p ON p.sha256 = t.sha256 WHERE p.status = 'ok'"),
+                conn.execute(
+                    """SELECT p.id, o.text || char(10) || o.translation FROM sel.photo_text o
+                       JOIN photos p ON p.sha256 = o.sha256 WHERE p.status = 'ok' AND o.text != ''"""
+                ),
             )
             # A file or folder name match ranks ahead of a tag or caption match.
             front |= name_matches(q, conn.execute("SELECT id, source, rel_path FROM photos WHERE status = 'ok'"))
@@ -1360,10 +1372,9 @@ def create_app(
         """Typed captions and tags (or an undo). Returns the previous values."""
         items = [it.model_dump(exclude_unset=True) for it in body.items]
         for it in items:
-            if it.get("method") is None:
-                it.pop("method", None)
-            if it.get("edited") is None:
-                it.pop("edited", None)
+            for key in ("method", "edited", "text_method", "text_edited", "language", "translation"):
+                if it.get(key) is None:
+                    it.pop(key, None)
         previous = selections.set_captions(conn, sel_path(), items)
         return {"previous": list(previous.values())}
 
@@ -1443,6 +1454,14 @@ def create_app(
                     r["tags"] = tl.filter(r["tags"])
             changed = selections.store_generated(conn, sel_path(), results, method.key, body.mode)
             return {"done": True, "changed": changed, "photos": len(results)}
+        options = dict(body.options)
+        if method.key == "ocr" and options.get("retranslate"):
+            # Translate the current (maybe edited) text again: only photos that have some.
+            current = selections.captions_for(conn, sel_path(), ids)
+            options["texts"] = {str(i): c["text"] for i, c in current.items() if c["text"]}
+            ids = [i for i in ids if str(i) in options["texts"]]
+            if not ids:
+                raise HTTPException(400, "none of these photos has text to translate")
         rows = conn.execute(
             "SELECT id, source, rel_path FROM photos WHERE status = 'ok' AND id IN (SELECT value FROM json_each(?))",
             (json.dumps(ids),),
@@ -1466,7 +1485,7 @@ def create_app(
         cancel = threading.Event()
         state["caption_cancel"] = cancel
         started = caption_job.start(
-            photos=photos, method=method.key, options=body.options, store=store, taglist=taglist, cancel=cancel
+            photos=photos, method=method.key, options=options, store=store, taglist=taglist, cancel=cancel
         )
         if not started:
             raise HTTPException(409, "captioning is already running")
@@ -1667,6 +1686,7 @@ def create_app(
             captions=body.captions,
             caption_text=body.caption_text,
             underscores=body.underscores,
+            with_text=body.with_text,
         )
         if not started:
             raise HTTPException(409, "an export is already running")

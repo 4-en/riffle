@@ -256,6 +256,18 @@
           {/if}
         </section>
 
+        {#if photo.text}
+          <section>
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+              Text in the photo{photo.text.language ? ` · ${photo.text.language}` : ''}
+            </h3>
+            <p class="whitespace-pre-line text-xs leading-relaxed text-neutral-200">{photo.text.text}</p>
+            {#if photo.text.translation}
+              <p class="mt-1 whitespace-pre-line text-xs leading-relaxed text-neutral-400">{photo.text.translation}</p>
+            {/if}
+          </section>
+        {/if}
+
         {#if photo.custom_tags?.length}
           <section>
             <h3 class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Your tags</h3>
