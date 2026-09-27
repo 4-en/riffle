@@ -1,14 +1,19 @@
 <script>
   // Map overview: photo clusters (one per place, region, or country) on offline country
   // outlines (Natural Earth, bundled; nothing is fetched from a map server).
-  // Clicking a cluster opens that group in the grouped grid.
+  // Clicking a cluster opens that group in the grouped grid. Box or lasso selects
+  // places, and with them their photos (for the selection bar), or filters to them.
   import { untrack } from 'svelte';
   import { geoNaturalEarth1, geoPath } from 'd3-geo';
   import { select } from 'd3-selection';
   import { zoom as d3zoom, zoomIdentity } from 'd3-zoom';
   import { feature, mesh } from 'topojson-client';
   import { view, dateSpan } from '../lib/state.svelte.js';
-  import { fetchGroups } from '../lib/api.js';
+  import { fetchGroups, fetchIds } from '../lib/api.js';
+  import { selection } from '../lib/culling.svelte.js';
+  import { mapSelect, inside } from '../lib/mapselect.svelte.js';
+  import MapTools from './MapTools.svelte';
+  import SelectionBar from './SelectionBar.svelte';
 
   let { onopen } = $props();
 
@@ -21,6 +26,36 @@
   let error = $state('');
   let transform = $state(zoomIdentity);
   let hover = $state(null);
+  let tool = $state('pan');
+  let picked = $state([]); // keys of the places selected with box or lasso
+
+  // The photos of these places (within the other filters) become the selection.
+  async function selectPlaces(keys, additive) {
+    picked = additive ? [...new Set([...picked, ...keys])] : keys;
+    const { ids } = picked.length ? await fetchIds({ ...view, filters: { ...view.filters, [level]: picked } }) : { ids: [] };
+    selection.clear();
+    for (const id of ids) selection.add(id);
+  }
+  const picker = mapSelect({
+    tool: () => tool,
+    onselect(poly, additive) {
+      const keys = placed
+        .filter((g) => {
+          const [x, y] = projection([g.lon, g.lat]);
+          return inside(poly, transform.applyX(x), transform.applyY(y));
+        })
+        .map((g) => g.key);
+      selectPlaces(keys, additive);
+    },
+  });
+  // Clearing the selection elsewhere (Esc, ✕) also clears the picked places.
+  $effect(() => {
+    if (selection.size === 0) untrack(() => (picked = []));
+  });
+  function onlyThese() {
+    view.filters[level] = [...picked];
+    selection.clear();
+  }
 
   const level = $derived(view.group);
   const placed = $derived(groups.filter((g) => g.key && g.lat != null));
@@ -76,7 +111,9 @@
 
   let zoomer;
   $effect(() => {
-    zoomer = d3zoom().on('zoom', (e) => (transform = e.transform));
+    zoomer = d3zoom()
+      .filter(picker.zoomFilter)
+      .on('zoom', (e) => (transform = e.transform));
     select(svg).call(zoomer);
     return () => select(svg).on('.zoom', null);
   });
@@ -94,8 +131,23 @@
   ];
 </script>
 
-<div class="relative h-full min-h-[400px] w-full overflow-hidden bg-neutral-950" bind:clientWidth={width} bind:clientHeight={height}>
-  <svg bind:this={svg} {width} {height} class="block cursor-grab active:cursor-grabbing" role="img" aria-label="Map of photo locations">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="relative h-full min-h-[400px] w-full overflow-hidden bg-neutral-950"
+  bind:clientWidth={width}
+  bind:clientHeight={height}
+  onpointerdown={picker.onpointerdown}
+  onpointermove={picker.onpointermove}
+  onpointerup={picker.onpointerup}
+>
+  <svg
+    bind:this={svg}
+    {width}
+    {height}
+    class="block {tool === 'pan' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'}"
+    role="img"
+    aria-label="Map of photo locations"
+  >
     <g transform={transform.toString()}>
       <path d={path({ type: 'Sphere' })} class="fill-neutral-900" />
       {#if countries}
@@ -110,21 +162,28 @@
           cx={x}
           cy={y}
           r={radius(g.count) / transform.k}
-          class="cursor-pointer fill-sky-500/60 stroke-sky-200 hover:fill-sky-400/80"
+          class="cursor-pointer {picked.includes(g.key) ? 'fill-sky-300/90 stroke-white' : 'fill-sky-500/60 stroke-sky-200 hover:fill-sky-400/80'}"
           stroke-width={1.2 / transform.k}
           role="button"
           tabindex="0"
           aria-label="{g.label}: {g.count} photos"
           onmouseenter={() => (hover = { g, x: transform.applyX(x), y: transform.applyY(y) })}
           onmouseleave={() => (hover = null)}
-          onclick={() => onopen(level, g.key)}
+          onclick={() => !picker.consumedClick && tool === 'pan' && onopen(level, g.key)}
           onkeydown={(e) => e.key === 'Enter' && onopen(level, g.key)}
         />
       {/each}
     </g>
   </svg>
 
+  {#if picker.path}
+    <svg class="pointer-events-none absolute inset-0" {width} {height}>
+      <path d={picker.path} class="fill-sky-400/10 stroke-sky-300" stroke-width="1.5" stroke-dasharray="5 3" />
+    </svg>
+  {/if}
+
   <div class="absolute left-3 top-3 flex items-center gap-1 rounded bg-neutral-900/90 p-1 text-xs">
+    <MapTools bind:tool />
     {#each levels as [value, label] (value)}
       <button
         class="rounded px-2 py-1 {level === value ? 'bg-sky-700 text-white' : 'text-neutral-300 hover:bg-neutral-800'}"
@@ -140,6 +199,17 @@
       · <button class="text-sky-400 hover:underline" onclick={() => onopen(level, '')}>{unknown} without location</button>
     {/if}
     · outlines: Natural Earth
+  </div>
+
+  <div class="pointer-events-none absolute inset-x-0 bottom-10 flex flex-col items-center gap-1">
+    {#if picked.length}
+      <button
+        class="pointer-events-auto rounded bg-neutral-900/95 px-2 py-1 text-xs text-sky-300 shadow hover:bg-neutral-800"
+        title="Filter the view to these places"
+        onclick={onlyThese}>Only these {picked.length} {level === 'country' ? 'countries' : level === 'region' ? 'regions' : 'places'}</button
+      >
+    {/if}
+    <div class="w-full"><SelectionBar onselectall={() => selectPlaces(placed.map((g) => g.key), false)} /></div>
   </div>
 
   {#if error}

@@ -3,12 +3,16 @@
   // that alike photos sit close together (t-SNE of the library, laid out once, so
   // places stay put when filters change), coloured by its cluster. Zoom in and the
   // dots become thumbnails. Click a photo to open it, a cluster name to open that
-  // group in the grid.
+  // group in the grid. Box or lasso selects photos for the selection bar.
   import { untrack } from 'svelte';
   import { select } from 'd3-selection';
   import { zoom as d3zoom, zoomIdentity } from 'd3-zoom';
   import { view } from '../lib/state.svelte.js';
   import { fetchSimilarMap } from '../lib/api.js';
+  import { selection } from '../lib/culling.svelte.js';
+  import { mapSelect, inside } from '../lib/mapselect.svelte.js';
+  import MapTools from './MapTools.svelte';
+  import SelectionBar from './SelectionBar.svelte';
 
   let { onopen } = $props();
 
@@ -20,6 +24,22 @@
   let error = $state('');
   let transform = $state(zoomIdentity);
   let hover = $state(null); // {id, key, x, y}
+  let tool = $state('pan');
+
+  // Box / lasso: the photos whose dot or tile centre lies inside the shape.
+  const picker = mapSelect({
+    tool: () => tool,
+    onselect(poly, additive) {
+      if (!additive) selection.clear();
+      for (const [id, x, y] of data?.points ?? []) {
+        const [sx, sy] = at(x, y);
+        if (inside(poly, sx, sy)) selection.add(id);
+      }
+    },
+  });
+  function selectAll() {
+    for (const [id] of data?.points ?? []) selection.add(id);
+  }
 
   const PAD = 40;
   const THUMB_FROM = 20; // tile size (px) from which thumbnails replace the dots
@@ -90,7 +110,11 @@
           const w = r >= 1 ? s : s * r;
           const h = r >= 1 ? s / r : s;
           ctx.drawImage(img, sx - w / 2, sy - h / 2, w, h);
-          if (hover?.id === id) {
+          if (selection.has(id)) {
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(sx - w / 2, sy - h / 2, w, h);
+          } else if (hover?.id === id) {
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 2;
             ctx.strokeRect(sx - w / 2, sy - h / 2, w, h);
@@ -103,11 +127,16 @@
       ctx.globalAlpha = 0.85;
       ctx.fillRect(sx - d / 2, sy - d / 2, d, d);
       ctx.globalAlpha = 1;
+      if (selection.has(id)) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sx - d / 2 - 1.5, sy - d / 2 - 1.5, d + 3, d + 3);
+      }
     }
   }
 
   $effect(() => {
-    data, transform, width, height, hover;
+    data, transform, width, height, hover, selection.size;
     untrack(redraw);
   });
 
@@ -115,6 +144,7 @@
   $effect(() => {
     zoomer = d3zoom()
       .scaleExtent([0.5, 40])
+      .filter(picker.zoomFilter)
       .on('zoom', (e) => (transform = e.transform));
     select(canvas).call(zoomer);
     return () => select(canvas).on('.zoom', null);
@@ -143,19 +173,34 @@
   const groupLabel = (key) => data?.groups.find((g) => g.key === key)?.label ?? 'Other';
 </script>
 
-<div class="relative h-full min-h-[400px] w-full overflow-hidden bg-neutral-950" bind:clientWidth={width} bind:clientHeight={height}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="relative h-full min-h-[400px] w-full overflow-hidden bg-neutral-950"
+  bind:clientWidth={width}
+  bind:clientHeight={height}
+  onpointerdown={picker.onpointerdown}
+  onpointermove={picker.onpointermove}
+  onpointerup={picker.onpointerup}
+>
   <canvas
     bind:this={canvas}
     style="width: {width}px; height: {height}px"
-    class="block {hover ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}"
+    class="block {tool !== 'pan' ? 'cursor-crosshair' : hover ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}"
     aria-label="Map of the photos by similarity"
     onmousemove={(e) => (hover = pick(e))}
     onmouseleave={() => (hover = null)}
     onclick={(e) => {
+      if (picker.consumedClick || tool !== 'pan') return;
       const p = pick(e);
       if (p) view.photo = p.id;
     }}
   ></canvas>
+
+  {#if picker.path}
+    <svg class="pointer-events-none absolute inset-0" {width} {height}>
+      <path d={picker.path} class="fill-sky-400/10 stroke-sky-300" stroke-width="1.5" stroke-dasharray="5 3" />
+    </svg>
+  {/if}
 
   {#if data}
     {#each labels as g (g.key)}
@@ -173,6 +218,7 @@
 
   <!-- Broad · Medium · Fine is in the toolbar above. -->
   <div class="absolute left-3 top-3 flex items-center gap-1 rounded bg-neutral-900/90 p-1 text-xs">
+    <MapTools bind:tool />
     <button class="rounded px-2 py-1 text-neutral-400 hover:bg-neutral-800" title="Fit to the photos" onclick={fit}>Fit</button>
   </div>
 
@@ -185,6 +231,10 @@
       · zoom in for thumbnails
     </div>
   {/if}
+
+  <div class="pointer-events-none absolute inset-x-0 bottom-10">
+    <SelectionBar onselectall={selectAll} />
+  </div>
 
   {#if loading && !data}
     <p class="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">Laying out the photos… (the first time takes a few seconds)</p>

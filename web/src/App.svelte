@@ -341,6 +341,11 @@
   }
 
   function flagInGrid(flag) {
+    if (view.overview) {
+      // On a map there is no grid to move through: flag the selection, that's all.
+      if (selection.size) setFlag([...selection], flag);
+      return;
+    }
     const targets = selection.size ? [...selection] : cursor.focus != null ? [cursor.focus] : [];
     if (!targets.length) return;
     const set = new Set(targets);

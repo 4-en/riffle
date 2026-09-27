@@ -203,7 +203,9 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 
 **Group → Similar** clusters the photos in the current view by content: a trip gets its own themes (waterfront, streets, palaces, birds…), the whole library broader ones. **Broad · Medium · Fine** sets how finely. Clusters are named after the nearest tags (or the kind of image, e.g. illustrations), largest first; photos that fit no group of five or more are under **Other**.
 
-**Grid | Map** switches to a map of the photos by similarity: alike photos sit close together, coloured by cluster, with the cluster names over their regions. Zoom in and the dots become thumbnails; click a photo to open it, a name to open that group in the grid. The layout is computed once for the whole library (a few seconds; cached until the next index), so photos keep their places when you filter. Clusters follow what the model sees, content and scene, not events: for those, group by day or place.
+**Grid | Map** switches to a map of the photos by similarity: alike photos sit close together, coloured by cluster, with the cluster names over their regions. Zoom in and the dots become thumbnails; click a photo to open it, a name to open that group in the grid. The layout is computed once for the whole library (a few seconds; cached until the next index), so photos keep their places when you filter.
+
+**Selecting on the maps.** Both maps have **Pan · Box · Lasso** tools (Shift-drag draws a box without switching; Ctrl adds to the selection). On the Similar map this selects the photos inside the shape; on the world map, the places inside it and all their photos, with **Only these places** to turn them into a filter. The selection bar then works as in the grid: pick, reject, compare, create a tag. `P` / `X` / `U` flag the selection. Clusters follow what the model sees, content and scene, not events: for those, group by day or place.
 
 ## Keyboard
 
