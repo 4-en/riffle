@@ -24,8 +24,13 @@
       >
       <button
         class="{btn} text-neutral-200 hover:bg-neutral-800"
-        title="Create a tag from these photos: photos like them get it"
-        onclick={() => (view.tagDialog = { mode: 'create', photoIds: [...selection] })}>Tag…</button
+        title="Write or generate captions and tags for these photos"
+        onclick={() => (view.captioning = { ids: [...selection] })}>Caption…</button
+      >
+      <button
+        class="{btn} text-neutral-200 hover:bg-neutral-800"
+        title="Learn a tag from these photos: photos like them get it"
+        onclick={() => (view.tagDialog = { mode: 'create', photoIds: [...selection] })}>Learn tag…</button
       >
       <button class="{btn} text-neutral-300 hover:bg-neutral-800" title="Select all (Ctrl+A)" onclick={onselectall}>All</button>
       <button class="{btn} text-neutral-400 hover:bg-neutral-800" title="Deselect (Esc)" onclick={clearSelection}>✕</button>

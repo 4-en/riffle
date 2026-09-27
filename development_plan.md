@@ -250,13 +250,22 @@ CREATE TABLE custom_tags (            -- v3: tags taught by example photos (§10
   created_at REAL, updated_at REAL
 );
 CREATE TABLE custom_tag_examples (tag_id, sha256, source, rel_path, added_at);
+CREATE TABLE captions (               -- v5: written captions (§11.2 Captions & tags)
+  sha256 TEXT PRIMARY KEY, text TEXT, method TEXT, -- manual | riffle | phrases | joycaption | wd
+  edited INTEGER,                     -- changed by hand: kept when generating again
+  source TEXT, rel_path TEXT, updated_at REAL
+);
+CREATE TABLE fixed_tags (             -- v5: written tags, in order
+  sha256, tag TEXT COLLATE NOCASE, position INTEGER, method TEXT,
+  source, rel_path, added_at, PRIMARY KEY (sha256, tag)
+);
 ```
 
 - **Profiles** (`profiles.py`, selections v4 adds a `profile` name table): each profile is one selections file. The default is the configured file; others are `profiles/<slug>.sqlite3` next to it; the active one is remembered in `active_profile` there (per machine, not in `config.yaml`).
   - The server reads the active file through `sel_path()`.
   - On a switch it clears the custom-tag cache and loads that profile's taste model (`<model_id>.<slug>.taste.npz`; the default keeps `<model_id>.taste.npz`).
   - The SSE status carries the profile, so other tabs reload. The client drops custom tag filters (ids differ per profile) and reloads the page, which resets the flag overlay, undo history, and selection.
-  - New profiles start empty or copy chosen tables (flags, exported, custom tags) with `ATTACH` + `INSERT … SELECT`.
+  - New profiles start empty or copy chosen tables (flags, exported, custom tags, captions and fixed tags) with `ATTACH` + `INSERT … SELECT`.
   - Switching is refused while indexing or an export runs, and an export records history in the file it started with.
   - Deleted profiles move to `profiles/deleted/`. Curate drafts are keyed per profile.
 - Keyed by content hash, so flags survive deleting the cache, re-indexing, moving, and renaming. Exact copies share a flag; editing a file drops it.
@@ -473,7 +482,11 @@ styles:
 | POST | `/api/flags/reset?<filters>` `{scope}` | Unflag all or within the filters |
 | GET | `/api/stacks?<filters>&unreviewed=`, `/api/stacks/{id}` | Stacks; one stack's photos |
 | GET | `/api/suggest?ids=` | Suggested keeper with its scores |
-| GET / POST | `/api/export` | Export status / start (picks, filtered picks, or `photo_ids`) |
+| GET / POST | `/api/export` | Export status / start (picks, filtered picks, or `photo_ids`; `captions`: embed, xmp, txt, jsonl) |
+| GET / POST | `/api/captions?ids=`, `/api/captions` `{items}` | Captions and fixed tags; typed edits and undo (return the previous values) |
+| POST | `/api/captions/tags` `{ids, op, tag, to}` | Add a tag to all, remove it, rename it (merges) |
+| GET / POST | `/api/captioning`, `/api/captioning/cancel` | Methods with availability and job status / generate (cheap methods at once, models as a job) / cancel |
+| GET / POST | `/api/taglists`, `/api/taglists/danbooru` | Master tag lists / download the Danbooru list |
 | POST | `/api/exported/reset?<filters>` `{scope}` | Forget export history |
 | GET / POST | `/api/taste`, `/api/taste/calibrate` | Taste model status / calibrate |
 | GET, POST, DELETE | `/api/profiles`, `/api/profiles/{slug}`, `/api/profiles/{slug}/activate` | List (with counts), create (empty or copying parts), rename, delete, switch |
@@ -499,7 +512,8 @@ styles:
 - `gps=`, `exported=`;
 - repeated `country=`, `region=`, `place=`, `loc_source=`;
 - repeated `folder=`: a photo's direct parent folder, without subfolders;
-- `ctags=1,2` (your tags, AND), `exclude_ctags=`.
+- `ctags=1,2` (your tags, AND), `exclude_ctags=`;
+- repeated `ftags=` (fixed tags, AND), `exclude_ftags=`.
 
 Different filters combine with AND.
 
@@ -517,6 +531,16 @@ A single page without a router. View state lives in a Svelte store mirrored into
 - **Naming experiment** (first library, 34 medium clusters, contact sheets): the nearest sidebar tag was generic or wrong for many ("a portrait" for illustrations before the kind family, "grass" for sand textures, "sky and clouds · trees"). Nearest phrase of the big vocabulary picked style and sky phrases ("a macro photo", "a blue sky", "willows"). The distinctive phrase fixed most ("sheep", "ducks", "a palace garden", "a palace interior", "a metro station", "candlelight", "vintage cars", "spiders", "stars at night"). Subtracting only half or three quarters of the baseline was no better. Remaining misses: the Gröna Lund rides as "an industrial area" ("an amusement park" was 0.025 behind); portraits as "a man". On the first library: 300 ms for 2,132 photos (42 ms cached); the Sweden trip 70 ms, 20 medium groups.
 - **Similar map** (`SimilarMap.svelte`, `GET /api/similar/map?<filters>&level=`): the Grid | Map overview for `similar`. `clusters.layout` runs t-SNE (scikit-learn, cosine, PCA init, fixed seed) over the whole library once per embedding file and caches it as `<model_id>.map.npz` (derived), so filters show or hide points without moving them; the endpoint returns the listing's points `[id, x, y, cluster]` and each cluster's label, size, and median position. Drawn on a canvas with d3-zoom: dots coloured by cluster; thumbnails (loaded on demand) once tiles reach 20 px, tiles growing more slowly than the spacing (∝ k^0.75) so zooming declutters; the 24 largest cluster names (all from 3× zoom) as buttons that open the group in the grid; click opens a photo. Hovering a photo or a cluster name draws the other clusters greyed out (dots grey at 30 %, thumbnails greyscale at 25 %) and that cluster on top, so neighbouring clusters are easy to tell apart. First layout of the 2,132 photos: 3.9 s; later requests read the cache.
 - **Selecting on the maps** (`lib/mapselect.svelte.js`, `MapTools.svelte`): Pan · Box · Lasso on both maps (Shift-drag: box; Ctrl/Cmd: add). The drag is handled on the map's container and d3-zoom is filtered off while selecting (the wheel still zooms); the click ending a drag is ignored. Point-in-polygon (ray casting) on screen positions. The Similar map selects the photos inside and outlines them; the world map selects places and fills the selection with their photos (`/api/ids` with those places as a filter), plus "Only these places" as a filter. The selection bar is shown on the map; `P` / `X` / `U` flag the selection without the grid's move-to-next.
+- **Captions & tags** (`captioning.py`, `CaptionView.svelte`; selections v5): a caption and ordered **fixed tags** per photo, opened from a selection (**Caption…**; the older "Tag…" became **Learn tag…**), the context menu, or the photo view, which shows both.
+  - **Editing:** captions save on blur; tags are chips (Enter or comma adds, drag reorders). Photos are cards in a grid (`auto-fill, minmax(34rem, 1fr)`), so wide screens get several columns; 50 per page.
+  - **Working set:** photos checked in the view (Shift+click ranges; all, this page, or those without caption or tags), else all of them. Generating and the side panel (add to all, replace X with Y / rename, which merges onto an existing tag, remove, clear tags, clear captions) apply to it, and the panel counts its tags. Every write returns the previous values, and Ctrl+Z restores them. "Only those still missing it" is offered only when adding (replacing is for photos that have something); it used to be the default, which left nothing to generate once every photo had a tag.
+  - **OCR (planned):** text read from the photo is a third kind of text, not a caption: its own table (`photo_text`: sha256, text, method, edited), one more field on each card, a `text` output in the method registry (`captioning.METHODS`) and one more mode target in `store_generated`, a search tier after captions, and its own export choice (e.g. `dc:description` stays the caption; the read text goes to a `.txt` or the JSONL).
+  - **Generating:** cheap methods run in the request: `riffle` (vocabulary tags without articles or catch-alls like "other", plus learned tags) and `phrases` (cluster-name phrases with similarity ≥ 0.04 above the library mean and within 0.02 of the photo's best, at most 4). Models run as a `BackgroundJob`, one model per run, loaded in the job thread and freed after (`torch.cuda.empty_cache`); results are stored per batch of 8, so a cancel keeps what is done. Modes: add (a caption only where none, tags appended), replace (generated ones; typed and edited ones kept), replace all. Auto-exit and profile switching wait for the job.
+  - **JoyCaption on the first library:** 8 photos in 44.5 s with the model load (~4.4 s per photo for a medium caption plus keywords); VRAM released after the run. Asked for "10 to 20 keywords", it gave 26–40, the last ones filler ("serene, calm, peaceful"): keywords are capped at 15 and "photograph" and the like dropped.
+  - **Booru** (collapsed): the WD tagger (general ≥ 0.35, characters ≥ 0.85, optional rating) and JoyCaption's Danbooru prompt (`artist:`/`copyright:`/`meta:` dropped unless asked). A master list (`captioning.TagList`: tagcomplete CSV with aliases, WD `selected_tags.csv`, or one tag per line in `<config>/taglists/`) keeps listed tags, mapping aliases and spelling variants (plural, `-`/`_`/space). The Danbooru list downloads on request from the a1111 tagcomplete repository.
+  - **Search:** with Names on, text search ranks file-name, folder, fixed-tag, then caption matches first (whole words, `query.text_matches`), badges "tag" / "caption".
+  - **Export:** `embed` writes `dc:description` and `dc:subject` into an XMP APP1 segment (JPEG) or iTXt chunk (PNG) in the same pass as the GPS EXIF edit (`geotag.Meta`, edits applied to the header only); a file that already has XMP gets a sidecar. `xmp`: sidecars (combined with a location). `txt`: `<image name>.txt` with tags, the caption, or both. `jsonl`: `metadata.jsonl` (`file_name`, `text`, `tags`).
+  - **Optional install:** the `captions` extra (transformers ≥ 5, accelerate, onnxruntime[-gpu]); not in the standalone builds. Unavailable methods say why.
   - A grouping keeps groups together, so it allows the date sorts, plus the place sorts for location groups and the file-name sorts for folders. Those order the groups by name, and the photos within them by the same sort.
 - **Sidebar**: "N active · Clear all" when anything narrows the view; then collapsible filter sections (Flag, Folder, Date, Camera, Lens, Exposure, Orientation, Location, Places) and tag families. Subject, Scene, and Look start open; each section remembers its state.
   - Options show counts within the other filters.
@@ -700,6 +724,30 @@ Question: can the CLIP embeddings group a library into broader themes than stack
 **2D map:** t-SNE (scikit-learn, cosine) in 1.8 s. Thumbnails formed clear regions: illustrations, interiors and museums, streets and squares, waterfront, skies, flowers, meadows and wildlife. UMAP was not tried; it needs numba (heavy, slow to start, awkward in PyInstaller builds).
 
 **Adopted:** the "Similar" grouping and, after it, the map (§11.2).
+
+### 14.3 Experiment: captions and booru tags (27 Sep 2026)
+
+**Question:** which local models to offer for generated captions and tags (exported as `.txt` next to the image, among other formats), how fast they are, and whether a master tag list can keep tags to real booru tags. Captioning itself is established (TagGUI does this); the question is the choice for Riffle.
+
+**Setup:** 40 images of the first library (25 photos from three folders including film scans, 15 illustrations from two folders), 1600 px previews, RTX 3090. Models from the local Hugging Face cache, transformers 5.17, onnxruntime 1.30, greedy decoding.
+
+| Model | Output | Per image | VRAM | Tags / image |
+|---|---|---|---|---|
+| WD EVA02-large tagger v3 (ONNX) | booru tags + rating, thresholds 0.35 / characters 0.85 | 0.07 s GPU, 1.0 s CPU | ~1 GB | 31 |
+| JoyCaption Beta One (Llava, 8B, bf16) | caption (≤ 60 words) + Danbooru tag list | 5.5 s (both) | 17 GB | 37 |
+| Qwen3-VL-8B-Instruct (bf16) | caption (2–3 sentences) + prompted Danbooru-style tags | 6.2 s (both) | 18 GB | 18 |
+| Florence-2-large PromptGen v2.0 | — | — | — | — |
+
+**Results:**
+- **Florence-2 did not load:** its bundled model code (`trust_remote_code`) fails under transformers 5 (`Florence2LanguageConfig` has no `forced_bos_token_id`). Models that ship their own code break as transformers moves on; offer only models transformers supports natively.
+- **WD tagger:** fastest by far (usable on CPU), and every tag is from its list by construction. Right for illustrations: characters and details are specific. Wrong for photos: a blurry grass photo was rated "explicit", and a black-and-white street scan got a VTuber character and "1girl". Use it for illustrations only, or without characters and rating on photos.
+- **JoyCaption:** the best booru tags from a language model (82 % in the WD list; nearly all the rest are real Danbooru tags outside the WD list's ~10k, e.g. `bangs`, `water_reflection`). The Danbooru prompt adds boilerplate on photos (`copyright:original`, `meta:photoshop_(medium)`: 5 % of tags); drop `artist:` / `copyright:` / `meta:` tags unless asked for. Captions are accurate and concrete, on photos and illustrations. It is uncensored: explicit illustrations are described explicitly.
+- **Qwen3-VL-8B:** captions as good as JoyCaption's and better at reading text (it named a vending machine by its sign). Poor booru tags: only 44 % in the list, and much of the rest isn't booru vocabulary (`serene`, `peaceful`, `anime_style`, `daylight`). A usage example in the prompt was copied into the output (`1girl` on a seagull photo) until it was removed.
+- **Master tag list:** mapping unknown tags to the nearest list tag by CLIP text similarity (≥ 0.85) is unreliable: it fixes `trees → tree` but also maps `serene → >:)`, `cute → ;)`, `illustration → enmaided`. Spelling rules (plural, `-`/`_`) catch the good cases (6 % of Qwen's tags) and none of the bad ones. With a full Danbooru tag list plus aliases (not only WD's), almost all of JoyCaption's tags would be exact; tags that match nothing are dropped.
+
+**Conclusion:** styles map to models: booru tags from the WD tagger (fast, CPU-capable, illustrations) or JoyCaption (photos and illustrations, GPU); natural-language captions from JoyCaption or Qwen3-VL (GPU). A master list is a filter with spelling rules and aliases, not a semantic mapping.
+
+**Adopted:** Captions & tags (§11.2) with JoyCaption for captions and keywords, the WD tagger and JoyCaption's Danbooru preset for booru tags, and master lists as filters. Photos come first: booru tags are a collapsed section. Qwen3-VL is not offered for now (one captioner is enough; its registry entry would be a few lines).
 
 ## 15. Candidates
 

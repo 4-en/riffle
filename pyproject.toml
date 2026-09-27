@@ -27,6 +27,13 @@ dependencies = [
 
 [project.optional-dependencies]
 heic = ["pillow-heif>=0.16"]
+# Generated captions and tags (JoyCaption, the WD tagger); not in the standalone builds.
+captions = [
+  "transformers>=5",
+  "accelerate",
+  "onnxruntime-gpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "onnxruntime; sys_platform != 'linux' or platform_machine != 'x86_64'",
+]
 dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]

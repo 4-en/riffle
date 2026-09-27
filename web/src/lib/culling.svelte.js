@@ -78,7 +78,7 @@ export function clearSelection() {
   cursor.anchor = null;
 }
 
-function loadSetting(key, fallback) {
+export function loadSetting(key, fallback) {
   try {
     // "archive." was the prefix before the rename to Riffle.
     const v = localStorage.getItem(`riffle.${key}`) ?? localStorage.getItem(`archive.${key}`);

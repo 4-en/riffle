@@ -140,3 +140,20 @@ def name_matches(q: str, photos) -> dict[int, str]:
             if parent and test(parent):
                 out[pid] = "folder"
     return out
+
+
+def text_matches(q: str, captions, tags) -> dict[int, str]:
+    """{photo id: "tag" | "caption"} for photos with a fixed tag or a caption that
+    matches ``q`` (whole words, like names; a tag match wins). ``captions``: rows of
+    (id, text); ``tags``: rows of (id, tag)."""
+    test = name_matcher(q)
+    if test is None:
+        return {}
+    out = {}
+    for pid, tag in tags:
+        if pid not in out and test(tag):
+            out[pid] = "tag"
+    for pid, text in captions:
+        if pid not in out and test(text):
+            out[pid] = "caption"
+    return out

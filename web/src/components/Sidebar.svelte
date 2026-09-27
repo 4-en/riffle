@@ -1,5 +1,5 @@
 <script>
-  import { view, toggleTag, toggleExcludeTag, toggleCtag, toggleExcludeCtag, activeCount, clearAll } from '../lib/state.svelte.js';
+  import { view, toggleTag, toggleExcludeTag, toggleCtag, toggleExcludeCtag, toggleFtag, toggleExcludeFtag, activeCount, clearAll } from '../lib/state.svelte.js';
   import Filters from './Filters.svelte';
   import Section from './Section.svelte';
 
@@ -9,6 +9,14 @@
   const titles = { subject: 'Subject', scene: 'Scene', look: 'Look', kind: 'Kind' };
   // Server order follows vocabulary.yaml; only tags present in the current filter are listed.
   const families = $derived(tags ? Object.entries(tags.families) : []);
+  // Fixed tags (written captions and tags): the most common, plus any in use, until "All".
+  const FIXED_SHOWN = 30;
+  let allFixed = $state(false);
+  const fixed = $derived.by(() => {
+    const list = tags?.fixed ?? [];
+    const f = view.filters;
+    return allFixed ? list : list.filter((t, i) => i < FIXED_SHOWN || f.ftags.includes(t.tag) || f.exclude_ftags.includes(t.tag));
+  });
 </script>
 
 <aside class="w-60 shrink-0 overflow-y-auto border-r border-neutral-800 bg-neutral-900/50 px-2 py-3 text-sm">
@@ -71,9 +79,47 @@
           {/each}
         </ul>
       {:else}
-        <p class="px-2 text-xs text-neutral-500">Select photos, right-click → <em>Create tag</em>: photos like them get the tag.</p>
+        <p class="px-2 text-xs text-neutral-500">Select photos, right-click → <em>Learn a tag</em>: photos like them get the tag.</p>
       {/if}
     </Section>
+    {#if tags.fixed?.length}
+      <Section id="tags-fixed" title="Fixed tags" active={view.filters.ftags.length + view.filters.exclude_ftags.length}>
+        <ul>
+          {#each fixed as t (t.tag)}
+            {@const on = view.filters.ftags.includes(t.tag)}
+            {@const off = view.filters.exclude_ftags.includes(t.tag)}
+            <li class="group/tag relative">
+              <button
+                class="flex w-full items-center justify-between rounded px-2 py-1 text-left transition-colors
+                  {on ? 'bg-sky-700 text-white' : off ? 'bg-red-950 text-red-300' : 'text-neutral-300 hover:bg-neutral-800'}"
+                aria-pressed={on || off}
+                title={off ? 'Excluded: click to show these photos again' : on ? 'Included: click to remove' : 'Click: only photos with this tag · Alt+click: hide them'}
+                onclick={(e) => (off || e.altKey ? toggleExcludeFtag(t.tag) : toggleFtag(t.tag))}
+              >
+                <span class="truncate {off ? 'line-through decoration-red-400/70' : ''}">{off ? '−\u2009' : ''}{t.tag}</span>
+                <span class="ml-2 text-xs tabular-nums {on ? 'text-sky-100' : off ? 'text-red-400' : 'text-neutral-500'} {off ? '' : 'group-hover/tag:invisible'}">
+                  {off ? 'hidden' : t.count}
+                </span>
+              </button>
+              {#if !off}
+                <button
+                  class="absolute right-1 top-1/2 hidden -translate-y-1/2 rounded px-1.5 text-xs font-bold leading-5
+                    group-hover/tag:block {on ? 'text-sky-100 hover:bg-sky-800' : 'text-neutral-400 hover:bg-red-900 hover:text-white'}"
+                  title="Exclude: hide photos with this tag (Alt+click)"
+                  aria-label="Exclude {t.tag}"
+                  onclick={() => toggleExcludeFtag(t.tag)}>−</button
+                >
+              {/if}
+            </li>
+          {/each}
+        </ul>
+        {#if tags.fixed.length > FIXED_SHOWN}
+          <button class="px-2 text-xs text-sky-400 hover:underline" onclick={() => (allFixed = !allFixed)}>
+            {allFixed ? 'Fewer' : `All ${tags.fixed.length} tags`}
+          </button>
+        {/if}
+      </Section>
+    {/if}
     {#each families as [family, list] (family)}
       <Section
         id="tags-{family}"

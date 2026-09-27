@@ -15,7 +15,7 @@
   // ---- profiles -------------------------------------------------------------------
   let newName = $state('');
   let copyCurrent = $state(false);
-  let copyParts = $state({ flags: true, exported: true, tags: true });
+  let copyParts = $state({ flags: true, exported: true, tags: true, captions: true });
   let renaming = $state(null); // {slug, name}
   let confirmDelete = $state(null); // slug
   let profileError = $state('');
@@ -303,7 +303,7 @@
         </details>
       </section>
 
-      <!-- Profiles: separate sets of flags, export history, and custom tags -->
+      <!-- Profiles: separate sets of flags, export history, custom tags, captions and fixed tags -->
       <section>
         <h3 class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Profiles</h3>
         <p class="mb-2 text-xs text-neutral-400">
@@ -357,6 +357,7 @@
               <label class="flex items-center gap-1"><input type="checkbox" bind:checked={copyParts.flags} /> flags</label>
               <label class="flex items-center gap-1"><input type="checkbox" bind:checked={copyParts.exported} /> export history</label>
               <label class="flex items-center gap-1"><input type="checkbox" bind:checked={copyParts.tags} /> your tags</label>
+              <label class="flex items-center gap-1"><input type="checkbox" bind:checked={copyParts.captions} /> captions and fixed tags</label>
             {/if}
           </div>
         </div>

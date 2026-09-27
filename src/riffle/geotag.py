@@ -1,4 +1,4 @@
-"""Add a GPS position to exported copies (never to originals).
+"""Add a GPS position, a caption, and keywords to exported copies (never to originals).
 
 Only the metadata at the start of the file changes; the image data is copied as
 is, so there is no re-encoding. A tagged copy is described as a new ``head``
@@ -11,6 +11,10 @@ is, so there is no re-encoding. A tagged copy is described as a new ``head``
   and the embedded thumbnail (IFD1) survive untouched. (Rebuilding EXIF with
   Pillow would drop the thumbnail.) If the result does not fit a JPEG segment,
   the position goes into an XMP block instead.
+- A caption and keywords (captions and fixed tags, selections.py) go into an XMP
+  block (``dc:description``, ``dc:subject``): a JPEG APP1 segment or a PNG iTXt
+  chunk, with the position too when it could not go into EXIF. A file that
+  already has XMP gets a sidecar instead (merging XMP is not attempted).
 - Anything else (RAW, TIFF, HEIC), or when the above is not possible: an XMP
   sidecar next to the copy (``<name>.xmp``), which Lightroom, Capture One and
   darktable read.
@@ -22,6 +26,7 @@ import struct
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 GPS_IFD = 0x8825
 XMP_HEADER = b"http://ns.adobe.com/xap/1.0/\x00"
@@ -132,21 +137,64 @@ def _xmp_coord(value: float, pos: str, neg: str) -> str:
     return f"{deg},{minutes:.6f}{pos if value >= 0 else neg}"
 
 
-def xmp_packet(lat: float, lon: float, accuracy_m: float | None) -> bytes:
-    acc = f' exif:GPSHPositioningError="{round(accuracy_m * 10)}/10"' if accuracy_m else ""
+@dataclass
+class Meta:
+    """What goes into a copy: a position and/or a caption and keywords."""
+
+    lat: float | None = None
+    lon: float | None = None
+    accuracy_m: float | None = None
+    description: str = ""
+    keywords: tuple[str, ...] = ()
+
+    @property
+    def has_gps(self) -> bool:
+        return self.lat is not None and self.lon is not None
+
+    @property
+    def has_text(self) -> bool:
+        return bool(self.description or self.keywords)
+
+
+def xmp_packet(lat: float | None = None, lon: float | None = None, accuracy_m: float | None = None, description: str = "", keywords=()) -> bytes:
+    """An XMP packet with a GPS position and/or dc:description and dc:subject."""
+    attrs, body = "", ""
+    if lat is not None and lon is not None:
+        acc = f' exif:GPSHPositioningError="{round(accuracy_m * 10)}/10"' if accuracy_m else ""
+        attrs = (
+            '\n   exif:GPSVersionID="2.3.0.0"\n'
+            f'   exif:GPSLatitude="{_xmp_coord(lat, "N", "S")}"\n'
+            f'   exif:GPSLongitude="{_xmp_coord(lon, "E", "W")}"\n'
+            f'   exif:GPSMapDatum="WGS-84"{acc}'
+        )
+    if description:
+        body += f'   <dc:description><rdf:Alt><rdf:li xml:lang="x-default">{escape(description)}</rdf:li></rdf:Alt></dc:description>\n'
+    if keywords:
+        items = "".join(f"<rdf:li>{escape(k)}</rdf:li>" for k in keywords)
+        body += f"   <dc:subject><rdf:Bag>{items}</rdf:Bag></dc:subject>\n"
+    close = f">\n{body}  </rdf:Description>\n" if body else "/>\n"
     return (
         '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
         '<x:xmpmeta xmlns:x="adobe:ns:meta/">\n'
         ' <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
-        '  <rdf:Description rdf:about="" xmlns:exif="http://ns.adobe.com/exif/1.0/"\n'
-        '   exif:GPSVersionID="2.3.0.0"\n'
-        f'   exif:GPSLatitude="{_xmp_coord(lat, "N", "S")}"\n'
-        f'   exif:GPSLongitude="{_xmp_coord(lon, "E", "W")}"\n'
-        f'   exif:GPSMapDatum="WGS-84"{acc}/>\n'
+        '  <rdf:Description rdf:about="" xmlns:exif="http://ns.adobe.com/exif/1.0/"'
+        f' xmlns:dc="http://purl.org/dc/elements/1.1/"{attrs}{close}'
         " </rdf:RDF>\n"
         "</x:xmpmeta>\n"
         '<?xpacket end="w"?>'
     ).encode()
+
+
+def _apply(data: bytes, edits: list[tuple[int, int, bytes]]) -> tuple[bytes, int]:
+    """The new head and where the source continues: ``edits`` replace data[start:end]
+    (an insertion has start == end); in order, stable for equal starts."""
+    end = max(e for _, e, _ in edits)
+    out, at = bytearray(), 0
+    for start, stop, new in sorted(edits, key=lambda e: e[0]):
+        out += data[at:start] + new
+        at = max(at, stop)
+    out += data[at:end]
+    return bytes(out), end
 
 
 def _read_head(path: Path, stop) -> bytes | None:
@@ -165,7 +213,7 @@ def _read_head(path: Path, stop) -> bytes | None:
     return data
 
 
-def _tag_jpeg(path: Path, lat, lon, accuracy_m) -> Tagged | None:
+def _tag_jpeg(path: Path, meta: Meta) -> Tagged | None:
     def segments(data):
         """(marker, start, end) of the segments before the image data, or None if incomplete."""
         if data[:2] != b"\xff\xd8":
@@ -184,32 +232,44 @@ def _tag_jpeg(path: Path, lat, lon, accuracy_m) -> Tagged | None:
             i += 2 + length
         return None
 
+    def app1(payload: bytes) -> bytes:
+        return b"\xff\xe1" + struct.pack(">H", len(payload) + 2) + payload
+
     data = _read_head(path, lambda d: segments(d) is not None)
     segs = segments(data) if data else None
     if not segs:
         return None
     exif_seg = next((s for s in segs if s[0] == 0xE1 and data[s[1] + 4 : s[1] + 10] == b"Exif\x00\x00"), None)
-    tiff = data[exif_seg[1] + 10 : exif_seg[2]] if exif_seg else None
-    new_tiff = _exif_with_gps(tiff, lat, lon, accuracy_m)
-    if new_tiff is not None and len(new_tiff) + 8 <= 0xFFFF:
-        payload = b"Exif\x00\x00" + new_tiff
-        segment = b"\xff\xe1" + struct.pack(">H", len(payload) + 2) + payload
-        if exif_seg:
-            head = data[: exif_seg[1]] + segment
-            return Tagged(head, exif_seg[2], "exif")
-        # No EXIF yet: after the JFIF APP0 if there is one, else right after SOI.
-        at = segs[0][2] if segs[0][0] == 0xE0 else 2
-        return Tagged(data[:at] + segment, at, "exif")
-    # EXIF must stay untouched: embed XMP instead, unless the file already has XMP.
-    if any(s[0] == 0xE1 and data[s[1] + 4 : s[1] + 4 + len(XMP_HEADER)] == XMP_HEADER for s in segs):
+    has_xmp = any(s[0] == 0xE1 and data[s[1] + 4 : s[1] + 4 + len(XMP_HEADER)] == XMP_HEADER for s in segs)
+    # New segments go after the JFIF APP0 if there is one, else right after SOI.
+    first = segs[0][2] if segs[0][0] == 0xE0 else 2
+    edits, method, gps_in_xmp = [], "xmp", False
+    if meta.has_gps:
+        tiff = data[exif_seg[1] + 10 : exif_seg[2]] if exif_seg else None
+        new_tiff = _exif_with_gps(tiff, meta.lat, meta.lon, meta.accuracy_m)
+        if new_tiff is not None and len(new_tiff) + 8 <= 0xFFFF:
+            segment = app1(b"Exif\x00\x00" + new_tiff)
+            edits.append((exif_seg[1], exif_seg[2], segment) if exif_seg else (first, first, segment))
+            method = "exif"
+        else:
+            gps_in_xmp = True  # EXIF must stay untouched: the position goes into XMP
+    if meta.has_text or gps_in_xmp:
+        if has_xmp:
+            return None  # would have to merge with the existing XMP: sidecar instead
+        packet = xmp_packet(
+            meta.lat if gps_in_xmp else None, meta.lon if gps_in_xmp else None, meta.accuracy_m, meta.description, meta.keywords
+        )
+        at = exif_seg[2] if exif_seg else first
+        edits.append((at, at, app1(XMP_HEADER + packet)))
+        if gps_in_xmp:
+            method = "xmp"
+    if not edits:
         return None
-    payload = XMP_HEADER + xmp_packet(lat, lon, accuracy_m)
-    segment = b"\xff\xe1" + struct.pack(">H", len(payload) + 2) + payload
-    at = exif_seg[2] if exif_seg else 2
-    return Tagged(data[:at] + segment, at, "xmp")
+    head, rest = _apply(data, edits)
+    return Tagged(head, rest, method)
 
 
-def _tag_png(path: Path, lat, lon, accuracy_m) -> Tagged | None:
+def _tag_png(path: Path, meta: Meta) -> Tagged | None:
     sig = b"\x89PNG\r\n\x1a\n"
 
     def chunks(data):
@@ -228,31 +288,46 @@ def _tag_png(path: Path, lat, lon, accuracy_m) -> Tagged | None:
             i = end
         return None
 
+    def chunk(ctype: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + ctype + body + struct.pack(">I", zlib.crc32(ctype + body) & 0xFFFFFFFF)
+
     data = _read_head(path, lambda d: chunks(d) is not None)
     found = chunks(data) if data else None
     if not found:
         return None
-    exif_chunk = next((c for c in found if c[0] == b"eXIf"), None)
-    tiff = data[exif_chunk[1] + 8 : exif_chunk[2] - 4] if exif_chunk else None
-    new_tiff = _exif_with_gps(tiff, lat, lon, accuracy_m)
-    if new_tiff is None:
-        return None
-    chunk = struct.pack(">I", len(new_tiff)) + b"eXIf" + new_tiff
-    chunk += struct.pack(">I", zlib.crc32(b"eXIf" + new_tiff) & 0xFFFFFFFF)
-    if exif_chunk:
-        return Tagged(data[: exif_chunk[1]] + chunk, exif_chunk[2], "exif")
     at = found[-1][2]  # after the last header chunk, before the image data
-    return Tagged(data[:at] + chunk, at, "exif")
+    edits, method = [], "xmp"
+    if meta.has_gps:
+        exif_chunk = next((c for c in found if c[0] == b"eXIf"), None)
+        tiff = data[exif_chunk[1] + 8 : exif_chunk[2] - 4] if exif_chunk else None
+        new_tiff = _exif_with_gps(tiff, meta.lat, meta.lon, meta.accuracy_m)
+        if new_tiff is None:
+            return None
+        new = chunk(b"eXIf", new_tiff)
+        edits.append((exif_chunk[1], exif_chunk[2], new) if exif_chunk else (at, at, new))
+        method = "exif"
+    if meta.has_text:
+        xmp_key = b"XML:com.adobe.xmp\x00"
+        if any(c[0] == b"iTXt" and data[c[1] + 8 : c[1] + 8 + len(xmp_key)] == xmp_key for c in found):
+            return None  # already has XMP: sidecar instead
+        packet = xmp_packet(description=meta.description, keywords=meta.keywords)
+        edits.append((at, at, chunk(b"iTXt", xmp_key + b"\x00\x00\x00\x00" + packet)))
+    if not edits:
+        return None
+    head, rest = _apply(data, edits)
+    return Tagged(head, rest, method)
 
 
-def tag(path: Path, lat: float, lon: float, accuracy_m: float | None) -> Tagged | None:
-    """How to write a tagged copy of ``path``, or None if it needs a sidecar."""
+def tag(path: Path, lat: float | None = None, lon: float | None = None, accuracy_m: float | None = None, *, meta: Meta | None = None) -> Tagged | None:
+    """How to write a tagged copy of ``path`` (a position, or ``meta`` with a caption
+    and keywords too), or None if it needs a sidecar."""
+    meta = meta or Meta(lat, lon, accuracy_m)
     suffix = path.suffix.lower()
     try:
         if suffix in (".jpg", ".jpeg"):
-            return _tag_jpeg(path, lat, lon, accuracy_m)
+            return _tag_jpeg(path, meta)
         if suffix == ".png":
-            return _tag_png(path, lat, lon, accuracy_m)
+            return _tag_png(path, meta)
     except (OSError, ValueError, struct.error, SyntaxError):
         return None
     return None

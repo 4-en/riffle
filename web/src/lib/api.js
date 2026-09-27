@@ -123,6 +123,23 @@ export const deleteCustomTag = (id) => send('DELETE', `/api/custom-tags/${id}`);
 export const previewCustomTag = (photoIds, strictness) =>
   send('POST', '/api/custom-tags/preview', { photo_ids: photoIds, strictness });
 
+/** Captions and fixed tags: {id: {caption, method, edited, tags}}. */
+export async function fetchCaptions(ids) {
+  const out = {};
+  for (let i = 0; i < ids.length; i += 200) Object.assign(out, (await get('/api/captions', { ids: ids.slice(i, i + 200).join(',') })).captions);
+  return out;
+}
+/** items: [{id, caption?, tags?}]; resolves to {previous: [...]} for undo. */
+export const saveCaptions = (items) => send('POST', '/api/captions', { items });
+/** op: add | remove | rename; resolves to {previous: [...]} for undo. */
+export const bulkTags = (ids, op, tag, to = null) => send('POST', '/api/captions/tags', { ids, op, tag, to });
+/** {methods: [{key, label, group, outputs, available, reason, download}], job}. */
+export const fetchCaptioning = () => get('/api/captioning');
+export const startCaptioning = (body) => send('POST', '/api/captioning', body);
+export const cancelCaptioning = () => send('POST', '/api/captioning/cancel');
+export const fetchTaglists = () => get('/api/taglists');
+export const downloadDanbooru = () => send('POST', '/api/taglists/danbooru');
+
 /** Profiles: switchable sets of flags, export history, and custom tags. */
 export const fetchProfiles = () => get('/api/profiles');
 export const createProfile = (name, copyFrom = null, parts = null) =>

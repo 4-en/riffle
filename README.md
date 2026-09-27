@@ -8,7 +8,8 @@ You search and browse by image content, cull by picking and rejecting photos, co
 
 - **Search** by text (`red lanterns at night`) or by example ("find similar"). Exclude terms with a minus (`street -people`), match either of several with `|` (`beach | lake`).
 - **Tags** for subject, scene, look, and kind of image (photograph, illustration, painting, document), from an editable vocabulary with alternative phrases per tag. Click a tag to include it, Alt+click (or hover and click **−**) to exclude it.
-- **Your tags**: select a few photos, right-click → **Create tag**, and photos like them get the tag. Works like the other tags in the sidebar and in every filter.
+- **Your tags**: select a few photos, right-click → **Learn a tag**, and photos like them get the tag. Works like the other tags in the sidebar and in every filter.
+- **Captions & tags**: a written caption and keywords per photo, typed or generated (from Riffle's own tags, or by JoyCaption, a local vision language model), edited one by one or in bulk, searchable, and exported as XMP (in the copies or as sidecars), `.txt` files, or `metadata.jsonl`.
 - **Filters** for flag, folder, date, camera, lens, focal length, aperture, ISO, resolution (megapixels), orientation, and location. Counts reflect the other active filters; filters that can't narrow the result are hidden.
 - **Grouping** by day, month, year, place, region, country, or folder, with a calendar or map overview; or by **Similar** content (clusters of alike photos, Broad · Medium · Fine), named after their tags, with a map of the library by similarity.
 - **Thumbnails** in three sizes (S · M · L next to Sort).
@@ -20,7 +21,7 @@ You search and browse by image content, cull by picking and rejecting photos, co
 - **Location from your phone**: a Google Timeline, Records.json, or GPX export places photos without GPS, and can add the position to exported copies.
 - Duplicate detection (perceptual hash), RAW matching by file name, EXIF metadata.
 
-Originals are read-only. Everything Riffle derives lives in a cache folder and can be deleted and rebuilt. The one thing you create by hand, your pick/reject flags, lives separately in `selections.sqlite3`; it survives re-indexing, deleting the cache, and moving files. Back it up.
+Originals are read-only. Everything Riffle derives lives in a cache folder and can be deleted and rebuilt. What you create by hand (pick/reject flags, your tags, captions and fixed tags) lives separately in `selections.sqlite3`; it survives re-indexing, deleting the cache, and moving files. Back it up.
 
 ## Install
 
@@ -42,7 +43,7 @@ Requires Python 3.12+ and Node.js 20.19+ or 22.12+. A GPU or Apple silicon helps
 
 ```sh
 python3.12 -m venv venv
-venv/bin/pip install -e ".[dev]"                  # HEIC support: ".[dev,heic]"
+venv/bin/pip install -e ".[dev]"                  # HEIC support: ".[dev,heic]"; generated captions: ".[dev,captions]"
 cd web && npm install && npm run build && cd ..   # builds the UI into src/riffle/web/
 ```
 
@@ -124,12 +125,28 @@ The draft is laid out as one block in capture order: rows of equal height that f
 
 ## Your tags
 
-Tags taught by example: select one or more photos, right-click → **Create tag from N photos…** (or **Tag…** in the selection bar), and name it. A photo gets the tag when it is close enough to any one of the examples, so varied examples (the same dog on a beach, in snow, indoors) each count. With a single example, the tag holds that photo's closest matches, like "find similar".
+Tags taught by example: select one or more photos, right-click → **Learn a tag from N photos…** (or **Learn tag…** in the selection bar), and name it. A photo gets the tag when it is close enough to any one of the examples, so varied examples (the same dog on a beach, in snow, indoors) each count. With a single example, the tag holds that photo's closest matches, like "find similar".
 
 - **Strict · Normal · Loose** sets how close is close enough. The dialog shows the photo count for each, and the photos at the edge of the tag.
 - **Your tags** in the sidebar work like the other tags: click to include, Alt+click or **−** to exclude, **✎** to rename, change strictness, remove examples, or delete.
 - To add examples, select photos, right-click, and pick the tag under **Add to a tag**.
 - Tags are stored with your flags in `selections.sqlite3`, by file content, so they survive re-indexing, moved files, and model changes.
+
+## Captions and tags
+
+Select photos and click **Caption…** in the selection bar (or right-click → **Caption N photos…**, or **Add…** in the photo view). Each photo gets a caption and a list of **fixed tags**: written on the photo, unlike the tags Riffle computes.
+
+- **Edit** a caption in place (saved when you click away); add tags with Enter or a comma, remove with **×**, drag to reorder. On wide screens the photos sit in several columns.
+- **Check** photos (the box on each, Shift+click for a range, or *all* / *this page* / *without caption or tags*) to work on just those; with nothing checked, everything on the left applies to all of them. The panel lists their tags: add a tag to them, replace one with another everywhere (onto an existing tag: merged), remove one, or clear all tags or captions. **Ctrl+Z** undoes.
+- **Generate**:
+  - **Riffle's tags**: the sidebar tags and your learned tags as keywords. Instant.
+  - **Scene phrases**: the subjects and settings of the Similar grouping's vocabulary that stand out for each photo. Instant; rougher.
+  - **JoyCaption**: a caption (short, medium, detailed, or your own prompt) and/or keywords from a vision language model that runs locally. Needs `pip install -e ".[captions]"` and an NVIDIA GPU; downloads 16 GB on first use; about 4 s per photo on an RTX 3090.
+  - **Existing**: keep what's there and add new tags; replace what was generated but keep what you typed; or replace everything. By default only photos still missing a caption or tags are done.
+- **Illustrations / booru tags** (collapsed): the WD tagger (Danbooru tags for illustrations and anime art, not reliable on photos; also on the CPU) and a Danbooru preset for JoyCaption. A **master tag list** keeps only tags on the list (the Danbooru list with aliases downloads on request; any `.csv` or `.txt` in `taglists/` next to `vocabulary.yaml` works too).
+- **Fixed tags** in the sidebar filter like the other tags. Search puts photos whose tag or caption contains the search words first, after file and folder name matches (the **Names** switch turns all of these off).
+- **Export** (off by default): the caption and tags into the copies' XMP (`dc:description`, `dc:subject`, which photo apps read; a sidecar where that is not possible), as `.xmp` sidecars, as a `.txt` with the image's name (tags, the caption, or both; optionally with spaces instead of `_`), or as one `metadata.jsonl` (Hugging Face imagefolder).
+- Stored in `selections.sqlite3` by file content, per profile.
 
 ## Profiles
 

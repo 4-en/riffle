@@ -29,6 +29,11 @@
   let structure = $state(setting('structure', 'flat'));
   let addLocation = $state(setting('addLocation', true));
   let onlyNew = $state(setting('onlyNew', false));
+  // Captions and fixed tags: off by default; the format is remembered.
+  let withCaptions = $state(setting('withCaptions', false));
+  let captionFormat = $state(setting('captionFormat', 'embed')); // embed | xmp | txt | jsonl
+  let captionText = $state(setting('captionText', 'tags')); // for txt: tags | caption | both
+  let underscores = $state(setting('underscores', false));
   // Picks in the chosen scope that were not exported before.
   let newCount = $state(null);
   const filtered = tagFilterActive() || activeFilterCount(view.filters) > 0;
@@ -52,7 +57,8 @@
 
   async function start() {
     error = '';
-    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, folder: dir.path })) saveSetting(`export.${k}`, v);
+    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, withCaptions, captionFormat, captionText, underscores, folder: dir.path }))
+      saveSetting(`export.${k}`, v);
     try {
       status = await startExport(view, {
         folder: dir.path,
@@ -63,6 +69,9 @@
         scope,
         add_location: hasHistory && addLocation,
         only_new: onlyNew,
+        captions: withCaptions ? captionFormat : null,
+        caption_text: captionText,
+        underscores,
         ...(draft ? { photo_ids: draft.ids } : {}),
       });
       while (status.running) {
@@ -158,6 +167,52 @@
         </fieldset>
       {/if}
 
+      <fieldset disabled={running}>
+        <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Captions & tags</legend>
+        <label class={radio}>
+          <input type="checkbox" bind:checked={withCaptions} class="mt-0.5" />
+          <span>
+            Include each photo's caption and fixed tags
+            <span class="block text-xs text-neutral-500">Photos without either get nothing extra.</span>
+          </span>
+        </label>
+        {#if withCaptions}
+          <div class="ml-6 grid gap-1 sm:grid-cols-2">
+            <label class={radio}>
+              <input type="radio" bind:group={captionFormat} value="embed" class="mt-0.5" />
+              <span>In the copies<span class="block text-xs text-neutral-500">XMP description and keywords in JPEG/PNG; a sidecar for others</span></span>
+            </label>
+            <label class={radio}>
+              <input type="radio" bind:group={captionFormat} value="xmp" class="mt-0.5" />
+              <span>.xmp sidecars<span class="block text-xs text-neutral-500">The copies stay identical to the originals</span></span>
+            </label>
+            <label class={radio}>
+              <input type="radio" bind:group={captionFormat} value="txt" class="mt-0.5" />
+              <span>.txt next to each image<span class="block text-xs text-neutral-500">Same name as the image, e.g. for training data</span></span>
+            </label>
+            <label class={radio}>
+              <input type="radio" bind:group={captionFormat} value="jsonl" class="mt-0.5" />
+              <span>metadata.jsonl<span class="block text-xs text-neutral-500">One file for the folder (Hugging Face imagefolder)</span></span>
+            </label>
+          </div>
+          {#if captionFormat === 'txt' || captionFormat === 'jsonl'}
+            <div class="ml-6 mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 px-2 text-xs text-neutral-300">
+              {#if captionFormat === 'txt'}
+                <label class="flex items-center gap-1.5">
+                  Text
+                  <select bind:value={captionText} class="rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5">
+                    <option value="tags">tags, comma-separated</option>
+                    <option value="caption">the caption</option>
+                    <option value="both">caption, then tags</option>
+                  </select>
+                </label>
+              {/if}
+              <label class="flex items-center gap-1.5"><input type="checkbox" bind:checked={underscores} /> Spaces instead of _ in tags</label>
+            </div>
+          {/if}
+        {/if}
+      </fieldset>
+
       <section>
         <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">Destination</h3>
         <FolderBrowser bind:dir start={setting('folder', null)} />
@@ -196,7 +251,9 @@
           <p>
             Exported {r.photos} photos: {r.copied} files copied{r.skipped ? `, ${r.skipped} already there` : ''}{r.without_raw
               ? `, ${r.without_raw} without RAW`
-              : ''}{r.geotagged ? `, location added to ${r.geotagged}${r.sidecars ? ` (${r.sidecars} as .xmp sidecars)` : ''}` : ''}.
+              : ''}{r.geotagged ? `, location added to ${r.geotagged}${r.sidecars ? ` (${r.sidecars} as .xmp sidecars)` : ''}` : ''}{r.captioned
+              ? `, captions and tags for ${r.captioned}${r.without_caption ? ` (${r.without_caption} had none)` : ''}`
+              : ''}.
           </p>
           <p class="mt-1 flex items-center gap-2 break-all font-mono text-[11px] text-emerald-300/80">
             {r.folder}

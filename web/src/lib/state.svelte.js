@@ -1,7 +1,8 @@
 // View state, mirrored into the URL query string so views can be bookmarked.
 
-// EXIF filters, keyed by their API query parameter. Arrays are OR-combined values.
-const FILTER_ARRAYS = ['camera', 'lens', 'orientation', 'flag', 'country', 'region', 'place', 'loc_source', 'folder'];
+// EXIF filters, keyed by their API query parameter. Arrays are OR-combined values,
+// except fixed tags (ftags: photos must have all; exclude_ftags: none of them).
+const FILTER_ARRAYS = ['camera', 'lens', 'orientation', 'flag', 'country', 'region', 'place', 'loc_source', 'folder', 'ftags', 'exclude_ftags'];
 const FILTER_SCALARS = ['date_from', 'date_to', 'focal_min', 'focal_max', 'aperture_min', 'aperture_max', 'iso_min', 'iso_max', 'mp_min', 'mp_max', 'gps', 'exported'];
 
 export function emptyFilters() {
@@ -54,6 +55,7 @@ export const view = $state({
   compare: null, // open compare view: {kind: 'stack', id} | {kind: 'ids', ids} | {kind: 'review'} (not in the URL)
   exporting: false, // export dialog open: true (picks) | {ids, fresh} (a Curate draft) (not in the URL)
   curate: false, // Curate view open (not in the URL)
+  captioning: null, // Captions & tags view: {ids} (not in the URL)
   help: false, // how-to guide open (not in the URL)
   photo: null, // open detail photo id
   raws: false, // unmatched RAWs list open
@@ -220,6 +222,20 @@ export function toggleCtag(id) {
 export function toggleExcludeCtag(id) {
   view.ctags = view.ctags.filter((t) => t !== id);
   view.excludeCtags = view.excludeCtags.includes(id) ? view.excludeCtags.filter((t) => t !== id) : [...view.excludeCtags, id];
+}
+
+/** Toggle including a fixed tag (replaces excluding it). */
+export function toggleFtag(tag) {
+  view.filters.exclude_ftags = view.filters.exclude_ftags.filter((t) => t !== tag);
+  const on = view.filters.ftags;
+  view.filters.ftags = on.includes(tag) ? on.filter((t) => t !== tag) : [...on, tag];
+}
+
+/** Toggle excluding a fixed tag (replaces including it). */
+export function toggleExcludeFtag(tag) {
+  view.filters.ftags = view.filters.ftags.filter((t) => t !== tag);
+  const off = view.filters.exclude_ftags;
+  view.filters.exclude_ftags = off.includes(tag) ? off.filter((t) => t !== tag) : [...off, tag];
 }
 
 /** What a Curate draft is remembered by: tags, custom tags, and filters. (Custom tags

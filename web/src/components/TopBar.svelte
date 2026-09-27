@@ -62,8 +62,8 @@
           : 'text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300'}"
         aria-pressed={prefs.nameMatch}
         title={prefs.nameMatch
-          ? 'File and folder names: on. Photos whose file name (then folder) contains all search words come first. Click to turn off.'
-          : 'File and folder names: off. Search looks at the pictures only. Click to also put name matches first.'}
+          ? 'Names and text: on. Photos whose file name, folder, fixed tag, or caption contains all search words come first (in that order). Click to turn off.'
+          : 'Names and text: off. Search looks at the pictures only. Click to also put name, tag, and caption matches first.'}
         onclick={() => setPref('nameMatch', !prefs.nameMatch)}>Names</button
       >
     </div>

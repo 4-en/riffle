@@ -9,11 +9,18 @@ With ``add_location``, photos without camera GPS that were placed from the
 location history get their position written into the *copies* (see geotag.py):
 into the metadata of JPEG and PNG copies, or as an XMP sidecar for RAW and
 other formats.
+
+With ``captions``, each photo's caption and fixed tags (selections.py) go along:
+``embed`` into the copies' XMP (a sidecar where that is not possible), ``xmp`` as
+sidecars, ``txt`` as a text file with the image's name, or ``jsonl`` as one
+``metadata.jsonl`` (the Hugging Face imagefolder format). Photos without either
+get nothing.
 """
 
 from __future__ import annotations
 
 import csv
+import json
 import os
 import shutil
 import sqlite3
@@ -21,17 +28,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Config
-from .geotag import Tagged, tag, xmp_packet
+from .geotag import Meta, Tagged, tag, xmp_packet
 from .locate import TIMELINE_SOURCES
 
 CONTENT = ("images", "images_raws", "raws")
 STRUCTURE = ("flat", "folders")
+CAPTIONS = ("embed", "xmp", "txt", "jsonl")
+CAPTION_TEXT = ("tags", "caption", "both")
 
 
 @dataclass
 class _File:
     photo_id: int
-    kind: str  # image | raw | sidecar
+    kind: str  # image | raw | sidecar (XMP) | caption (text file)
     src: Path  # for a sidecar: the name it takes (the paired file with .xmp)
     size: int
     rel_dir: Path  # its folder relative to the sources' parent, e.g. "Trip/RAW"
@@ -40,6 +49,7 @@ class _File:
     tagged: Tagged | None = None  # new metadata head for a geotagged copy
     content: bytes | None = None  # a sidecar's content
     location: str = ""  # exif | xmp | sidecar: how the position was added
+    caption: str = ""  # xmp | sidecar | txt: how the caption and tags were added
 
     @property
     def out_size(self) -> int:
@@ -119,15 +129,14 @@ def plan_files(
     return files, without_raw
 
 
-def add_locations(conn: sqlite3.Connection, files: list[_File]) -> None:
-    """Geotag copies of photos placed from the location history (not camera GPS):
-    JPEG/PNG copies get it in their metadata, other files an XMP sidecar."""
-    ids = sorted({f.photo_id for f in files})
+def timeline_locations(conn: sqlite3.Connection, ids: list[int]) -> dict[int, tuple]:
+    """{photo id: (lat, lon, accuracy)} for photos placed from the location history
+    (not camera GPS): the positions an export may add."""
     if not ids:
-        return
+        return {}
     marks = ",".join("?" * len(ids))
     where = ",".join("?" * len(TIMELINE_SOURCES))
-    locations = {
+    return {
         r[0]: (r[1], r[2], r[3])
         for r in conn.execute(
             f"""SELECT l.photo_id, l.lat, l.lon, l.accuracy_m FROM photo_locations l
@@ -136,23 +145,62 @@ def add_locations(conn: sqlite3.Connection, files: list[_File]) -> None:
             [*ids, *TIMELINE_SOURCES],
         )
     }
+
+
+def add_metadata(files: list[_File], locations: dict[int, tuple], texts: dict[int, tuple[str, list[str]]], embed_text: bool) -> None:
+    """Positions (``locations``) and captions/keywords (``texts``: {id: (caption,
+    keywords)}) for the copies: into JPEG/PNG copies where possible (captions only
+    with ``embed_text``), else one XMP sidecar per photo and name."""
     sidecars: list[_File] = []
     seen: set[tuple[int, Path, str]] = set()
-    for f in files:
+    for f in list(files):
         loc = locations.get(f.photo_id)
-        if loc is None:
+        caption, keywords = texts.get(f.photo_id, ("", []))
+        if loc is None and not (caption or keywords):
             continue
-        tagged = tag(f.src, *loc) if f.kind == "image" else None
+        embed = Meta(*(loc or (None, None, None)), *((caption, tuple(keywords)) if embed_text else ("", ())))
+        tagged = tag(f.src, meta=embed) if f.kind == "image" and (embed.has_gps or embed.has_text) else None
         if tagged is not None:
-            f.tagged, f.location = tagged, tagged.method
-            continue
+            f.tagged = tagged
+            f.location = tagged.method if loc else ""
+            f.caption = "xmp" if embed.has_text else ""
+            if embed_text or not (caption or keywords):
+                continue
+            loc = None  # the position is in the copy; the caption still needs a sidecar
         key = (f.photo_id, f.rel_dir, f.src.stem)
         if key in seen:
             continue
         seen.add(key)
-        content = xmp_packet(*loc)
-        sidecars.append(_File(f.photo_id, "sidecar", f.src.with_suffix(".xmp"), len(content), f.rel_dir, content=content, location="sidecar"))
+        content = xmp_packet(*(loc or (None, None, None)), description=caption, keywords=keywords)
+        side = _File(f.photo_id, "sidecar", f.src.with_suffix(".xmp"), len(content), f.rel_dir, content=content)
+        side.location = "sidecar" if loc else ""
+        side.caption = "sidecar" if (caption or keywords) else ""
+        sidecars.append(side)
     files.extend(sidecars)
+
+
+def caption_text(caption: str, tags: list[str], what: str, underscores: bool) -> str:
+    """The text of a caption file: tags (comma-separated), the caption, or both
+    (the caption, then the tags on the next line)."""
+    tags = [t.replace("_", " ") for t in tags] if underscores else tags
+    parts = {"tags": [", ".join(tags)], "caption": [caption], "both": [caption, ", ".join(tags)]}[what]
+    return "\n".join(p for p in parts if p)
+
+
+def add_caption_files(files: list[_File], texts: dict[int, tuple[str, list[str]]], what: str, underscores: bool) -> None:
+    """A text file per photo, named like its first file (the image, or the RAW)."""
+    first: dict[int, _File] = {}
+    for f in files:
+        if f.kind in ("image", "raw"):
+            first.setdefault(f.photo_id, f)
+    for pid, f in first.items():
+        caption, tags = texts.get(pid, ("", []))
+        text = caption_text(caption, tags, what, underscores)
+        if text:
+            content = (text + "\n").encode()
+            side = _File(pid, "caption", f.src.with_suffix(".txt"), len(content), f.rel_dir, content=content)
+            side.caption = "txt"
+            files.append(side)
 
 
 def assign_targets(files: list[_File], folder: Path, structure: str) -> None:
@@ -205,19 +253,35 @@ def run_export(
     structure: str = "flat",
     add_location: bool = False,
     selections_path: str | Path | None = None,
+    captions: str | None = None,
+    caption_text: str = "tags",
+    underscores: bool = False,
 ) -> dict:
     """Copy the files. Runs as a BackgroundJob; returns the summary. The export
     history goes to ``selections_path`` (the profile active when it started),
     else the config's."""
     from . import db
 
+    from . import selections
+
+    if captions is not None and captions not in CAPTIONS:
+        raise ExportError(f"captions must be one of {', '.join(CAPTIONS)}")
+    if caption_text not in CAPTION_TEXT:
+        raise ExportError(f"caption_text must be one of {', '.join(CAPTION_TEXT)}")
     dest = Path(folder)
     check_destination(cfg, dest)
+    sel = selections_path or cfg.selections_path
     conn = db.connect(cfg.db_path)
     try:
         files, without_raw = plan_files(conn, photo_ids, content, raw_fallback)
-        if add_location:
-            add_locations(conn, files)
+        texts: dict[int, tuple[str, list[str]]] = {}
+        if captions:
+            found = selections.captions_for(conn, sel, photo_ids)
+            texts = {pid: (c["caption"] or "", c["tags"]) for pid, c in found.items() if c["caption"] or c["tags"]}
+        locations = timeline_locations(conn, sorted({f.photo_id for f in files})) if add_location else {}
+        add_metadata(files, locations, texts if captions in ("embed", "xmp") else {}, embed_text=captions == "embed")
+        if captions == "txt":
+            add_caption_files(files, texts, caption_text, underscores)
     finally:
         conn.close()
 
@@ -254,22 +318,36 @@ def run_export(
             bar.update(1)
 
     # Remember which photos are now in an export folder (copied now or already there).
-    from . import selections
-
-    exported_ids = sorted({f.photo_id for f in files if f.status in ("copied", "skipped") and f.kind != "sidecar"})
+    exported_ids = sorted({f.photo_id for f in files if f.status in ("copied", "skipped") and f.kind in ("image", "raw")})
     conn = db.connect(cfg.db_path)
     try:
         marked = selections.mark_exported(conn, selections_path or cfg.selections_path, exported_ids, str(dest)) if exported_ids else 0
     finally:
         conn.close()
 
+    metadata = None
+    if captions == "jsonl" and texts:
+        # Hugging Face imagefolder: file_name relative to the folder, plus the text.
+        metadata = _unique(dest / "metadata.jsonl")
+        with open(metadata, "w", encoding="utf-8") as fh:
+            done: set[int] = set()
+            for f in files:
+                if f.kind not in ("image", "raw") or f.photo_id in done or f.photo_id not in texts:
+                    continue
+                done.add(f.photo_id)
+                caption, tags = texts[f.photo_id]
+                tags = [t.replace("_", " ") for t in tags] if underscores else tags
+                row = {"file_name": f.target.relative_to(dest).as_posix(), "text": caption or ", ".join(tags), "tags": tags}
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                f.caption = "jsonl"
+
     manifest = _unique(dest / "export-manifest.csv")
     with open(manifest, "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["photo_id", "kind", "source", "exported", "status", "location"])
+        w.writerow(["photo_id", "kind", "source", "exported", "status", "location", "caption"])
         for f in files:
-            src = "" if f.kind == "sidecar" else str(f.src)
-            w.writerow([f.photo_id, f.kind, src, str(f.target), f.status, f.location])
+            src = "" if f.kind in ("sidecar", "caption") else str(f.src)
+            w.writerow([f.photo_id, f.kind, src, str(f.target), f.status, f.location, f.caption])
 
     summary = {
         "marked": marked,
@@ -281,6 +359,9 @@ def run_export(
         "without_raw": without_raw if content != "images" else 0,
         "geotagged": len({f.photo_id for f in files if f.location}),
         "sidecars": sum(f.kind == "sidecar" for f in files),
+        "captioned": len({f.photo_id for f in files if f.caption}),
+        "without_caption": len(set(photo_ids) - set(texts)) if captions else 0,
+        "metadata": str(metadata) if metadata else None,
         "manifest": str(manifest),
     }
     report(
@@ -288,5 +369,6 @@ def run_export(
         f"{summary['skipped']} already there"
         + (f", {summary['without_raw']} without RAW" if summary["without_raw"] else "")
         + (f", location added to {summary['geotagged']}" if summary["geotagged"] else "")
+        + (f", captions and tags for {summary['captioned']}" if summary["captioned"] else "")
     )
     return summary

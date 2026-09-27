@@ -63,7 +63,7 @@
         </li>
         <li>
           <strong class="text-neutral-100">Find what you want.</strong> Search by what is in the picture ("boats at sunset"; a minus leaves something out: "street -people"; | finds either: "beach | lake"), click
-          tags and filters on the left (click a tag to include it, hover and click <kbd>−</kbd> to exclude it; select photos and right-click → <em>Create tag</em> to teach your own), or group by day or place (<em>Group</em>) and use the <em>Calendar</em> / <em>Map</em>
+          tags and filters on the left (click a tag to include it, hover and click <kbd>−</kbd> to exclude it; select photos and right-click → <em>Learn a tag</em> to teach your own), or group by day or place (<em>Group</em>) and use the <em>Calendar</em> / <em>Map</em>
           overview to jump around. <em>Find similar</em> in the photo view shows related shots.
         </li>
         <li>
@@ -80,15 +80,21 @@
           rejected), lock the ones to keep, or pick an alternative. <em>Mark as picks</em> or <em>Export</em> when it's right.
         </li>
         <li>
+          <strong class="text-neutral-100">Caption (optional).</strong> Select photos and click <em>Caption…</em>: write a caption and
+          tags for each, or generate them (from Riffle's own tags, or with JoyCaption if it is installed). Rename or remove a tag in all
+          of them at once. The tags appear under <em>Fixed tags</em> on the left, and search finds words in captions and tags.
+        </li>
+        <li>
           <strong class="text-neutral-100">Export.</strong> <em>Export</em> (top right) copies your picks into a new folder: images,
-          images with their RAWs, or only the RAWs. With a location history, the copies can get the position added. Nothing
+          images with their RAWs, or only the RAWs, optionally with their captions and tags (in the copies' XMP, as sidecars, or as
+          .txt files). With a location history, the copies can get the position added. Nothing
           already in the destination is overwritten. Exported photos are marked ↗, and <em>Only photos not exported before</em>
           exports just the new picks next time.
         </li>
       </ol>
 
       <div class="rounded border border-neutral-800 bg-neutral-950/50 p-3 text-xs text-neutral-400">
-        Your picks and rejects are saved in <span class="font-mono">selections.sqlite3</span> in your user data folder
+        Your picks and rejects, tags, and captions are saved in <span class="font-mono">selections.sqlite3</span> in your user data folder
         (<span class="font-mono">~/.local/share/riffle</span> on Linux): back it up. The derived data (thumbnails,
         embeddings, tags) is in your cache folder (<span class="font-mono">~/.cache/riffle</span>) and can be deleted;
         indexing rebuilds it. Settings: <span class="font-mono">~/.config/riffle</span>. The Library shows the exact

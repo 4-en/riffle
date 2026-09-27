@@ -301,8 +301,8 @@
             {/if}
             <div class="pointer-events-none absolute left-1 top-1 flex gap-1">
               {#if item.name_match}
-                <!-- the file (or its folder) name matches the search: why it comes first -->
-                <span class="rounded bg-sky-900/80 px-1 text-[10px] font-medium text-sky-100">{item.name_match === 'file' ? 'name' : 'folder'}</span>
+                <!-- its file name, folder, fixed tag, or caption matches the search: why it comes first -->
+                <span class="rounded bg-sky-900/80 px-1 text-[10px] font-medium text-sky-100">{item.name_match === 'file' ? 'name' : item.name_match}</span>
               {/if}
               {#if item.has_raw}
                 <span class="rounded bg-black/70 px-1 text-[10px] font-semibold tracking-wide text-amber-300">RAW</span>
