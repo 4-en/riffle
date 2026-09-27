@@ -183,3 +183,35 @@ def test_group_by_folder(indexed, conn, archive_dir, fake_clip):
         assert names == ["evening.jpg", *sorted(names[1:], key=str.lower, reverse=True)]
         only = c.get("/api/photos", params={"folder": day2, "dupes": "all"}).json()["items"]
         assert [i["rel_path"] for i in only] == ["trip/day 2/evening.jpg"]  # that folder only, not its parent
+
+
+def test_folder_filter_lists_parent_folders(indexed, archive_dir, fake_clip):
+    from PIL import Image
+
+    from conftest import fake_index
+
+    other = archive_dir / "more photos"
+    (other / "sub").mkdir(parents=True)
+    Image.new("RGB", (64, 48), "blue").save(other / "a.jpg")
+    Image.new("RGB", (48, 64), "red").save(other / "sub" / "b.jpg")
+    indexed.sources.append(other)  # added second, although it sorts first by path
+    fake_index(indexed)
+    first = str(indexed.sources[0])
+    with TestClient(create_app(indexed, text_encoder=fake_clip.encode_text)) as c:
+        facet = c.get("/api/facets", params={"dupes": "all"}).json()["folder"]
+        # Each photo's direct parent folder, by photo folder in the Library's order.
+        assert [(d["label"], d["count"]) for d in facet] == [
+            ("photos / trip", 4),
+            ("more photos", 1),
+            ("more photos / sub", 1),
+        ]
+        assert facet[0]["value"] == f"{first}/trip/"
+        top = facet[1]["value"]
+        only = c.get("/api/photos", params={"folder": top, "dupes": "all"}).json()
+        assert [i["rel_path"] for i in only["items"]] == ["a.jpg"]  # not its subfolder
+        both = c.get("/api/photos", params={"folder": [top, facet[2]["value"]], "dupes": "all"}).json()
+        assert both["total"] == 2
+        # Its own options stay selectable; the other filters narrow the counts.
+        narrowed = c.get("/api/facets", params={"folder": top, "orientation": "portrait", "dupes": "all"}).json()
+        assert [(d["label"], d["count"]) for d in narrowed["folder"]] == [("photos / trip", 1), ("more photos / sub", 1)]
+        assert c.get("/api/search/text", params={"q": "x", "folder": top, "dupes": "all"}).json()["total"] == 1

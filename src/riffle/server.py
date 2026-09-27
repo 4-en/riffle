@@ -698,8 +698,17 @@ def create_app(
     @app.get("/api/facets")
     def list_facets(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
         """EXIF filter options (date range, cameras, lenses, focal length, aperture,
-        ISO, orientation, GPS) within the other active filters."""
-        return facets(conn, flt, model_id)
+        ISO, orientation, GPS, folder) within the other active filters."""
+        out = facets(conn, flt, model_id)
+        # Folders labelled like the folder groups, by photo folder in the Library's order.
+        order = {f"{src}/": k for k, src in enumerate(cfg.sources)}
+
+        def rank(key: str) -> tuple:
+            source = max((s for s in order if key.startswith(s)), key=len, default=None)
+            return (order.get(source, len(order)), key)
+
+        out["folder"] = [f | {"label": folder_label(f["value"])} for f in sorted(out["folder"], key=lambda f: rank(f["value"]))]
+        return out
 
     # ---- culling: flags, selection, stacks ---------------------------------------
 

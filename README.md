@@ -18,7 +18,7 @@ A local tool for finding the best photos in a large archive and exporting them f
 - Duplicate grouping via perceptual hash
 - RAW files tracked by matching filenames (never read or modified)
 - EXIF: date, camera, lens, focal length, aperture, shutter speed, ISO, GPS
-- Filters for flag, date range, camera, lens, focal length, aperture, ISO, orientation, and location; like tags, options are counted within the other active filters, and filters that can't narrow the results are hidden
+- Filters for flag, folder, date range, camera, lens, focal length, aperture, ISO, orientation, and location; like tags, options are counted within the other active filters, and filters that can't narrow the results are hidden
 - Sort by date, place name, or file name (either direction), or by your taste; group by date, place, or parent folder (grouped by place, the place sorts order the places A–Z or Z–A; grouped by folder, the file-name sorts order the folders and their files); the sidebar sections collapse and remember how you left them
 - Timeline view: group the grid by day, month, or year (only groups with matching photos appear), jump between groups, and go from any photo to its day
 - **Overviews:** a calendar (for date groupings) and a map (for location groupings) of where your photos are; click a day, month, or place to open it in the grid

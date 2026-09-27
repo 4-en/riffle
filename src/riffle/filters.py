@@ -287,6 +287,15 @@ def facets(conn: sqlite3.Connection, flt: PhotoFilter, model_id: str) -> dict:
             )
         ]
 
+    # Each photo's direct parent folder (not its subfolders), in path order.
+    w, p = where("folder")
+    out["folder"] = [
+        {"value": value, "count": count}
+        for value, count in conn.execute(
+            f"SELECT {FOLDER_KEY} AS k, COUNT(*) FROM photos p WHERE {w} GROUP BY k ORDER BY k", p
+        )
+    ]
+
     for name, column in RANGE_COLUMNS.items():
         w, p = where(name)
         lo, hi, n = conn.execute(
