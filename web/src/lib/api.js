@@ -62,6 +62,17 @@ async function send(method, path, body = {}) {
 /** Just the groups (count, dates, cover; location: label and centre) for an overview. */
 export const fetchGroups = (view, group) => get('/api/groups', { ...filterParams(view), collapse: view.collapse, group });
 /** The Similar map: the view's photos on the library's 2D layout, with their clusters. */
+/** Discover: branches from a photo. opts: {trail, came_from, prefs, drift, scoped, rejects, seed}. */
+export const fetchDiscover = (view, id, { trail = [], came_from = null, prefs = {}, drift = {}, scoped = false, rejects = false, seed = null }) =>
+  get(`/api/discover/${id}`, {
+    ...(scoped ? { ...filterParams(view), scoped: 'true' } : {}),
+    trail: trail.join(','),
+    came_from,
+    prefs: JSON.stringify(prefs),
+    drift: JSON.stringify(drift),
+    rejects: rejects ? 'true' : undefined,
+    seed,
+  });
 export const fetchSimilarMap = (view) =>
   get('/api/similar/map', { ...filterParams(view), collapse: view.collapse, level: view.level });
 export const fetchIds = (view) => get('/api/ids', { ...filterParams(view), collapse: view.collapse });

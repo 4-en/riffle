@@ -620,6 +620,8 @@ Per photo: the reason (e.g. "your pick · best of 14 similar shots · very moody
 - Sweden trip with defaults: 30 candidates; 12 photos over all 3 days and 5 places (7 places at variety 0.8).
 - With rejects (474 candidates) and Moody +1: an alley, the underground, and a crow at a café table came in, and 10 picks were kept.
 
+**Surprise** (a slider, 0 = off): each candidate gets Gumbel noise on its score (so the picks are a sample favouring the best), scaled to the standard deviation of the candidates' quality (so full surprise means the same in any library), and none for the weakest third (surprise reshuffles the reasonable ones only). The noise is fixed per photo id and seed (a splitmix64 hash; drawing per position shifted it whenever a photo was removed, and a removal changed 5 of 6 photos): removing or locking still changes only its slot, and **Shuffle** draws a new seed, saved with the settings. On the first library (drafts of 12): half surprise keeps about 8 of 12, full about 6 (Sweden) to 8 (April), with 21–30 different photos over 6 draws; all picks stayed in (their bonus).
+
 ## 13. Standalone releases
 
 PyInstaller folder builds without a console window, zipped. A single-file build would unpack PyTorch on every start, so it was ruled out.
@@ -782,6 +784,50 @@ CLIP separates photos with and without text moderately (AUC 0.80) and illustrati
 
 **Long texts.** Two old maps (259 and 343 words) ran past 1024 new tokens, and the cut-off JSON was stored raw. The limit is now 2048, and a cut-off answer still yields the fields it got to (`captioning._json_object`).
 
+
+### 14.7 Experiment: Discover, a walk by aspects of similarity (27 Sep 2026, branch)
+
+A **Discover** button in the photo view opens a graph: the photo in the middle, branches to photos related in one way each, the way back on the left, the trail along the bottom (`discover.py`, `GET /api/discover/{id}`, `Discover.svelte`). Lenses:
+- **Echoes:** same subject elsewhere, same light and mood, colour echo, shape echo, shares a tag.
+- **Contrasts:** same subject in opposite light, complementary colours.
+- **Context:** the same day, and the closest photo as a baseline.
+
+Signals:
+- **What and how:** a phrase profile over the cluster-name vocabulary (z-scored per phrase, each photo's 12 strongest kept), split into things and settings.
+- **Colour and light:** `colors.py` (hue histogram, brightness, contrast, colourfulness).
+- **Layout:** a new fingerprint, a 12×12 z-scored luminance grid of the thumbnail (cached as `<model_id>.layout.npz`).
+- **Tags and time:** the user's own tags, and when photos were taken.
+
+A photo shows on one branch only; the trail and the centre's stack are excluded; jumps between photos and illustrations are penalised in the colour, light, and shape lenses. Short-term learning in the page: chosen lenses come first (and show a fourth photo after two picks); a drift (the decayed phrase change of each step) gives candidates moving the same way a bonus and is shown ("drifting towards night · blue").
+
+**On the first library** (contact sheets for 8 seeds): 2.8 s the first time (profiles and 2,300 layout fingerprints), then 30–50 ms per step.
+- **Good:** the colour echo (a blue-sky seagull → statues against the same blue; the orange figure → tan sandals, red sneakers), shape echoes (the palace across the water → flat horizons, a bird on a hill line), the same subject in opposite light (sheep → a sheep silhouetted at sunset), complementary colours (orange → blue harbours), the same day (a macro → the flowers minutes before and after).
+- **Weak, then changed:** the tag lens with the automatic vocabulary tags led nowhere ("outdoor", "livestock" on an illustration, "street vendors" on figurines): it now uses only the user's fixed and learned tags, preferring alike photos that are not near-copies. "The same place" matched everything placed at home by the location history: the lens is now the same day only. Colour echoes of greenery were random until the brightness had to match too.
+- **Still weak:** light-and-mood reasons use setting phrases that read oddly ("isometric perspective", "a photo with a date stamp").
+
+**Second round.** Round photos and a looser layout: each branch at a slightly irregular angle and distance (seeded by the centre, so it holds still), its other photos orbiting the first on the outer side. Branches now sample 3 photos from their best 12, weighted exp(−rank/3); a seed per step, kept in the trail, shows the same branches when going back, and **Shuffle** (R) draws again. Quality (the user: "half the images are missed shots or random stuff"): rejected photos are left out (a switch includes them); photos in the weakest 30% by Curate's quality mix (CLIP good/bad and sharp/blurry, exposure, taste) only show when picked; above that, a bonus of up to +0.15. On the first library 1,828 of 2,340 photos are rejected, so without rejects about 500 remain: the branches were visibly better (no misses left on the sheets), some thinner (one photo instead of three), and a few lenses had nothing left for some photos (every other palace shot was rejected).
+
+**Third round: axes, and distance by similarity.**
+- *Random masking of embedding dimensions* (the user's question): CLIP spreads concepts over all 768 dimensions, so a random half keeps 8.8 of 10 nearest neighbours (similarity correlation 0.97; a random tenth still keeps 6.9). It only adds noise, like the sampling already there. Not used.
+- *Principal axes* (16, named by the phrase whose z-scores correlate most with each end) were interpretable at the top (photo ↔ illustration, macro ↔ wide waterfront, palace interiors ↔ outdoor water, bee macros ↔ dusk silhouettes). But on a library of long photo series they mostly say "which series is this": names like "sheep → water caustics", "spaceship · person reading", and weak lenses. Replaced.
+- *Named axes* (`TEXT_AXES`, 14 pairs of opposite phrases: close-up ↔ wide view, night ↔ daylight, indoors ↔ outdoors, illustration ↔ photograph, people ↔ empty, city ↔ nature, calm ↔ busy, colourful ↔ muted, warm ↔ cool light, water ↔ dry land, motion ↔ stillness, historic ↔ modern, dramatic ↔ plain, sharp ↔ dreamy; a position is the similarity to one end minus the other, z-scored). Two lenses:
+  - **Shared traits:** 2 of the centre's distinctive axes (≥ 1 SD out), drawn with weight |position|; the same side and close on both, different overall.
+  - **Mirrored:** one strong axis flipped, the rest kept.
+  
+  Results: palace, "city → nature" → a forest path; "historic · wide view" → the old town and castles across the water; beetle, "muted → colourful" → bees on purple flowers, pansies; the night vending machine, "dramatic · night" → a dark night silhouette. Both get the photo/illustration penalty, except a mirror on the illustration axis.
+- *Graph:* a branch's distance from the centre follows its first photo's similarity (0.3 at the edge … 0.9 near), with a little jitter, never on top of the centre.
+- *The library's own axes, again (unnamed; the user: less synthetic than phrases).* PCA on one point per group of alike photos instead of every photo: the centres of the fine Similar clusters plus the unclustered photos, so a long series counts once. Measure: the largest share of one shooting day among the 30 photos at each end of axes 1–12, lower = more general. Every photo: 0.67 on average; one per stack: 0.59; cluster centres: 0.53; random directions: 0.40 (the library comes from few trips). Axes with a series at either end (share > 0.8; averaging the two ends let one-sided series axes through) are dropped: 8 of 12 remain. Two lenses on them, without names: **hidden traits** (alike on 2 of the centre's strong axes, different overall) and **mirrored, hidden trait** (one flipped, the rest kept). The mirror's closeness is relative to the typical distance: a fixed cut-off that suited the overlapping named axes let almost nothing through on independent ones.
+  - Results: plausible but loose jumps, hard to read without a reason. The beetle's hidden traits were sunny countryside (a village road, the car, a cat in grass); the sheep mirrored to a blue lake under clouds. Less synthetic than the named axes, as intended; also more random. Both kinds are kept for walking.
+- *At most 9 branches:* favoured lenses first, "closest" dropped first.
+
+Undecided whether it stays; judged by walking it.
+
+**The layout fingerprint in Curate (tried, not adopted).** A slider from contrasting to similar compositions (neutral in the middle), drafting 12 photos from two folders of the first library:
+- *Similar to the photos chosen so far* (mean layout correlation): Sweden became a visible series of horizontal water-and-sky views (mean pairwise correlation 0.00 → 0.28). But April mixes two composition families (centred close-ups, horizon views), and there it pulled in a near-copy and an unrelated dark field. Damping candidates redundant in content stopped the near-copies but left April unchanged.
+- *Similar to the first pick* (the anchor): hardly visible in either folder.
+- *Contrasting* (no composition twice: the highest correlation with any chosen photo): 3–4 of 12 photos swapped, a mild effect, since a varied draft rarely repeats a composition anyway.
+
+A 12×12 luminance grid is too crude to steer a selection across mixed material; it only works when one composition dominates. Not reliable enough to offer (the user's condition), so Curate is unchanged. Ordering a draft by flow (echoes between neighbours) was judged not worth it.
 
 ## 15. Candidates
 

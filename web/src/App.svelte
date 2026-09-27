@@ -21,6 +21,7 @@
   import Curate from './components/Curate.svelte';
   import TagDialog from './components/TagDialog.svelte';
   import CaptionView from './components/CaptionView.svelte';
+  import Discover from './components/Discover.svelte';
   // The map (d3 + country outlines) loads only when it is first shown.
   const loadMap = () => import('./components/MapView.svelte');
   const loadSimilarMap = () => import('./components/SimilarMap.svelte');
@@ -383,6 +384,7 @@
       else if (view.library) view.library = false;
       else if (view.raws) view.raws = false;
       else if (view.photo != null) view.photo = null;
+      else if (view.discover) view.discover = null;
       else if (view.captioning) typing ? e.target.blur() : (view.captioning = null);
       else if (view.curate) view.curate = false;
       else if (typing) e.target.blur();
@@ -391,6 +393,7 @@
     }
     if (typing || view.exporting || view.library || view.raws || view.help) return;
     if (view.captioning && view.photo == null) return; // the Captions & tags view has the keyboard
+    if (view.discover && view.photo == null) return; // so does Discover
     if (key === '?') {
       view.help = true;
       return;
@@ -514,6 +517,12 @@
     </div>
   </div>
 </div>
+
+{#if view.discover}
+  {#key view.discover.id}
+    <Discover />
+  {/key}
+{/if}
 
 {#if view.captioning}
   <CaptionView onchange={captionsChanged} />

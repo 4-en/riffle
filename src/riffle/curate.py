@@ -31,6 +31,7 @@ W_TASTE, W_CLIP, W_EXPOSURE = 0.45, 0.25, 0.10
 BONUS_PICK, BONUS_EXPORTED = 0.15, 0.05
 STYLE_STRENGTH = 0.6  # a style slider at full strength can outweigh the generic quality
 QUERY_STRENGTH = 1.0  # a search in Curate: its best matches clearly win, its worst rarely get in
+SURPRISE_SCALE = 1.0  # the surprise slider at 1: Gumbel noise of this many standard deviations of the candidates' quality
 TIME_SCALE = 3 * 3600  # seconds: photos within a few hours count as "close in time"
 PLACE_SCALE = 300.0  # metres
 CONTENT_FLOOR, CONTENT_DUP = 0.5, 0.95  # CLIP cosine: unrelated below, near-duplicate above
@@ -46,6 +47,8 @@ class Params:
     include_rejects: bool = False
     locked: list[int] = field(default_factory=list)
     removed: list[int] = field(default_factory=list)
+    surprise: float = 0.0  # 0 = the same draft every time; up to 1 = more chance for less obvious photos
+    seed: int = 0  # which random draw (a new seed: another draft)
 
 
 # Colour and light (colors.py): each choice leans the draft one way, like a style
@@ -268,6 +271,20 @@ def redundancy_to(pool: Pool, j: int, p: Params) -> np.ndarray:
     return total / weight
 
 
+def _gumbel(ids: np.ndarray, seed: int) -> np.ndarray:
+    """Gumbel noise fixed per photo id and seed (a splitmix64 hash), so it does not
+    shift when the candidates change (a photo removed, a filter changed)."""
+    with np.errstate(over="ignore"):
+        x = ids.astype(np.uint64) * np.uint64(0x9E3779B97F4A7C15) + np.uint64(seed & 0xFFFFFFFF) * np.uint64(0xBF58476D1CE4E5B9)
+        x ^= x >> np.uint64(30)
+        x *= np.uint64(0xBF58476D1CE4E5B9)
+        x ^= x >> np.uint64(27)
+        x *= np.uint64(0x94D049BB133111EB)
+        x ^= x >> np.uint64(31)
+    u = ((x >> np.uint64(11)).astype(np.float64) + 0.5) / float(1 << 53)  # uniform in (0, 1)
+    return -np.log(-np.log(u))
+
+
 def select(pool: Pool, p: Params) -> list[int]:
     """Indices into the pool, in selection order (locked first)."""
     n = max(1, min(p.n, len(pool.ids)))
@@ -280,12 +297,21 @@ def select(pool: Pool, p: Params) -> list[int]:
         available[j] = False
         np.maximum(max_red, redundancy_to(pool, j, p), out=max_red)
 
+    # Surprise: each candidate gets a fixed random bonus (Gumbel noise, so the picks are
+    # a sample favouring the best rather than always the best). Fixed per candidate and
+    # seed, not drawn per pick: removing or locking a photo still changes only its slot.
+    # Scaled to how much quality varies here, so full surprise means the same in any
+    # library; the weakest third gets none, so surprise only reshuffles the reasonable ones.
+    noise = 0.0
+    if p.surprise > 0 and len(pool.ids) > 1:
+        noise = _gumbel(pool.ids, p.seed) * SURPRISE_SCALE * p.surprise * float(np.std(pool.q))
+        noise = np.where(pool.q >= np.quantile(pool.q, 1 / 3), noise, 0.0)
     locked = set(p.locked)
     for j, member_ids in enumerate(pool.members):
         if locked & set(member_ids):
             take(j)
     while len(chosen) < n and available.any():
-        score = (1 - p.variety) * pool.q - p.variety * max_red
+        score = (1 - p.variety) * pool.q - p.variety * max_red + noise
         score[~available] = -np.inf
         take(int(np.argmax(score)))  # argmax takes the first of ties: deterministic
     return chosen

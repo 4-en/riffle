@@ -15,7 +15,8 @@
   let { onorder = () => {} } = $props();
 
   const NO_LOOK = { brightness: 0, contrast: 0, colorfulness: 0, hue: '' };
-  const DEFAULTS = { n: 12, variety: 0.4, time_spread: 0.5, place_spread: 0.5, include_rejects: false, look: NO_LOOK, query: '' };
+  // surprise: 0 = the same draft every time; seed: which random draw (Shuffle picks a new one).
+  const DEFAULTS = { n: 12, variety: 0.4, time_spread: 0.5, place_spread: 0.5, include_rejects: false, look: NO_LOOK, query: '', surprise: 0, seed: 0 };
   const SIZES = [6, 12, 24, 48];
   // Colour and light: three-way choices (lean one way, or not at all).
   const LOOK_CHOICES = [
@@ -236,6 +237,22 @@
         <span class="flex justify-between"><span>Best ↔ Most varied</span><span class="tabular-nums text-neutral-400">{pct(settings.variety)}</span></span>
         <input type="range" min="0" max="1" step="0.05" bind:value={settings.variety} class={range} />
       </label>
+      <div class={sliderRow}>
+        <label class="block" title="Left: the same draft every time. Right: less obvious photos get a chance (never the weakest third). Shuffle draws again.">
+          <span class="flex justify-between">
+            <span>Surprise</span>
+            <span class="tabular-nums text-neutral-400">{settings.surprise ? pct(settings.surprise) : 'off'}</span>
+          </span>
+          <input type="range" min="0" max="1" step="0.05" bind:value={settings.surprise} class={range} />
+        </label>
+        {#if settings.surprise > 0}
+          <button
+            class="mt-1 rounded border border-neutral-700 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-800"
+            title="Another random draw with the same settings (locked photos stay)"
+            onclick={() => (settings.seed = Math.floor(Math.random() * 2 ** 31))}>Shuffle</button
+          >
+        {/if}
+      </div>
       <label class={sliderRow} title="Prefer photos taken hours or days apart over several from the same moment.">
         <span class="flex justify-between"><span>Spread over time</span><span class="tabular-nums text-neutral-400">{pct(settings.time_spread)}</span></span>
         <input type="range" min="0" max="1" step="0.05" bind:value={settings.time_spread} class={range} />

@@ -127,6 +127,23 @@ def test_spread_over_places(cfg):
     assert viewpoint in lib.pick(quality, n=2, variety=0.7, time_spread=0, place_spread=1)
 
 
+def test_surprise_samples_but_stays_reasonable(cfg):
+    lib = Lib(cfg)
+    ids = [lib.add() for _ in range(30)]
+    quality = {pid: k / 30 for k, pid in enumerate(ids)}  # later ones are better
+    best = lib.pick(quality, n=6, **FLAT)
+    assert lib.pick(quality, n=6, surprise=0.0, seed=5, **FLAT) == best  # 0: no randomness, whatever the seed
+    drafts = [lib.pick(quality, n=6, surprise=1.0, seed=k, **FLAT) for k in range(10)]
+    assert len({tuple(sorted(d)) for d in drafts}) > 1  # seeds give different drafts
+    assert drafts[3] == lib.pick(quality, n=6, surprise=1.0, seed=3, **FLAT)  # the same seed: the same draft
+    worst = set(ids[:10])  # the weakest third never makes it, even at full surprise
+    assert not any(worst & set(d) for d in drafts)
+    # Removing a photo only changes its slot (the noise is fixed per photo, not per pick).
+    removed = drafts[0][0]
+    again = lib.pick(quality, n=6, surprise=1.0, seed=0, removed=[removed], **FLAT)
+    assert len(set(again) & set(drafts[0])) == 5
+
+
 def test_locked_and_removed_are_for_the_draft_only(cfg):
     lib = Lib(cfg)
     ids = [lib.add() for _ in range(8)]
