@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 import imagehash
 import numpy as np
@@ -27,27 +29,37 @@ def compute_phashes(conn: sqlite3.Connection, cfg: Config, progress=None) -> int
            AND (phash IS NULL OR sharpness IS NULL OR clip_highlights IS NULL OR brightness IS NULL)
            ORDER BY id"""
     ).fetchall()
-    it = progress(rows, desc="phash") if progress and rows else rows
-    n = 0
-    for r in it:
+    def measure(r):
+        """The missing measures of one preview (None if it has no preview)."""
         path = cfg.previews_dir / f"{r['id']}.jpg"
         if not path.exists():
-            continue
+            return r, None, None
         with Image.open(path) as im:
-            if r["basic"]:
-                h = str(imagehash.phash(im))
-                s = sharpness(im)
-                hi, lo = clipping(im)
+            basic = (str(imagehash.phash(im)), sharpness(im), *clipping(im)) if r["basic"] else None
+            color = color_stats(im) if r["color"] else None
+        return r, basic, color
+
+    # Threads: decoding and most of the measuring release the GIL (4 threads ran
+    # about 3x faster than one on the first library; more added little).
+    n = 0
+    with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 2)) as pool:
+        results = pool.map(measure, rows)
+        if progress and rows:
+            results = progress(results, total=len(rows), desc="phash")
+        for r, basic, color in results:
+            if basic is None and color is None:
+                continue
+            if basic:
                 conn.execute(
                     "UPDATE photos SET phash = ?, sharpness = ?, clip_highlights = ?, clip_shadows = ? WHERE id = ?",
-                    (h, s, hi, lo, r["id"]),
+                    (*basic, r["id"]),
                 )
-            if r["color"]:
+            if color:
                 conn.execute(
                     "UPDATE photos SET brightness = ?, contrast = ?, colorfulness = ?, hues = ? WHERE id = ?",
-                    (*color_stats(im), r["id"]),
+                    (*color, r["id"]),
                 )
-        n += 1
+            n += 1
     conn.commit()
     return n
 

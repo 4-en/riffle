@@ -303,7 +303,7 @@ Known limitations:
 
 ### 7.6 Duplicates and per-preview measures
 
-One pass over each preview (`dupes.compute_phashes`) computes whatever is missing. Adding a measure doesn't redo the others.
+One pass over each preview (`dupes.compute_phashes`) computes whatever is missing. Adding a measure doesn't redo the others. It runs in a thread pool (up to 8 threads; decoding and most of the measuring release the GIL): 18.7 s for all 2,132 photos of the first library, 8.8 ms per photo. It used to take about 190 s, 69 % of it in clipping (below).
 
 - **pHash**: all pairs are compared by Hamming distance (NumPy, in chunks), and pairs within `phash_max_distance` are merged into groups (union–find). The grid shows one tile per group. pHash misses reframed bursts; stacks catch them.
 - **Sharpness** (`quality.py`): Laplacian variance per 50 px tile of an 800 px greyscale copy; the score is the mean of the sharpest 5 % of tiles.
@@ -314,13 +314,12 @@ One pass over each preview (`dupes.compute_phashes`) computes whatever is missin
   - Counting any channel at 255 flagged saturated yellow flowers as a third blown; the all-channel rule scores them 0 % and still catches a blown window (16 %) or white sky (17 %).
   - Flagged in the photo and compare views above 2 % blown (8 % of the first library) or 5 % crushed (3 %; black backgrounds are often intentional).
   - It was a sidebar filter briefly; the API still accepts `exposure=`.
+  - Computed with PIL (`ImageChops.darker` / `lighter` over the channels, then a histogram): identical results to NumPy's `min` / `max` over the channel axis, which took 60 ms per preview; now 3.5 ms.
 - **Colour and light** (`colors.py`, on a 128 px copy), for Curate (§12):
   - brightness: mean luminance;
   - contrast: RMS;
   - colourfulness: Hasler & Süsstrunk;
   - hues: a 24-bin histogram weighted by chroma, so greys don't count. 12 bins mixed red, orange, and yellow, and put sky blue under teal; 24 separated them.
-
-  1,926 photos take 32 s.
 
 **Suggested keeper** (`quality.keeper_scores`, `GET /api/suggest`), among the photos being compared:
 
@@ -617,6 +616,47 @@ A short qualitative note:
 - Timing: full index and search latency.
 - Is a multilingual CLIP model worth adding for Chinese queries and signage?
 
+### 14.1 Experiment: penultimate-layer features for similarity (27 Sep 2026)
+
+Question: would image features from deeper inside CLIP serve "find similar" and your tags (§10) better than the final, text-aligned embedding? Compared on the first library (2,132 photos, ViT-L-14 DFN-2B, previews), each variant also mean-centred:
+
+- **final**: the current embedding (projected into the joint image–text space);
+- **pre-proj**: the pooled image features before that projection;
+- **pen CLS**: the class token after the second-to-last transformer block;
+- **pen mean**: the mean of that block's patch tokens.
+
+**Near-duplicates.** Photos within 5 s (or 30 s) of each other count as the same subject. Scored by R-precision: the share of each photo's nearest neighbours, as many as it has burst partners, that are those partners.
+
+| | 5 s | 30 s |
+|---|---|---|
+| final | 0.758 | 0.680 |
+| pre-proj | 0.759 | 0.683 |
+| pen CLS (centred) | 0.740 (0.747) | 0.672 |
+| pen mean | 0.753 | 0.676 |
+
+**Concepts.** Four concepts labelled by eye: sheep, gulls, the Vaxholm fortress, candles; about 20–50 matching photos each. Only the union of every variant's top 40 was labelled; everything else counts as non-matching. Scored by average precision:
+
+| | Your tags (3 examples) | Find similar (1 example) |
+|---|---|---|
+| final | 0.966 | 0.940 |
+| final, centred | 0.979 | 0.946 |
+| pre-proj, centred | 0.979 | 0.947 |
+| pen CLS | 0.976 | 0.937 |
+| pen CLS, centred | 0.985 | 0.947 |
+| pen mean | 0.935 | 0.870 |
+
+**Result.** No clear win for the penultimate layer:
+
+- Its best form (class token, centred) leads on tags by 0.006. Most of that comes from one concept, which is within the noise of four fairly easy concepts.
+- It is slightly worse on near-duplicates.
+- Averaging patch tokens is clearly worse.
+
+Most of the small gain comes from mean-centring (subtracting the library's average embedding), which costs nothing on the current embedding. But it shifts all similarities, so the tag and stack thresholds would need retuning.
+
+Not adopted: it would mean re-embedding every photo and keeping a second matrix, since text search still needs the final one.
+
+**Open:** more nuanced concepts could favour deeper features, which this benchmark could not test: one particular person, pet, or character among others of its kind. That needs a labelled set with such identities. See §15.
+
 ## 15. Candidates
 
 Roughly in order of value:
@@ -629,9 +669,53 @@ Roughly in order of value:
 6. Curate styles and colour measures as grid sorts or filters.
 7. "More like my picks" search (the taste model's weight vector as a query).
 8. ONNX Runtime inference: smaller releases, and GPU support via DirectML (Windows) and CoreML (macOS).
-9. An embedding map (UMAP) for exploration.
-10. Captions and OCR through a local vision-language model.
-11. Flags as XMP sidecars in the export folder, for Lightroom and darktable.
+9. Deeper image features (the penultimate CLIP layer, mean-centred) for find similar and your tags. They weren't better on everyday concepts (§14.1), but could be for individuals or characters, where the text-aligned embedding may blur one member of a kind into the others. Test first on a labelled set of such identities, then weigh it against the cost of a second embedding.
+10. People and pets: detect and group individuals (faces with a dedicated recognition model; pets via animal detection and crop embeddings). See §15.1.
+11. Mean-centring the current embedding for find similar and your tags: a small, free gain in §14.1, with the thresholds retuned.
+12. An embedding map (UMAP) for exploration.
+13. Captions and OCR through a local vision-language model.
+14. Flags as XMP sidecars in the export folder, for Lightroom and darktable.
+
+### 15.1 People and pets (design notes, not started)
+
+Grouping photos by individual (a person, a pet) is beyond CLIP. It is trained to match whole images to captions, so it encodes "a man with glasses on a street", not which man: two people in similar settings come out closer than one person in two settings. Identity needs models trained for it, applied to crops.
+
+**People: face detection and face recognition** (the approach of Immich, digiKam, and PhotoPrism).
+
+1. Detect faces in each preview (boxes and landmarks); skip tiny or blurred ones.
+2. Embed each face with a recognition model, which maps the same person to nearby vectors across age, lighting, and angle.
+3. Cluster the face vectors into likely individuals.
+4. The user names clusters, merges them, and marks "not this person". New photos are assigned to named people, and uncertain matches are offered for confirmation.
+
+Model licences matter, because the release builds ship the models:
+
+| Option | Notes |
+|---|---|
+| InsightFace (e.g. `buffalo_l`, used by Immich) | Best accuracy; weights are non-commercial / research only, so not for the releases |
+| OpenCV YuNet (detector) + SFace (recogniser) | Good accuracy, small ONNX models, fast on CPU; Apache 2.0. The preferred start, run through ONNX Runtime or OpenCV DNN |
+| dlib / `face_recognition` | Permissive but older; weaker on non-frontal faces; heavy dependency |
+
+**Pets: experimental.** There is no animal counterpart to face recognition. The practical route:
+
+1. Detect animals with a general object detector (COCO classes: cats, dogs, horses…). Use a permissively licensed one, such as torchvision's detectors or the DETR family; Ultralytics YOLO is AGPL.
+2. Embed each crop with a self-supervised model such as DINOv2 (Apache 2.0), which keeps fine detail like fur pattern and markings better than CLIP. This is the "individuals" case of §14.1.
+3. Teach an individual by example through the your-tags mechanism (§10), using crop embeddings, instead of clustering automatically.
+
+Distinctive animals should work; look-alikes (two black labradors) will be confused.
+
+**Fitting it in:**
+
+- **Index:** an optional step (people first, pets later). Face and animal boxes and vectors are derived data.
+- **User data:** names, merges, and confirmations go in `selections.sqlite3`, keyed by photo content hash and box, so they survive re-indexing.
+- **UI:**
+  - a People section in the sidebar that filters like tags, with AND for "photos with both";
+  - a page of unnamed clusters to name, merge, or split;
+  - face chips in the photo view;
+  - optionally, a Curate term that spreads a draft over people.
+- **Privacy:** face vectors are biometric data. Everything stays local, the step is opt-in in the Library, and a "forget all face data" action deletes the vectors and names.
+- **Cost:** roughly 10–30 ms per photo on a CPU for detection and embedding (a couple of minutes per 2,000 photos), far less on a GPU. Adds ONNX Runtime (or OpenCV), which §4 currently avoids.
+
+**First step when picked up:** a feasibility check on the first library. How many usable faces are there (size, angle), and do the clusters make sense? That shows whether trip photos contain enough repeat individuals to be worth it.
 
 Location-history questions still open: how accurate is the history on photos that also have GPS (the first library has none), and how to handle several phones, or a missing phone for part of a trip.
 
