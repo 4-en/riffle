@@ -21,6 +21,7 @@
   import TagDialog from './components/TagDialog.svelte';
   // The map (d3 + country outlines) loads only when it is first shown.
   const loadMap = () => import('./components/MapView.svelte');
+  const loadSimilarMap = () => import('./components/SimilarMap.svelte');
 
   const PAGE = 120;
 
@@ -498,6 +499,12 @@
               </button>
             {/if}
           </div>
+        {:else if view.overview && view.group === 'similar'}
+          {#await loadSimilarMap()}
+            <p class="p-4 text-sm text-neutral-500">Loading map…</p>
+          {:then { default: SimilarMap }}
+            <SimilarMap onopen={openGroup} />
+          {/await}
         {:else if view.overview && isLocationGroup(view.group)}
           {#await loadMap()}
             <p class="p-4 text-sm text-neutral-500">Loading map…</p>

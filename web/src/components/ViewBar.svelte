@@ -1,7 +1,7 @@
 <script>
   // The toolbar above the grid: how the photos are shown (count, grouping and its
   // overview, sort order, stacks). The top bar keeps search and the workflow actions.
-  import { view, hasOverview, isLocationGroup, sortFits, groupLabel, LEVELS } from '../lib/state.svelte.js';
+  import { view, hasOverview, overviewName, sortFits, groupLabel, LEVELS } from '../lib/state.svelte.js';
 
   // taste: the taste model's status (enables the "likely keepers / rejects" sorts).
   // groups: the grouped grid's groups (null when not grouped); onjump(key): scroll to one.
@@ -74,8 +74,8 @@
           class="{segment} border-l border-neutral-700 {view.overview ? on : off}"
           aria-pressed={view.overview}
           disabled={searching}
-          title="{isLocationGroup(view.group) ? 'Map' : 'Calendar'} of the groups (O)"
-          onclick={() => (view.overview = true)}>{isLocationGroup(view.group) ? 'Map' : 'Calendar'}</button
+          title="{overviewName(view.group)} of the groups (O)"
+          onclick={() => (view.overview = true)}>{overviewName(view.group)}</button
         >
       </div>
     {/if}

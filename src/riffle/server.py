@@ -668,6 +668,67 @@ def create_app(
 
     # ---- "Similar" grouping (clusters.py) ----------------------------------------------
 
+    map_state: dict = {"lock": threading.Lock(), "stamp": None, "xy": {}}
+
+    def map_layout(index: Index) -> dict[int, tuple[float, float]]:
+        """The whole library's 2D layout {photo id: (x, y)}: cached next to the
+        embeddings (derived data) and recomputed when they change."""
+        from . import clusters
+
+        with map_state["lock"]:
+            if map_state["stamp"] == index.stamp:
+                return map_state["xy"]
+            path = cfg.embeddings_dir / f"{model_id}.map.npz"
+            stamp = np.array(index.stamp or (0, 0), dtype=np.int64)
+            xy = None
+            try:
+                with np.load(path) as f:
+                    if np.array_equal(f["stamp"], stamp):
+                        xy = dict(zip(f["ids"].tolist(), map(tuple, f["xy"].tolist())))
+            except (OSError, KeyError, ValueError):
+                pass
+            if xy is None:
+                Y = clusters.layout(index.E)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_suffix(".tmp.npz")
+                np.savez(tmp, ids=index.ids, xy=Y, stamp=stamp)
+                os.replace(tmp, path)
+                xy = dict(zip(index.ids.tolist(), map(tuple, Y.tolist())))
+            map_state["stamp"], map_state["xy"] = index.stamp, xy
+            return xy
+
+    @app.get("/api/similar/map")
+    def similar_map(
+        flt: PhotoFilter = Depends(resolved_filter),
+        dupes: str = "collapse",
+        collapse: str | None = None,
+        level: str = "medium",
+        conn=Depends(get_conn),
+        index: Index = Depends(get_index),
+    ):
+        """The photos of the current listing on the library's 2D map, with their
+        Similar cluster, and each cluster's name, size, and centre."""
+        cte, shown, _, params = listing(flt, collapse_mode(collapse, dupes), "taken_at", "similar")
+        cte, params, names = similar_clusters(conn, cte, shown, params, index, level)
+        xy = map_layout(index)
+        points, members = [], {}
+        for pid, key in conn.execute(f"{cte} SELECT p.id, {SIMILAR_KEY} {shown}", params):
+            if pid in xy:
+                x, y = xy[pid]
+                points.append([pid, round(x, 5), round(y, 5), key])
+                members.setdefault(key, []).append((x, y))
+        groups = [
+            {
+                "key": k,
+                "label": names.get(k, "Similar photos"),
+                "count": len(pts),
+                "x": float(np.median([p[0] for p in pts])),
+                "y": float(np.median([p[1] for p in pts])),
+            }
+            for k, pts in sorted((kv for kv in members.items() if kv[0]), key=lambda kv: kv[0])
+        ]
+        return {"points": points, "groups": groups, "other": len(members.get(None, []))}
+
     cluster_cache: OrderedDict = OrderedDict()  # (listing, level, embeddings) -> (mapping json, names)
     tag_vector_cache: dict = {}
 

@@ -96,3 +96,55 @@ def test_similar_grouping_api(indexed, conn, monkeypatch):
         assert [g["label"] for g in one["groups"]] == ["Other"]
         assert c.get("/api/photos", params={"group": "similar", "level": "extreme"}).status_code == 400
         assert c.get("/api/photos", params={"group": "similar", "level": "fine", "dupes": "all"}).status_code == 200
+
+
+def test_layout(data):
+    Y = clusters.layout(data)
+    assert Y.shape == (len(data), 2) and Y.min() >= 0 and Y.max() <= 1.0 + 1e-9
+    assert np.allclose(Y, clusters.layout(data))  # deterministic
+    # alike photos land close together: a blob's spread is small next to the map
+    blob_spread = np.linalg.norm(Y[23:] - Y[23:].mean(axis=0), axis=1).mean()
+    assert blob_spread < 0.25
+    assert clusters.layout(data[:1]).shape == (1, 2) and clusters.layout(data[:0]).shape == (0, 2)
+
+
+def test_similar_map_api(indexed, conn, monkeypatch):
+    monkeypatch.setattr(clusters, "MIN_SIZE", 2)
+    vectors = {
+        "IMG_0001.jpg": at(0, 0.05),
+        "IMG_0003.png": at(0, 0.10),
+        "IMG_0002.jpg": at(4, 0.05),
+        "IMG_0002_edit.png": at(4, 0.10),
+    }
+    E, ids = load_embeddings(indexed)
+    by_id = {photo(conn, n)["id"]: v for n, v in vectors.items()}
+    save_embeddings(indexed, np.stack([by_id[int(i)] for i in ids]), ids)
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:
+        m = c.get("/api/similar/map", params={"dupes": "all"}).json()
+        assert len(m["points"]) == 4 and all(0 <= x <= 1 and 0 <= y <= 1 for _, x, y, _ in m["points"])
+        assert sorted(g["count"] for g in m["groups"]) == [2, 2] and all(g["label"] for g in m["groups"])
+        assert (indexed.embeddings_dir / f"{indexed.model.model_id}.map.npz").exists()  # cached
+        where = {pid: (x, y) for pid, x, y, _ in m["points"]}
+        narrowed = c.get("/api/similar/map", params={"dupes": "all", "orientation": "portrait"}).json()
+        assert 0 < len(narrowed["points"]) < 4
+        assert all(where[pid] == (x, y) for pid, x, y, _ in narrowed["points"])  # places stay put under filters
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:  # restart: from the cache
+        again = c.get("/api/similar/map", params={"dupes": "all"}).json()
+        assert {pid: (x, y) for pid, x, y, _ in again["points"]} == where
+
+
+def test_similar_map_with_clusters_and_other(indexed, conn, monkeypatch):
+    monkeypatch.setattr(clusters, "MIN_SIZE", 3)
+    vectors = {  # three alike photos and one apart: a cluster and Other in one view
+        "IMG_0001.jpg": at(0, 0.05),
+        "IMG_0003.png": at(0, 0.10),
+        "IMG_0002_edit.png": at(0, 0.07),
+        "IMG_0002.jpg": at(4, 0.05),
+    }
+    E, ids = load_embeddings(indexed)
+    by_id = {photo(conn, n)["id"]: v for n, v in vectors.items()}
+    save_embeddings(indexed, np.stack([by_id[int(i)] for i in ids]), ids)
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:
+        res = c.get("/api/similar/map", params={"dupes": "all"})
+        assert res.status_code == 200, res.text
+        assert res.json()["other"] == 1 and [g["count"] for g in res.json()["groups"]] == [3]

@@ -61,6 +61,9 @@ async function send(method, path, body = {}) {
 
 /** Just the groups (count, dates, cover; location: label and centre) for an overview. */
 export const fetchGroups = (view, group) => get('/api/groups', { ...filterParams(view), collapse: view.collapse, group });
+/** The Similar map: the view's photos on the library's 2D layout, with their clusters. */
+export const fetchSimilarMap = (view) =>
+  get('/api/similar/map', { ...filterParams(view), collapse: view.collapse, level: view.level });
 export const fetchIds = (view) => get('/api/ids', { ...filterParams(view), collapse: view.collapse });
 export const fetchStacks = (view, unreviewed = true) => get('/api/stacks', { ...filterParams(view), unreviewed });
 export const fetchStack = (id) => get(`/api/stacks/${id}`);

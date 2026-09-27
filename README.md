@@ -10,7 +10,7 @@ You search and browse by image content, cull by picking and rejecting photos, co
 - **Tags** for subject, scene, look, and kind of image (photograph, illustration, painting, document), from an editable vocabulary with alternative phrases per tag. Click a tag to include it, Alt+click (or hover and click **−**) to exclude it.
 - **Your tags**: select a few photos, right-click → **Create tag**, and photos like them get the tag. Works like the other tags in the sidebar and in every filter.
 - **Filters** for flag, folder, date, camera, lens, focal length, aperture, ISO, orientation, and location. Counts reflect the other active filters; filters that can't narrow the result are hidden.
-- **Grouping** by day, month, year, place, region, country, or folder, with a calendar or map overview; or by **Similar** content (clusters of alike photos, Broad · Medium · Fine), named after their tags.
+- **Grouping** by day, month, year, place, region, country, or folder, with a calendar or map overview; or by **Similar** content (clusters of alike photos, Broad · Medium · Fine), named after their tags, with a map of the library by similarity.
 - **Culling**: pick or reject one photo at a time in the loupe or many at once in the grid, with undo.
 - **Stacks**: bursts and near-identical shots are grouped automatically and compared side by side, with sharpness, clipping warnings, and a suggested keeper.
 - **Taste model**: once you have flagged enough, Riffle can sort by what you tend to keep. It only orders photos; it never flags them.
@@ -201,7 +201,9 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 
 ## Similar grouping
 
-**Group → Similar** clusters the photos in the current view by content: a trip gets its own themes (waterfront, streets, palaces, birds…), the whole library broader ones. **Broad · Medium · Fine** sets how finely. Clusters are named after the nearest tags (or the kind of image, e.g. illustrations), largest first; photos that fit no group of five or more are under **Other**. Clusters follow what the model sees, content and scene, not events: for those, group by day or place.
+**Group → Similar** clusters the photos in the current view by content: a trip gets its own themes (waterfront, streets, palaces, birds…), the whole library broader ones. **Broad · Medium · Fine** sets how finely. Clusters are named after the nearest tags (or the kind of image, e.g. illustrations), largest first; photos that fit no group of five or more are under **Other**.
+
+**Grid | Map** switches to a map of the photos by similarity: alike photos sit close together, coloured by cluster, with the cluster names over their regions. Zoom in and the dots become thumbnails; click a photo to open it, a name to open that group in the grid. The layout is computed once for the whole library (a few seconds; cached until the next index), so photos keep their places when you filter. Clusters follow what the model sees, content and scene, not events: for those, group by day or place.
 
 ## Keyboard
 

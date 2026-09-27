@@ -117,7 +117,9 @@ export const GROUPS = [...DATE_GROUPS, ...LOCATION_GROUPS, 'folder', 'similar'];
 /** How finely the "Similar" grouping clusters. */
 export const LEVELS = ['broad', 'medium', 'fine'];
 /** Groupings with an overview: a calendar for dates, a map for locations (none for folders). */
-export const hasOverview = (mode) => DATE_GROUPS.includes(mode) || LOCATION_GROUPS.includes(mode);
+export const hasOverview = (mode) => DATE_GROUPS.includes(mode) || LOCATION_GROUPS.includes(mode) || mode === 'similar';
+/** The overview's name: a calendar for dates, a map for places and for Similar. */
+export const overviewName = (mode) => (DATE_GROUPS.includes(mode) ? 'Calendar' : 'Map');
 export const isLocationGroup = (mode) => LOCATION_GROUPS.includes(mode);
 
 /** The key the API uses to group a photo (detail object) by date or location. */
