@@ -20,6 +20,7 @@
   import Help from './components/Help.svelte';
   import Curate from './components/Curate.svelte';
   import TagDialog from './components/TagDialog.svelte';
+  import CaptionView from './components/CaptionView.svelte';
   // The map (d3 + country outlines) loads only when it is first shown.
   const loadMap = () => import('./components/MapView.svelte');
   const loadSimilarMap = () => import('./components/SimilarMap.svelte');
@@ -187,6 +188,17 @@
   $effect(() => {
     if (view.curate && view.similar) view.curate = false;
   });
+
+  /** Captions or fixed tags changed: refresh the sidebar's Fixed tags, and the grid
+   * when fixed tags filter it or a search may match them. */
+  let captionTimer;
+  function captionsChanged() {
+    clearTimeout(captionTimer);
+    captionTimer = setTimeout(() => {
+      loadSidebar();
+      if (view.filters.ftags.length || view.filters.exclude_ftags.length || (view.q && prefs.nameMatch)) reset();
+    }, 400);
+  }
 
   /** A custom tag was created, edited, or deleted: refresh the sidebar, and the grid
    * if the tag is filtering it (a deleted one leaves the filters). */
@@ -371,12 +383,14 @@
       else if (view.library) view.library = false;
       else if (view.raws) view.raws = false;
       else if (view.photo != null) view.photo = null;
+      else if (view.captioning) typing ? e.target.blur() : (view.captioning = null);
       else if (view.curate) view.curate = false;
       else if (typing) e.target.blur();
       else clearSelection();
       return;
     }
     if (typing || view.exporting || view.library || view.raws || view.help) return;
+    if (view.captioning && view.photo == null) return; // the Captions & tags view has the keyboard
     if (key === '?') {
       view.help = true;
       return;
@@ -500,6 +514,10 @@
     </div>
   </div>
 </div>
+
+{#if view.captioning}
+  <CaptionView onchange={captionsChanged} />
+{/if}
 
 {#if view.curate}
   <!-- A new filter set (e.g. a tag clicked in the photo view) starts its own draft. -->

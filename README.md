@@ -8,7 +8,8 @@ You search and browse by image content, cull by picking and rejecting photos, co
 
 - **Search** by text (`red lanterns at night`) or by example ("find similar"). Exclude terms with a minus (`street -people`), match either of several with `|` (`beach | lake`).
 - **Tags** for subject, scene, look, and kind of image (photograph, illustration, painting, document), from an editable vocabulary with alternative phrases per tag. Click a tag to include it, Alt+click (or hover and click **−**) to exclude it.
-- **Your tags**: select a few photos, right-click → **Create tag**, and photos like them get the tag. Works like the other tags in the sidebar and in every filter.
+- **Your tags**: select a few photos, right-click → **Learn a tag**, and photos like them get the tag. Works like the other tags in the sidebar and in every filter.
+- **Captions & tags**: a written caption and keywords per photo, typed or generated (from Riffle's own tags, or by JoyCaption, a local vision language model), edited one by one or in bulk, searchable, and exported as XMP (in the copies or as sidecars), `.txt` files, or `metadata.jsonl`. **Text in the photo** (signs, menus, documents; any script, e.g. Chinese) is read with an English translation, and searchable in both.
 - **Filters** for flag, folder, date, camera, lens, focal length, aperture, ISO, resolution (megapixels), orientation, and location. Counts reflect the other active filters; filters that can't narrow the result are hidden.
 - **Grouping** by day, month, year, place, region, country, or folder, with a calendar or map overview; or by **Similar** content (clusters of alike photos, Broad · Medium · Fine), named after their tags, with a map of the library by similarity.
 - **Thumbnails** in three sizes (S · M · L next to Sort).
@@ -16,11 +17,11 @@ You search and browse by image content, cull by picking and rejecting photos, co
 - **Stacks**: bursts and near-identical shots are grouped automatically and compared side by side, with sharpness, clipping warnings, and a suggested keeper.
 - **Taste model**: once you have flagged enough, Riffle can sort by what you tend to keep. It only orders photos; it never flags them.
 - **Curate**: drafts a small, varied selection (photo book, exhibition) from the current filters, steered by size, variety, time and place spread, search, colour, and style.
-- **Export** of picks as images, images + RAWs, or RAWs only. Copies only; originals are never touched.
+- **Export** of picks, or of any selection, as images, images + RAWs, or RAWs only. Copies only; originals are never touched.
 - **Location from your phone**: a Google Timeline, Records.json, or GPX export places photos without GPS, and can add the position to exported copies.
 - Duplicate detection (perceptual hash), RAW matching by file name, EXIF metadata.
 
-Originals are read-only. Everything Riffle derives lives in a cache folder and can be deleted and rebuilt. The one thing you create by hand, your pick/reject flags, lives separately in `selections.sqlite3`; it survives re-indexing, deleting the cache, and moving files. Back it up.
+Originals are read-only. Everything Riffle derives lives in a cache folder and can be deleted and rebuilt. What you create by hand (pick/reject flags, your tags, captions and fixed tags) lives separately in `selections.sqlite3`; it survives re-indexing, deleting the cache, and moving files. Back it up.
 
 ## Install
 
@@ -42,7 +43,7 @@ Requires Python 3.12+ and Node.js 20.19+ or 22.12+. A GPU or Apple silicon helps
 
 ```sh
 python3.12 -m venv venv
-venv/bin/pip install -e ".[dev]"                  # HEIC support: ".[dev,heic]"
+venv/bin/pip install -e ".[dev]"                  # HEIC support: ".[dev,heic]"; generated captions: ".[dev,captions]"
 cd web && npm install && npm run build && cd ..   # builds the UI into src/riffle/web/
 ```
 
@@ -74,7 +75,7 @@ A typical pass:
    - ▲/▼ warn about blown highlights and crushed shadows.
    - **★ suggested** marks the likely keeper, based on sharpness, clipping, and a CLIP quality score; hover it for the reasons. `A` keeps it, and `Z` zooms all photos to the same spot to check focus.
 3. Go through the rest in the grid or the loupe with `P` (pick), `X` (reject), `U` (unflag). The loupe advances automatically.
-4. Check the selection with **Flag → Picked**, then **Export**. Choose the destination, the files (images, images + RAWs, RAWs only), and the layout (flat or keeping the source folders).
+4. Check the selection with **Flag → Picked**, then **Export**. Choose the destination, the files (images, images + RAWs, RAWs only), and the layout (flat or keeping the source folders). To export some photos without flagging them, select them and click **Export…** in the selection bar (or right-click → **Export N photos…**).
 
 Undo any flag change with Ctrl+Z. **Unflag all** in the compare view resets a stack; **Library → Flags** unflags everything or the current filters.
 
@@ -124,12 +125,31 @@ The draft is laid out as one block in capture order: rows of equal height that f
 
 ## Your tags
 
-Tags taught by example: select one or more photos, right-click → **Create tag from N photos…** (or **Tag…** in the selection bar), and name it. A photo gets the tag when it is close enough to any one of the examples, so varied examples (the same dog on a beach, in snow, indoors) each count. With a single example, the tag holds that photo's closest matches, like "find similar".
+Tags taught by example: select one or more photos, right-click → **Learn a tag from N photos…** (or **Learn tag…** in the selection bar), and name it. A photo gets the tag when it is close enough to any one of the examples, so varied examples (the same dog on a beach, in snow, indoors) each count. With a single example, the tag holds that photo's closest matches, like "find similar".
 
 - **Strict · Normal · Loose** sets how close is close enough. The dialog shows the photo count for each, and the photos at the edge of the tag.
 - **Your tags** in the sidebar work like the other tags: click to include, Alt+click or **−** to exclude, **✎** to rename, change strictness, remove examples, or delete.
 - To add examples, select photos, right-click, and pick the tag under **Add to a tag**.
 - Tags are stored with your flags in `selections.sqlite3`, by file content, so they survive re-indexing, moved files, and model changes.
+
+## Captions and tags
+
+Select photos and click **Caption…** in the selection bar (or right-click → **Caption N photos…**, or **Add…** in the photo view). Each photo gets a caption and a list of **fixed tags**: written on the photo, unlike the tags Riffle computes.
+
+- **Edit** a caption in place (saved when you click away); add tags with Enter or a comma, remove with **×**, drag to reorder. On wide screens the photos sit in several columns.
+- **New tags** go after the existing ones or before them (e.g. a trigger word first), both when generating and when adding a tag to all.
+- **Check** photos (the box on each, Shift+click for a range, or *all* / *this page* / *without caption or tags*) to work on just those; with nothing checked, everything on the left applies to all of them. The panel lists their tags: add a tag to them, replace one with another everywhere (onto an existing tag: merged), remove one, or clear all tags or captions. **Ctrl+Z** undoes.
+- **Generate**:
+  - **Riffle's tags**: the sidebar tags and your learned tags as keywords. Instant.
+  - **Scene phrases**: the subjects and settings of the Similar grouping's vocabulary that stand out for each photo. Instant; rougher.
+  - **JoyCaption**: a caption (short, medium, detailed, or your own prompt) and/or keywords from a vision language model that runs locally. Needs `pip install -e ".[captions]"` and an NVIDIA GPU; downloads 16 GB on first use; about 4 s per photo on an RTX 3090.
+  - **Read text**: the text in the photo, as written and in its own script (Chinese, Japanese, …), with an English translation, in its own two fields on each photo. Qwen3-VL-8B, same requirements as JoyCaption (17 GB download); about 2 s per photo with text, 1.3 s without. After editing the text, **Translate the current text again** updates the translation. **Skip photos that probably have no text** first leaves out photos that CLIP says have none: about 20% faster, but it misses some small text (1 in 20 signs in testing, and many signatures on illustrations), so it's off by default; skipped photos are marked and can be read later.
+  - **Caption, keywords and text**: all three in one pass of Qwen3-VL, about 4 s per photo, roughly 20% faster than running them separately. For text alone, **Read text** is much quicker on photos without any.
+  - **Existing**: keep what's there and add new tags; replace what was generated but keep what you typed; or replace everything. By default only photos still missing a caption or tags are done.
+- **Illustrations / booru tags** (collapsed): the WD tagger (Danbooru tags for illustrations and anime art, not reliable on photos; also on the CPU) and a Danbooru preset for JoyCaption. Tags are stored with spaces (`long hair`), as most training tools expect today; **Keep underscores** keeps the Danbooru spelling (`long_hair`). Emoticons like `^_^` keep theirs either way. **Limit** stops adding tags once a photo's tags reach 75 CLIP tokens (what Stable Diffusion's text encoder takes; or another number, or a tag count); the most certain tags come first, and tags already there stay. Each photo shows its token count. A **master tag list** keeps only tags on the list (the Danbooru list with aliases downloads on request; any `.csv` or `.txt` in `taglists/` next to `vocabulary.yaml` works too).
+- **Fixed tags** in the sidebar filter like the other tags. Search puts photos whose tag, caption, or read text (or its translation) contains the search words first, after file and folder name matches (the **Names** switch turns all of these off). Chinese or Japanese words match anywhere in the text: `北京` finds `欢迎来到北京`.
+- **Export** (off by default): the caption and tags into the copies' XMP (`dc:description`, `dc:subject`, which photo apps read; a sidecar where that is not possible), as `.xmp` sidecars, as a `.txt` with the image's name (tags, the caption, or both; optionally with spaces instead of `_`), or as one `metadata.jsonl` (Hugging Face imagefolder, with the read text as `ocr_text` and `ocr_translation`). **Text in the photo and its translation** adds the read text to the others as well: after the caption in the XMP description, or on their own lines in the `.txt`.
+- Stored in `selections.sqlite3` by file content, per profile.
 
 ## Profiles
 
@@ -202,7 +222,7 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 
 ## Similar grouping
 
-**Group → Similar** clusters the photos in the current view by content: a trip gets its own themes (waterfront, streets, palaces, birds…), the whole library broader ones. **Broad · Medium · Fine** sets how finely. No group takes more than a share of the view (a quarter at Broad, an eighth at Medium, a sixteenth at Fine); larger ones are split further, so filtering to illustrations groups them by subject rather than keeping them together. Clusters are named after one of your own tags when most of their photos have it; otherwise from a separate list of about 500 everyday concepts (`cluster_names.yaml`, not tags), by the phrase that sets each cluster apart from the rest of the view ("sheep", "old town streets", "birds in flight · a blue sky"), or by the kind of image when the view mixes kinds, with what sets each apart from the others of that kind ("Illustrations: swimmers", "Illustrations: figurines"); largest first; photos that fit no group of five or more are under **Other**.
+**Group → Similar** clusters the photos in the current view by content: a trip gets its own themes (waterfront, streets, palaces, birds…), the whole library broader ones. **Broad · Medium · Fine** sets how finely. No group takes more than a share of the view (a fifth at Broad, a tenth at Medium, a twentieth at Fine); larger ones are split further, so filtering to illustrations groups them by subject rather than keeping them together. Clusters are named after one of your own (learned) tags when most of their photos have it; then after fixed tags that most of a cluster has and the rest of the view mostly doesn't, a character first ("Illustrations: nia (xenoblade) · chest jewel"; tags about the file, like `artist name`, and booru staples like `1girl` are skipped); otherwise from a separate list of about 500 everyday concepts (`cluster_names.yaml`, not tags), by the phrase that sets each cluster apart from the rest of the view ("sheep", "old town streets", "birds in flight · a blue sky"), or by the kind of image when the view mixes kinds, with what sets each apart from the others of that kind ("Illustrations: swimmers", "Illustrations: figurines"); largest first; photos that fit no group of four or more are under **Other**.
 
 **Grid | Map** switches to a map of the photos by similarity: alike photos sit close together, coloured by cluster, with the cluster names over their regions. Zoom in and the dots become thumbnails; click a photo to open it, a name to open that group in the grid. The layout is computed once for the whole library (a few seconds; cached until the next index), so photos keep their places when you filter.
 

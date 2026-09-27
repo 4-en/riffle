@@ -1,5 +1,5 @@
 <script>
-  import { view, findSimilar, DATE_GROUPS, LOCATION_GROUPS } from '../lib/state.svelte.js';
+  import { view, findSimilar, toggleFtag, DATE_GROUPS, LOCATION_GROUPS } from '../lib/state.svelte.js';
   import { fetchPhoto } from '../lib/api.js';
   import { copyText } from '../lib/clipboard.js';
   import { culling, flagOf, saveSetting } from '../lib/culling.svelte.js';
@@ -222,6 +222,51 @@
             <dd class="break-all font-mono text-[11px] text-neutral-300">{raw.path}</dd>
           {/each}
         </dl>
+
+        <section>
+          <div class="mb-1 flex items-baseline justify-between">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-neutral-500">Caption & tags</h3>
+            <button
+              class="text-xs text-sky-400 hover:underline"
+              title="Write or generate a caption and tags"
+              onclick={() => {
+                view.captioning = { ids: [photo.id] };
+                view.photo = null;
+              }}>{photo.caption || photo.fixed_tags?.length ? 'Edit…' : 'Add…'}</button
+            >
+          </div>
+          {#if photo.caption}
+            <p class="whitespace-pre-line text-xs leading-relaxed text-neutral-200">{photo.caption.text}</p>
+          {/if}
+          {#if photo.fixed_tags?.length}
+            <div class="mt-1.5 flex flex-wrap gap-1">
+              {#each photo.fixed_tags as tag (tag)}
+                <button
+                  class="rounded-full border border-neutral-600 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
+                  title="Show the photos with this tag"
+                  onclick={() => {
+                    if (!view.filters.ftags.includes(tag)) toggleFtag(tag);
+                    view.photo = null;
+                  }}>{tag}</button
+                >
+              {/each}
+            </div>
+          {:else if !photo.caption}
+            <p class="text-xs text-neutral-600">None yet.</p>
+          {/if}
+        </section>
+
+        {#if photo.text}
+          <section>
+            <h3 class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+              Text in the photo{photo.text.language ? ` · ${photo.text.language}` : ''}
+            </h3>
+            <p class="whitespace-pre-line text-xs leading-relaxed text-neutral-200">{photo.text.text}</p>
+            {#if photo.text.translation}
+              <p class="mt-1 whitespace-pre-line text-xs leading-relaxed text-neutral-400">{photo.text.translation}</p>
+            {/if}
+          </section>
+        {/if}
 
         {#if photo.custom_tags?.length}
           <section>

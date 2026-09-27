@@ -106,6 +106,8 @@ class PhotoFilter:
     ctag_members: list[list[int]] = field(default_factory=list)  # one list per tag in ctags
     ctag_excluded: list[int] = field(default_factory=list)  # union over exclude_ctags
     exposure: list[str] = field(default_factory=list)  # EXPOSURE keys, OR-combined
+    ftags: list[str] = field(default_factory=list)  # fixed tags (selections DB): must have all
+    exclude_ftags: list[str] = field(default_factory=list)  # ...and none of these
 
     def where(self, model_id: str, exclude: frozenset[str] = frozenset()) -> tuple[str, list]:
         """SQL condition over ``photos p`` (only status 'ok'). Facets named in
@@ -138,6 +140,15 @@ class PhotoFilter:
             if self.ctag_excluded:
                 clauses.append("p.id NOT IN (SELECT value FROM json_each(?))")
                 params.append(json.dumps(self.ctag_excluded))
+
+        if "tags" not in exclude:
+            for t in self.ftags:
+                clauses.append("p.sha256 IN (SELECT ft.sha256 FROM sel.fixed_tags ft WHERE ft.tag = ?)")
+                params.append(t)
+            if self.exclude_ftags:
+                marks = ",".join("?" * len(self.exclude_ftags))
+                clauses.append(f"p.sha256 NOT IN (SELECT ft.sha256 FROM sel.fixed_tags ft WHERE ft.tag IN ({marks}))")
+                params += self.exclude_ftags
 
         if "date" not in exclude:
             if self.date_from:
@@ -237,6 +248,8 @@ def photo_filter(
     folder: list[str] = Query([]),
     ctags: str | None = None,
     exclude_ctags: str | None = None,
+    ftags: list[str] = Query([]),
+    exclude_ftags: list[str] = Query([]),
 ) -> PhotoFilter:
     """FastAPI dependency: the filter from query parameters."""
     try:
@@ -288,6 +301,8 @@ def photo_filter(
         folder=list(dict.fromkeys(folder)),
         ctags=ctag_ids,
         exclude_ctags=excluded_ctag_ids,
+        ftags=list(dict.fromkeys(t for t in ftags if t)),
+        exclude_ftags=[t for t in dict.fromkeys(exclude_ftags) if t and t not in ftags],
     )
 
 

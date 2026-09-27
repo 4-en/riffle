@@ -114,8 +114,14 @@
   {/if}
   <button class={item} role="menuitem" disabled={!photo} onclick={() => run(() => copyText(photo.path))}>Copy path</button>
   <div class="my-1 border-t border-neutral-700"></div>
+  <button class={item} role="menuitem" onclick={() => run(() => (view.exporting = { ids: targets, fresh: null, kind: 'selection' }))}>
+    Export {n > 1 ? `${n} photos` : 'this photo'}…
+  </button>
+  <button class={item} role="menuitem" onclick={() => run(() => (view.captioning = { ids: targets }))}>
+    Caption {n > 1 ? `${n} photos` : 'this photo'}…
+  </button>
   <button class={item} role="menuitem" onclick={() => run(() => (view.tagDialog = { mode: 'create', photoIds: targets }))}>
-    Create tag from {n > 1 ? `${n} photos` : 'this photo'}…
+    Learn a tag from {n > 1 ? `${n} photos` : 'this photo'}…
   </button>
   {#if customTags.length}
     <p class="px-3 pb-1 pt-0.5 text-[11px] text-neutral-500">Add {n > 1 ? `${n} photos` : 'it'} to a tag as an example</p>

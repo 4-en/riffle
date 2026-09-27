@@ -134,7 +134,9 @@ look:
 # What kind of image it is: a camera photo, or not (to filter illustrations and
 # scans in or out). Scored with the bare phrase; see family_templates below.
 kind:
-  - a photograph: [a camera photo, a snapshot]
+  # Photos of figurines, statues, and screens look like what they show (an anime
+  # figure scores as "an anime illustration"); these phrases keep them photographs.
+  - a photograph: [a camera photo, a snapshot, a photo of a figurine, a photo of an anime figure, a photo of a statue, a photo of a toy, a photo of a screen]
   - an illustration or drawing: [a drawing, digital art, an anime illustration, a cartoon, a sketch]
   - a painting: [an oil painting, a watercolour painting]
   - a document: [a page of text, a scanned document, a receipt]

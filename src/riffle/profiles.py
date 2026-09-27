@@ -23,6 +23,7 @@ PARTS = {
     "flags": ["flags"],
     "exported": ["exported"],
     "tags": ["custom_tags", "custom_tag_examples"],
+    "captions": ["captions", "fixed_tags", "photo_text"],
 }
 
 

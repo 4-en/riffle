@@ -7,7 +7,8 @@
 
   // picksTotal: all picks; picksFiltered: picks within the current filters.
   // hasHistory: a location history is configured (enables adding GPS to the copies).
-  // draft: {ids, fresh} exports exactly these photos (a Curate draft; fresh = not exported before).
+  // draft: {ids, fresh, kind} exports exactly these photos: a Curate draft, or the grid's
+  // selection (kind 'selection'); fresh = how many were not exported before (null: unknown).
   // ondone(): an export finished (refresh the grid's "exported" badges).
   let { picksTotal = 0, picksFiltered = 0, hasHistory = false, draft = null, ondone = () => {} } = $props();
 
@@ -23,12 +24,20 @@
   const today = new Date().toISOString().slice(0, 10);
   let dir = $state(null);
   // The dialog is opened for one purpose; draft does not change while it is open.
-  let name = $state(`${untrack(() => draft) ? 'Curated' : 'Selection'} ${today}`);
+  const kind = untrack(() => (draft ? (draft.kind ?? 'curate') : 'picks'));
+  let name = $state(`${kind === 'curate' ? 'Curated' : 'Selection'} ${today}`);
+  const title = { curate: 'Export the draft', selection: 'Export the selection', picks: 'Export picks' }[kind];
   let content = $state(setting('content', 'images'));
   let rawFallback = $state(setting('rawFallback', true));
   let structure = $state(setting('structure', 'flat'));
   let addLocation = $state(setting('addLocation', true));
   let onlyNew = $state(setting('onlyNew', false));
+  // Captions and fixed tags: off by default; the format is remembered.
+  let withCaptions = $state(setting('withCaptions', false));
+  let captionFormat = $state(setting('captionFormat', 'embed')); // embed | xmp | txt | jsonl
+  let captionText = $state(setting('captionText', 'tags')); // for txt: tags | caption | both
+  let underscores = $state(setting('underscores', false));
+  let withText = $state(setting('withText', false)); // for txt: the text read from the photo too
   // Picks in the chosen scope that were not exported before.
   let newCount = $state(null);
   const filtered = tagFilterActive() || activeFilterCount(view.filters) > 0;
@@ -52,7 +61,8 @@
 
   async function start() {
     error = '';
-    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, folder: dir.path })) saveSetting(`export.${k}`, v);
+    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, withCaptions, captionFormat, captionText, underscores, withText, folder: dir.path }))
+      saveSetting(`export.${k}`, v);
     try {
       status = await startExport(view, {
         folder: dir.path,
@@ -63,6 +73,10 @@
         scope,
         add_location: hasHistory && addLocation,
         only_new: onlyNew,
+        captions: withCaptions ? captionFormat : null,
+        caption_text: captionText,
+        underscores,
+        with_text: withText,
         ...(draft ? { photo_ids: draft.ids } : {}),
       });
       while (status.running) {
@@ -89,11 +103,11 @@
   const radio = 'flex cursor-pointer items-start gap-2 rounded px-2 py-1 hover:bg-neutral-800';
 </script>
 
-<div class="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-6" role="dialog" aria-modal="true" aria-label={draft ? 'Export the draft' : 'Export picks'}>
+<div class="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-6" role="dialog" aria-modal="true" aria-label={title}>
   <button class="absolute inset-0 cursor-default" aria-label="Close" onclick={close}></button>
   <div class="relative flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 text-sm">
     <div class="flex items-center justify-between border-b border-neutral-800 px-4 py-2">
-      <h2 class="font-semibold">{draft ? 'Export the draft' : 'Export picks'}</h2>
+      <h2 class="font-semibold">{title}</h2>
       <button class="text-neutral-400 hover:text-white disabled:opacity-30" aria-label="Close" disabled={running} onclick={close}>✕</button>
     </div>
 
@@ -103,7 +117,9 @@
       </p>
 
       {#if draft}
-        <p class="text-neutral-300">The {draft.ids.length} photos of the Curate draft, whether they are picked or not.</p>
+        <p class="text-neutral-300">
+          The {draft.ids.length} {kind === 'curate' ? 'photos of the Curate draft' : `selected photo${draft.ids.length === 1 ? '' : 's'}`}, whether they are picked or not.
+        </p>
       {:else}
         <fieldset class="grid gap-1 sm:grid-cols-2" disabled={running}>
           <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Which photos</legend>
@@ -158,6 +174,62 @@
         </fieldset>
       {/if}
 
+      <fieldset disabled={running}>
+        <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Captions & tags</legend>
+        <label class={radio}>
+          <input type="checkbox" bind:checked={withCaptions} class="mt-0.5" />
+          <span>
+            Include each photo's caption and fixed tags
+            <span class="block text-xs text-neutral-500">Photos without any get nothing extra.</span>
+          </span>
+        </label>
+        {#if withCaptions}
+          <div class="ml-6 grid gap-1 sm:grid-cols-2">
+            <label class={radio}>
+              <input type="radio" bind:group={captionFormat} value="embed" class="mt-0.5" />
+              <span>In the copies<span class="block text-xs text-neutral-500">XMP description and keywords in JPEG/PNG; a sidecar for others</span></span>
+            </label>
+            <label class={radio}>
+              <input type="radio" bind:group={captionFormat} value="xmp" class="mt-0.5" />
+              <span>.xmp sidecars<span class="block text-xs text-neutral-500">The copies stay identical to the originals</span></span>
+            </label>
+            <label class={radio}>
+              <input type="radio" bind:group={captionFormat} value="txt" class="mt-0.5" />
+              <span>.txt next to each image<span class="block text-xs text-neutral-500">Same name as the image, e.g. for training data</span></span>
+            </label>
+            <label class={radio}>
+              <input type="radio" bind:group={captionFormat} value="jsonl" class="mt-0.5" />
+              <span>metadata.jsonl<span class="block text-xs text-neutral-500">One file for the folder (Hugging Face imagefolder)</span></span>
+            </label>
+          </div>
+          <div class="ml-6 mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 px-2 text-xs text-neutral-300">
+            {#if captionFormat === 'jsonl'}
+              <span class="text-neutral-500">Includes the text in the photo and its translation.</span>
+            {:else}
+              <label class="flex items-center gap-1.5" title={captionFormat === 'txt' ? 'On their own lines after the caption and tags' : 'After the caption in the description, which photo apps show'}>
+                <input type="checkbox" bind:checked={withText} /> Text in the photo and its translation
+              </label>
+            {/if}
+          </div>
+          {#if captionFormat === 'txt' || captionFormat === 'jsonl'}
+            <div class="ml-6 mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 px-2 text-xs text-neutral-300">
+              {#if captionFormat === 'txt'}
+                <label class="flex items-center gap-1.5">
+                  Text
+                  <select bind:value={captionText} class="rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5">
+                    <option value="tags">tags, comma-separated</option>
+                    <option value="caption">the caption</option>
+                    <option value="both">caption, then tags</option>
+                  </select>
+                </label>
+              {/if}
+              <label class="flex items-center gap-1.5"><input type="checkbox" bind:checked={underscores} /> Spaces instead of _ in tags (for tags stored with underscores)</label>
+
+            </div>
+          {/if}
+        {/if}
+      </fieldset>
+
       <section>
         <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">Destination</h3>
         <FolderBrowser bind:dir start={setting('folder', null)} />
@@ -196,7 +268,9 @@
           <p>
             Exported {r.photos} photos: {r.copied} files copied{r.skipped ? `, ${r.skipped} already there` : ''}{r.without_raw
               ? `, ${r.without_raw} without RAW`
-              : ''}{r.geotagged ? `, location added to ${r.geotagged}${r.sidecars ? ` (${r.sidecars} as .xmp sidecars)` : ''}` : ''}.
+              : ''}{r.geotagged ? `, location added to ${r.geotagged}${r.sidecars ? ` (${r.sidecars} as .xmp sidecars)` : ''}` : ''}{r.captioned
+              ? `, captions and tags for ${r.captioned}${r.without_caption ? ` (${r.without_caption} had none)` : ''}`
+              : ''}.
           </p>
           <p class="mt-1 flex items-center gap-2 break-all font-mono text-[11px] text-emerald-300/80">
             {r.folder}

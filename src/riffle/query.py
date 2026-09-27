@@ -140,3 +140,46 @@ def name_matches(q: str, photos) -> dict[int, str]:
             if parent and test(parent):
                 out[pid] = "folder"
     return out
+
+
+# Scripts written without spaces between words (Chinese, Japanese kana, Korean
+# Hangul, Thai): a "word" there is a whole run of text, so such query words match
+# as substrings instead.
+_UNSPACED = re.compile(r"[\u0e00-\u0e7f\u3040-\u30ff\u3131-\u318e\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]")
+
+
+def text_matcher(q: str) -> Callable[[str], bool] | None:
+    """A test for free text (captions, tags, text read from a photo): true when all
+    words of any alternative are in it and no excluded term is. Latin-script words
+    match whole words (plurals allowed, like names); words in scripts without spaces
+    match anywhere, so 北京 finds 欢迎来到北京. None if nothing to match."""
+    positives, negatives = parse(q)
+    wanted = [w for w in (_query_words(p) for p in positives) if w]
+    unwanted = [w for w in (_query_words(n) for n in negatives) if w]
+    if not wanted:
+        return None
+
+    def has_all(phrase_words: set[str], words: set[str], folded: str) -> bool:
+        return all((w in folded) if _UNSPACED.search(w) else _has(words, w) for w in phrase_words)
+
+    def test(text: str) -> bool:
+        folded = text.casefold()
+        words = {w.casefold() for w in _WORD.findall(text)}
+        return any(has_all(w, words, folded) for w in wanted) and not any(has_all(w, words, folded) for w in unwanted)
+
+    return test
+
+
+def text_matches(q: str, captions, tags, texts=()) -> dict[int, str]:
+    """{photo id: "tag" | "caption" | "text"} for photos with a fixed tag, a caption,
+    or text read from the photo (with its translation) that matches ``q``; the first
+    kind that matches wins. Rows: (id, text)."""
+    test = text_matcher(q)
+    if test is None:
+        return {}
+    out = {}
+    for kind, rows in (("tag", tags), ("caption", captions), ("text", texts)):
+        for pid, text in rows:
+            if pid not in out and text and test(text):
+                out[pid] = kind
+    return out
