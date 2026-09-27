@@ -192,7 +192,7 @@ class ExportIn(BaseModel):
     captions: str | None = None  # also write captions/tags: embed | xmp | txt | jsonl (None: no)
     caption_text: str = "tags"  # for txt: tags | caption | both
     underscores: bool = False  # for txt and jsonl: write tags with spaces instead of "_"
-    with_text: bool = False  # for txt: also the text read from the photo and its translation
+    with_text: bool = False  # also the text read from the photo and its translation (XMP description, txt)
 
 
 COLLAPSE = ("dupes", "stacks", "none")

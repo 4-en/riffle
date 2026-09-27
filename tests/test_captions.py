@@ -367,10 +367,13 @@ def test_ocr_job_and_retranslate(client, conn, monkeypatch):
 
 
 def test_export_with_text(client, conn, tmp_path):
-    a = pid(conn, "IMG_0001.jpg")
-    client.post("/api/captions", json={"items": [{"id": a, "caption": "A gate", "text": "出口", "translation": "Exit"}]})
+    a, b = pid(conn, "IMG_0001.jpg"), pid(conn, "IMG_0003.png")
+    client.post("/api/captions", json={"items": [{"id": a, "caption": "A gate", "text": "出口", "translation": "Exit"}, {"id": b, "text": "Only text"}]})
     out, _ = export(client, tmp_path / "t", [a], captions="txt", caption_text="caption", with_text=True)
     assert (out / "IMG_0001.txt").read_text() == "A gate\n出口\nExit\n"
+    out, _ = export(client, tmp_path / "x", [a, b], captions="xmp", with_text=True)
+    assert "A gate\n\n出口\nExit" in (out / "IMG_0001.xmp").read_text()
+    assert "Only text" in (out / "IMG_0003.xmp").read_text()  # read text alone is enough
     out, _ = export(client, tmp_path / "j", [a], captions="jsonl")
     row = json.loads((out / "metadata.jsonl").read_text())
     assert row["ocr_text"] == "出口" and row["ocr_translation"] == "Exit"

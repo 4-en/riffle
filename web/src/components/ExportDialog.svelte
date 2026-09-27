@@ -7,7 +7,8 @@
 
   // picksTotal: all picks; picksFiltered: picks within the current filters.
   // hasHistory: a location history is configured (enables adding GPS to the copies).
-  // draft: {ids, fresh} exports exactly these photos (a Curate draft; fresh = not exported before).
+  // draft: {ids, fresh, kind} exports exactly these photos: a Curate draft, or the grid's
+  // selection (kind 'selection'); fresh = how many were not exported before (null: unknown).
   // ondone(): an export finished (refresh the grid's "exported" badges).
   let { picksTotal = 0, picksFiltered = 0, hasHistory = false, draft = null, ondone = () => {} } = $props();
 
@@ -23,7 +24,9 @@
   const today = new Date().toISOString().slice(0, 10);
   let dir = $state(null);
   // The dialog is opened for one purpose; draft does not change while it is open.
-  let name = $state(`${untrack(() => draft) ? 'Curated' : 'Selection'} ${today}`);
+  const kind = untrack(() => (draft ? (draft.kind ?? 'curate') : 'picks'));
+  let name = $state(`${kind === 'curate' ? 'Curated' : 'Selection'} ${today}`);
+  const title = { curate: 'Export the draft', selection: 'Export the selection', picks: 'Export picks' }[kind];
   let content = $state(setting('content', 'images'));
   let rawFallback = $state(setting('rawFallback', true));
   let structure = $state(setting('structure', 'flat'));
@@ -100,11 +103,11 @@
   const radio = 'flex cursor-pointer items-start gap-2 rounded px-2 py-1 hover:bg-neutral-800';
 </script>
 
-<div class="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-6" role="dialog" aria-modal="true" aria-label={draft ? 'Export the draft' : 'Export picks'}>
+<div class="fixed inset-0 z-30 flex items-center justify-center bg-black/70 p-6" role="dialog" aria-modal="true" aria-label={title}>
   <button class="absolute inset-0 cursor-default" aria-label="Close" onclick={close}></button>
   <div class="relative flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 text-sm">
     <div class="flex items-center justify-between border-b border-neutral-800 px-4 py-2">
-      <h2 class="font-semibold">{draft ? 'Export the draft' : 'Export picks'}</h2>
+      <h2 class="font-semibold">{title}</h2>
       <button class="text-neutral-400 hover:text-white disabled:opacity-30" aria-label="Close" disabled={running} onclick={close}>✕</button>
     </div>
 
@@ -114,7 +117,9 @@
       </p>
 
       {#if draft}
-        <p class="text-neutral-300">The {draft.ids.length} photos of the Curate draft, whether they are picked or not.</p>
+        <p class="text-neutral-300">
+          The {draft.ids.length} {kind === 'curate' ? 'photos of the Curate draft' : `selected photo${draft.ids.length === 1 ? '' : 's'}`}, whether they are picked or not.
+        </p>
       {:else}
         <fieldset class="grid gap-1 sm:grid-cols-2" disabled={running}>
           <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Which photos</legend>
@@ -175,7 +180,7 @@
           <input type="checkbox" bind:checked={withCaptions} class="mt-0.5" />
           <span>
             Include each photo's caption and fixed tags
-            <span class="block text-xs text-neutral-500">Photos without either get nothing extra.</span>
+            <span class="block text-xs text-neutral-500">Photos without any get nothing extra.</span>
           </span>
         </label>
         {#if withCaptions}
@@ -197,6 +202,15 @@
               <span>metadata.jsonl<span class="block text-xs text-neutral-500">One file for the folder (Hugging Face imagefolder)</span></span>
             </label>
           </div>
+          <div class="ml-6 mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 px-2 text-xs text-neutral-300">
+            {#if captionFormat === 'jsonl'}
+              <span class="text-neutral-500">Includes the text in the photo and its translation.</span>
+            {:else}
+              <label class="flex items-center gap-1.5" title={captionFormat === 'txt' ? 'On their own lines after the caption and tags' : 'After the caption in the description, which photo apps show'}>
+                <input type="checkbox" bind:checked={withText} /> Text in the photo and its translation
+              </label>
+            {/if}
+          </div>
           {#if captionFormat === 'txt' || captionFormat === 'jsonl'}
             <div class="ml-6 mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 px-2 text-xs text-neutral-300">
               {#if captionFormat === 'txt'}
@@ -210,9 +224,7 @@
                 </label>
               {/if}
               <label class="flex items-center gap-1.5"><input type="checkbox" bind:checked={underscores} /> Spaces instead of _ in tags (for tags stored with underscores)</label>
-              {#if captionFormat === 'txt'}
-                <label class="flex items-center gap-1.5"><input type="checkbox" bind:checked={withText} /> Text in the photo and its translation</label>
-              {/if}
+
             </div>
           {/if}
         {/if}

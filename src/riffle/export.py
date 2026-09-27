@@ -13,8 +13,10 @@ other formats.
 With ``captions``, each photo's caption and fixed tags (selections.py) go along:
 ``embed`` into the copies' XMP (a sidecar where that is not possible), ``xmp`` as
 sidecars, ``txt`` as a text file with the image's name, or ``jsonl`` as one
-``metadata.jsonl`` (the Hugging Face imagefolder format). Photos without either
-get nothing.
+``metadata.jsonl`` (the Hugging Face imagefolder format). With ``with_text``, the
+text read from the photo (OCR) and its translation go along too: after the caption
+in the XMP description, on their own lines in the .txt (the JSONL always has them).
+Photos without any of it get nothing.
 """
 
 from __future__ import annotations
@@ -285,12 +287,18 @@ def run_export(
         if captions:
             found = selections.captions_for(conn, sel, photo_ids)
             texts = {pid: (c["caption"] or "", c["tags"]) for pid, c in found.items() if c["caption"] or c["tags"]}
-            # Text read from the photo (OCR) and its translation: in .txt on request, always in the JSONL.
+            # Text read from the photo (OCR) and its translation: on request, always in the JSONL.
             read = {pid: (c["text"], c["translation"]) for pid, c in found.items() if c["text"]}
         else:
             read = {}
+        xmp_texts = dict(texts)
+        if with_text:
+            # XMP: after the caption in the description (what photo apps show as the caption).
+            for pid, lines in read.items():
+                caption, keywords = xmp_texts.get(pid, ("", []))
+                xmp_texts[pid] = ("\n\n".join(p for p in (caption, "\n".join(l for l in lines if l)) if p), keywords)
         locations = timeline_locations(conn, sorted({f.photo_id for f in files})) if add_location else {}
-        add_metadata(files, locations, texts if captions in ("embed", "xmp") else {}, embed_text=captions == "embed")
+        add_metadata(files, locations, xmp_texts if captions in ("embed", "xmp") else {}, embed_text=captions == "embed")
         if captions == "txt":
             add_caption_files(files, texts, caption_text, underscores, read if with_text else None)
     finally:

@@ -114,6 +114,9 @@
   {/if}
   <button class={item} role="menuitem" disabled={!photo} onclick={() => run(() => copyText(photo.path))}>Copy path</button>
   <div class="my-1 border-t border-neutral-700"></div>
+  <button class={item} role="menuitem" onclick={() => run(() => (view.exporting = { ids: targets, fresh: null, kind: 'selection' }))}>
+    Export {n > 1 ? `${n} photos` : 'this photo'}…
+  </button>
   <button class={item} role="menuitem" onclick={() => run(() => (view.captioning = { ids: targets }))}>
     Caption {n > 1 ? `${n} photos` : 'this photo'}…
   </button>

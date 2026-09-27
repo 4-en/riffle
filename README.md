@@ -17,7 +17,7 @@ You search and browse by image content, cull by picking and rejecting photos, co
 - **Stacks**: bursts and near-identical shots are grouped automatically and compared side by side, with sharpness, clipping warnings, and a suggested keeper.
 - **Taste model**: once you have flagged enough, Riffle can sort by what you tend to keep. It only orders photos; it never flags them.
 - **Curate**: drafts a small, varied selection (photo book, exhibition) from the current filters, steered by size, variety, time and place spread, search, colour, and style.
-- **Export** of picks as images, images + RAWs, or RAWs only. Copies only; originals are never touched.
+- **Export** of picks, or of any selection, as images, images + RAWs, or RAWs only. Copies only; originals are never touched.
 - **Location from your phone**: a Google Timeline, Records.json, or GPX export places photos without GPS, and can add the position to exported copies.
 - Duplicate detection (perceptual hash), RAW matching by file name, EXIF metadata.
 
@@ -75,7 +75,7 @@ A typical pass:
    - ▲/▼ warn about blown highlights and crushed shadows.
    - **★ suggested** marks the likely keeper, based on sharpness, clipping, and a CLIP quality score; hover it for the reasons. `A` keeps it, and `Z` zooms all photos to the same spot to check focus.
 3. Go through the rest in the grid or the loupe with `P` (pick), `X` (reject), `U` (unflag). The loupe advances automatically.
-4. Check the selection with **Flag → Picked**, then **Export**. Choose the destination, the files (images, images + RAWs, RAWs only), and the layout (flat or keeping the source folders).
+4. Check the selection with **Flag → Picked**, then **Export**. Choose the destination, the files (images, images + RAWs, RAWs only), and the layout (flat or keeping the source folders). To export some photos without flagging them, select them and click **Export…** in the selection bar (or right-click → **Export N photos…**).
 
 Undo any flag change with Ctrl+Z. **Unflag all** in the compare view resets a stack; **Library → Flags** unflags everything or the current filters.
 
@@ -146,7 +146,7 @@ Select photos and click **Caption…** in the selection bar (or right-click → 
   - **Existing**: keep what's there and add new tags; replace what was generated but keep what you typed; or replace everything. By default only photos still missing a caption or tags are done.
 - **Illustrations / booru tags** (collapsed): the WD tagger (Danbooru tags for illustrations and anime art, not reliable on photos; also on the CPU) and a Danbooru preset for JoyCaption. Tags are stored with spaces (`long hair`), as most training tools expect today; **Keep underscores** keeps the Danbooru spelling (`long_hair`). Emoticons like `^_^` keep theirs either way. A **master tag list** keeps only tags on the list (the Danbooru list with aliases downloads on request; any `.csv` or `.txt` in `taglists/` next to `vocabulary.yaml` works too).
 - **Fixed tags** in the sidebar filter like the other tags. Search puts photos whose tag, caption, or read text (or its translation) contains the search words first, after file and folder name matches (the **Names** switch turns all of these off). Chinese or Japanese words match anywhere in the text: `北京` finds `欢迎来到北京`.
-- **Export** (off by default): the caption and tags into the copies' XMP (`dc:description`, `dc:subject`, which photo apps read; a sidecar where that is not possible), as `.xmp` sidecars, as a `.txt` with the image's name (tags, the caption, or both; optionally with spaces instead of `_`), or as one `metadata.jsonl` (Hugging Face imagefolder, with the read text as `ocr_text` and `ocr_translation`). The `.txt` can also include the read text and its translation.
+- **Export** (off by default): the caption and tags into the copies' XMP (`dc:description`, `dc:subject`, which photo apps read; a sidecar where that is not possible), as `.xmp` sidecars, as a `.txt` with the image's name (tags, the caption, or both; optionally with spaces instead of `_`), or as one `metadata.jsonl` (Hugging Face imagefolder, with the read text as `ocr_text` and `ocr_translation`). **Text in the photo and its translation** adds the read text to the others as well: after the caption in the XMP description, or on their own lines in the `.txt`.
 - Stored in `selections.sqlite3` by file content, per profile.
 
 ## Profiles
