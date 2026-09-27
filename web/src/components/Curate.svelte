@@ -14,7 +14,7 @@
   let { onorder = () => {} } = $props();
 
   const NO_LOOK = { brightness: 0, contrast: 0, colorfulness: 0, hue: '' };
-  const DEFAULTS = { n: 12, variety: 0.4, time_spread: 0.5, place_spread: 0.5, include_rejects: false, look: NO_LOOK };
+  const DEFAULTS = { n: 12, variety: 0.4, time_spread: 0.5, place_spread: 0.5, include_rejects: false, look: NO_LOOK, query: '' };
   const SIZES = [6, 12, 24, 48];
   // Colour and light: three-way choices (lean one way, or not at all).
   const LOOK_CHOICES = [
@@ -26,7 +26,11 @@
   // The draft is remembered per filter set: tags, excluded tags and filters.
   const key = untrack(() => `riffle.curate.${hash(JSON.stringify([view.tags, view.excludeTags, view.filters]))}`);
   const saved = load();
-  let settings = $state({ ...DEFAULTS, ...saved.settings, look: { ...NO_LOOK, ...saved.settings?.look } });
+  // A search on the main page comes along (it scores the candidates; it does not filter).
+  const startQuery = untrack(() => view.q) || saved.settings?.query || '';
+  let settings = $state({ ...DEFAULTS, ...saved.settings, look: { ...NO_LOOK, ...saved.settings?.look }, query: startQuery });
+  let queryText = $state(startQuery);
+  const applyQuery = () => (settings.query = queryText.trim());
   let styles = $state(saved.styles ?? {}); // name -> -1..1
   let locked = $state(saved.locked ?? []);
   let removed = $state(saved.removed ?? []);
@@ -95,6 +99,7 @@
 
   function reset() {
     settings = { ...DEFAULTS, look: { ...NO_LOOK } };
+    queryText = '';
     styles = {};
     locked = [];
     removed = [];
@@ -191,6 +196,24 @@
 
   <div class="flex min-h-0 flex-1">
     <aside class="w-64 shrink-0 space-y-4 overflow-y-auto border-r border-neutral-800 bg-neutral-900/60 p-4">
+      <form
+        onsubmit={(e) => {
+          e.preventDefault();
+          applyQuery();
+        }}
+      >
+        <input
+          type="search"
+          bind:value={queryText}
+          onblur={applyQuery}
+          placeholder="Lean towards…, e.g. boats -people"
+          title="Photos matching this come first; others can still fill the draft. The same syntax as the main search: -term leaves out, | means either. Enter applies."
+          class="w-full rounded-md border bg-neutral-950 px-2.5 py-1.5 text-xs placeholder-neutral-500 outline-none focus:border-sky-600 {settings.query ? 'border-sky-700' : 'border-neutral-700'}"
+        />
+      </form>
+      {#if draft?.used?.query === false}
+        <p class="-mt-2 text-[11px] text-amber-300/80">The search is not used: the AI model is not loaded yet, or it has no words.</p>
+      {/if}
       <div class={sliderRow}>
         <span class="flex justify-between"><span>Photos</span><span class="tabular-nums text-neutral-400">{settings.n}</span></span>
         <div class="mt-1.5 grid grid-cols-4 gap-1" role="group" aria-label="Number of photos">

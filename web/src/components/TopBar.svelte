@@ -77,10 +77,12 @@
     >
     <button
       class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-      title={view.q || view.similar
-        ? 'Curate works on the current filters, not on search results'
-        : 'Draft a small, varied selection (photo book, exhibition) from the current filters'}
-      disabled={!!(view.q || view.similar)}
+      title={view.similar
+        ? 'Curate works on the current filters and a text search, not on "similar to"'
+        : view.q
+          ? 'Draft a small, varied selection from the current filters, leaning towards this search'
+          : 'Draft a small, varied selection (photo book, exhibition) from the current filters'}
+      disabled={!!view.similar}
       onclick={() => (view.curate = true)}>Curate</button
     >
     <button

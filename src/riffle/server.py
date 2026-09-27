@@ -90,6 +90,7 @@ class CurateIn(BaseModel):
     locked: list[int] = []
     removed: list[int] = []
     look: dict[str, int | str | None] = {}  # colour and light: see curate.look_scores
+    query: str = ""  # a text search that scores the candidates (query.py syntax)
 
 
 class AlternativesIn(CurateIn):
@@ -885,12 +886,20 @@ def create_app(
         scores = style_scores(index) if any(p.styles.values()) else {}
         look, look_weights, look_labels = curate.look_scores(conn, body.look)
         p.styles.update(look_weights)
+        query_scores = None
+        if body.query.strip() and state["encoder"] is not None and index.E.size:
+            from .query import query_vectors, score
+
+            Q = query_vectors(body.query, state["encoder"])
+            if Q is not None:
+                query_scores = dict(zip((int(i) for i in index.ids), score(index.E, Q).tolist()))
         pool = curate.build_pool(
             conn, where, params, index.row, index.E, p,
             taste=taste_store.scores if model and model.enabled else None,
             clip_quality=clip_quality(index, [int(i) for i in index.ids]),
             style_scores={**scores, **look},
             place_labels=location_labels(conn)["place"],
+            query_scores=query_scores,
         )
         return pool, p, look_labels
 
@@ -939,6 +948,8 @@ def create_app(
                 "taste": bool(taste_store.scores),
                 "locations": bool((pool.loc_w > 0).any()),
                 "styles": sorted(k for k, w in p.styles.items() if w),
+                # false when a search was given but could not be used (the AI model is not ready)
+                "query": pool.query_pct is not None if body.query.strip() else None,
                 # candidates whose colours are not analysed yet (the next index does it)
                 "colors_missing": conn.execute(
                     f"SELECT COUNT(*) FROM photos p WHERE {where} AND p.brightness IS NULL", params

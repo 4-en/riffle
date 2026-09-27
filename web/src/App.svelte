@@ -213,9 +213,9 @@
     }
   }
 
-  // Curate works on the filters, not on search results ("Find similar" from its photo view ends it).
+  // Curate takes the text search with it (as a score), but not "Find similar", which ends it.
   $effect(() => {
-    if (view.curate && (view.q || view.similar)) view.curate = false;
+    if (view.curate && view.similar) view.curate = false;
   });
 
   // An overview needs a grouping and makes no sense for search results.

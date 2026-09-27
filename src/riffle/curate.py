@@ -30,6 +30,7 @@ from .stacks import exif_seconds
 W_TASTE, W_CLIP, W_EXPOSURE = 0.45, 0.25, 0.10
 BONUS_PICK, BONUS_EXPORTED = 0.15, 0.05
 STYLE_STRENGTH = 0.6  # a style slider at full strength can outweigh the generic quality
+QUERY_STRENGTH = 1.0  # a search in Curate: its best matches clearly win, its worst rarely get in
 TIME_SCALE = 3 * 3600  # seconds: photos within a few hours count as "close in time"
 PLACE_SCALE = 300.0  # metres
 CONTENT_FLOOR, CONTENT_DUP = 0.5, 0.95  # CLIP cosine: unrelated below, near-duplicate above
@@ -150,6 +151,7 @@ class Pool:
     landscape: np.ndarray
     style_pct: dict[str, np.ndarray]
     info: list[dict]  # per candidate: taken_at, place, day
+    query_pct: np.ndarray | None = None  # rank of each candidate for the search (if any)
 
 
 def build_pool(
@@ -164,6 +166,7 @@ def build_pool(
     clip_quality: dict[int, float] | None,
     style_scores: dict[str, dict[int, float]],
     place_labels: dict[str, str],
+    query_scores: dict[int, float] | None = None,
 ) -> Pool | None:
     rows = conn.execute(
         f"""SELECT p.id, p.stack_id, p.dupe_group, p.taken_at, p.width, p.height,
@@ -232,6 +235,10 @@ def build_pool(
     if active:
         term = sum(w * (2 * style_pct[k] - 1) for k, w in active.items()) / len(active)
         q = q + STYLE_STRENGTH * term
+    # A search scores (it does not filter): its own term, not averaged with the styles.
+    query_pct = percentile(np.array([query_scores.get(int(i), -1.0) for i in ids])) if query_scores else None
+    if query_pct is not None:
+        q = q + QUERY_STRENGTH * (2 * query_pct - 1)
 
     info = []
     for r in reps:
@@ -242,7 +249,7 @@ def build_pool(
             "place": place_labels.get(key, "") if key else "",
             "place_key": key or "",
         })
-    return Pool(ids, members, E, t, lat, lon, loc_w, q, picked, landscape, style_pct, info)
+    return Pool(ids, members, E, t, lat, lon, loc_w, q, picked, landscape, style_pct, info, query_pct)
 
 
 def redundancy_to(pool: Pool, j: int, p: Params) -> np.ndarray:
@@ -306,6 +313,8 @@ def reason(pool: Pool, j: int, p: Params, style_labels: dict[str, str]) -> str:
         parts.append("your pick")
     if len(pool.members[j]) > 1:
         parts.append(f"best of {len(pool.members[j])} similar shots")
+    if pool.query_pct is not None and pool.query_pct[j] >= 0.9:
+        parts.append("a top match for the search")
     strong = [style_labels.get(k, k).lower() for k, w in p.styles.items() if w > 0 and k in pool.style_pct and pool.style_pct[k][j] >= 0.8]
     if strong:
         parts.append("very " + " & ".join(strong))
