@@ -384,7 +384,9 @@
       else if (view.library) view.library = false;
       else if (view.raws) view.raws = false;
       else if (view.photo != null) view.photo = null;
-      else if (view.discover) view.discover = null;
+      else if (view.discover) {
+        if (!view.discover.replaying) view.discover = null; // a replay handles its own Esc
+      }
       else if (view.captioning) typing ? e.target.blur() : (view.captioning = null);
       else if (view.curate) view.curate = false;
       else if (typing) e.target.blur();

@@ -14,6 +14,7 @@ only; flags are not touched). Deterministic for the same input.
 
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 from dataclasses import dataclass, field
@@ -178,8 +179,8 @@ def build_pool(
                    l.lat, l.lon, l.source AS loc_source, l.accuracy_m,
                    l.country_code, l.region, l.place
             FROM photos p LEFT JOIN photo_locations l ON l.photo_id = p.id
-            WHERE {where}""",
-        params,
+            WHERE ({where}) OR (p.status = 'ok' AND p.id IN (SELECT value FROM json_each(?)))""",
+        [*params, json.dumps(sorted(set(p.locked)))],  # locked photos stay, even outside the filters (a Discover walk)
     ).fetchall()
     removed, locked = set(p.removed), set(p.locked)
     groups: dict[int, list] = {}

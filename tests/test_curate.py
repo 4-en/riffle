@@ -155,6 +155,20 @@ def test_locked_and_removed_are_for_the_draft_only(cfg):
     assert lib.conn.execute("SELECT COUNT(*) FROM sel.flags").fetchone()[0] == 0
 
 
+def test_locked_photos_stay_outside_the_filters(cfg):
+    lib = Lib(cfg)
+    a = lib.add(taken="2024:05:01 10:00:00")
+    b = lib.add(taken="2024:06:01 10:00:00")
+    p = curate.Params(n=2, locked=[b], **FLAT)
+    where, params = PhotoFilter(date_to="2024-05-15").where("fake__test")  # b is outside
+    ids = list(lib.vecs)
+    pool = curate.build_pool(
+        lib.conn, where, params, {pid: k for k, pid in enumerate(ids)}, np.stack([lib.vecs[i] for i in ids]), p,
+        taste=None, clip_quality=None, style_scores={}, place_labels={},
+    )
+    assert set(int(pool.ids[j]) for j in curate.select(pool, p)) == {a, b}
+
+
 def test_locked_reject_stays_even_without_rejects(cfg):
     lib = Lib(cfg)
     a, b = lib.add(), lib.add()

@@ -199,6 +199,7 @@ class ExportIn(BaseModel):
     caption_text: str = "tags"  # for txt: tags | caption | both
     underscores: bool = False  # for txt and jsonl: write tags with spaces instead of "_"
     with_text: bool = False  # also the text read from the photo and its translation (XMP description, txt)
+    numbered: bool = False  # prefix the files with their position in photo_ids ("01_…": a Discover walk)
 
 
 COLLAPSE = ("dupes", "stacks", "none")
@@ -835,6 +836,16 @@ def create_app(
                 """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
                    WHERE t.family = 'kind' AND pt.model_id = ?""", (model_id,)))
             pool.kind = ["" if "photo" in (kinds.get(i) or "photo") else kinds[i] for i in ids.tolist()]
+            # Every known position, with its uncertainty: camera GPS ~20 m, the location
+            # history's estimates their own accuracy (unknown: taken as MAX_UNCERTAIN).
+            located = {
+                r[0]: (r[1], r[2], 20.0 if r[3] == "exif" else (r[4] if r[4] is not None else discover.MAX_UNCERTAIN))
+                for r in conn.execute("SELECT photo_id, lat, lon, source, accuracy_m FROM photo_locations")
+            }
+            none = (np.nan, np.nan, np.nan)
+            pool.lat = np.array([located.get(i, none)[0] for i in ids.tolist()], dtype=np.float64)
+            pool.lon = np.array([located.get(i, none)[1] for i in ids.tolist()], dtype=np.float64)
+            pool.uncertainty = np.array([located.get(i, none)[2] for i in ids.tolist()], dtype=np.float64)
             discover_state["key"], discover_state["pool"] = key, pool
             return pool
 
@@ -882,6 +893,29 @@ def create_app(
             q = q + W_TASTE * percentile(np.array([taste_store.scores.get(int(i), 0.0) for i in pool.ids]))
         pool.quality = percentile(q)
 
+    @app.get("/api/discover/start")
+    def discover_start(flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """A photo to start a walk from: random within the filters, favouring newer ones
+        (the newest about 20 times as likely as the oldest), never a reject or a weak photo
+        (discover.QUALITY_FLOOR) unless nothing else is left."""
+        from . import discover
+
+        pool = discover_pool(conn, index)
+        discover_quality(conn, index, pool)
+        where, params = flt.where(model_id)
+        inside = {r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)}
+        rows = np.array([int(i) in inside for i in pool.ids])
+        good = rows & ~pool.rejected & ((pool.quality >= discover.QUALITY_FLOOR) | pool.picked)
+        candidates = np.flatnonzero(good) if good.any() else np.flatnonzero(rows)
+        if not len(candidates):
+            raise HTTPException(404, "no photo to start from within these filters")
+        taken = pool.taken[candidates]
+        order = np.argsort(np.argsort(np.nan_to_num(taken, nan=np.nanmin(taken) if np.isfinite(taken).any() else 0)))
+        recency = order / max(len(candidates) - 1, 1)  # 0 oldest … 1 newest
+        weights = np.exp(3.0 * recency)
+        pick = candidates[np.random.default_rng().choice(len(candidates), p=weights / weights.sum())]
+        return {"id": int(pool.ids[pick])}
+
     @app.get("/api/discover/{photo_id}")
     def discover_from(
         photo_id: int,
@@ -892,6 +926,7 @@ def create_app(
         scoped: bool = False,  # only photos within the query-string filters
         seed: int | None = None,  # for sampling each branch from its best candidates (same seed: same branches)
         rejects: bool = False,  # also show rejected photos
+        heading: float | None = None,  # the walk's compass direction (from an earlier step), for momentum
         flt: PhotoFilter = Depends(resolved_filter),
         conn=Depends(get_conn),
         index: Index = Depends(get_index),
@@ -914,12 +949,21 @@ def create_app(
             pool.rejected = None
         if came_from is not None and came_from in pool.row:
             drift_ = discover.step_drift(pool, pool.row[came_from], pool.row[photo_id], drift_)
+            # The walk's heading: the direction of this step, if it went somewhere (else none).
+            a, b = pool.row[came_from], pool.row[photo_id]
+            heading = None
+            if np.isfinite(pool.lat[a]) and np.isfinite(pool.lat[b]):
+                from .curate import haversine
+
+                step = haversine(pool.lat[a], pool.lon[a], pool.lat[b], pool.lon[b])
+                if step > max(discover.SAME_PLACE, (pool.uncertainty[a] + pool.uncertainty[b]) / 2):  # longer than the doubt
+                    heading = float(discover.bearing(pool.lat[a], pool.lon[a], pool.lat[b], pool.lon[b]))
         allowed = None
         if scoped:
             where, params = flt.where(model_id)
             inside = {r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)}
             allowed = np.array([int(i) in inside for i in pool.ids])
-        branches = discover.discover(pool, photo_id, trail_ids, allowed, prefs_, drift_, rng=np.random.default_rng(seed))
+        branches = discover.discover(pool, photo_id, trail_ids, allowed, prefs_, drift_, rng=np.random.default_rng(seed), heading=heading)
         paths = dict(conn.execute(
             "SELECT id, rel_path FROM photos WHERE id IN (SELECT value FROM json_each(?))",
             (json.dumps([photo_id] + [p for b in branches for p, *_ in b["photos"]]),),
@@ -933,6 +977,7 @@ def create_app(
             "centre": {"id": photo_id, "thumb": f"/thumbs/{photo_id}.jpg", "preview": f"/previews/{photo_id}.jpg", "rel_path": paths.get(photo_id)},
             "branches": branches,
             "drift": drift_,
+            "heading": heading,
             "drift_labels": [n for n, w in sorted(drift_.items(), key=lambda kv: -kv[1]) if w > 0][:4],
         }
 
@@ -1943,6 +1988,7 @@ def create_app(
             caption_text=body.caption_text,
             underscores=body.underscores,
             with_text=body.with_text,
+            numbered=body.numbered and body.photo_ids is not None,
         )
         if not started:
             raise HTTPException(409, "an export is already running")

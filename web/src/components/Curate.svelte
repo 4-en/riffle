@@ -34,12 +34,20 @@
   const saved = load();
   // A search on the main page comes along (it scores the candidates; it does not filter).
   const startQuery = untrack(() => view.q) || saved.settings?.query || '';
-  let settings = $state({ ...DEFAULTS, ...saved.settings, look: { ...NO_LOOK, ...saved.settings?.look }, query: startQuery });
+  // From a Discover walk: its photos locked in, the rest filled around them (and at least as many photos).
+  const walk = untrack(() => (typeof view.curate === 'object' ? view.curate.locked : null));
+  const base = { ...DEFAULTS, ...saved.settings };
+  let settings = $state({
+    ...base,
+    n: walk ? Math.min(60, Math.max(base.n, walk.length)) : base.n,
+    look: { ...NO_LOOK, ...saved.settings?.look },
+    query: startQuery,
+  });
   let queryText = $state(startQuery);
   const applyQuery = () => (settings.query = queryText.trim());
   let styles = $state(saved.styles ?? {}); // name -> -1..1
-  let locked = $state(saved.locked ?? []);
-  let removed = $state(saved.removed ?? []);
+  let locked = $state(walk ?? saved.locked ?? []);
+  let removed = $state(walk ? [] : (saved.removed ?? []));
 
   let styleList = $state([]);
   let hues = $state([]);
@@ -47,7 +55,7 @@
   let draft = $state(null);
   let loading = $state(true);
   let error = $state('');
-  let notice = $state('');
+  let notice = $state(walk ? `The ${walk.length} photos of your walk are locked in; the rest is filled from the current filters.` : '');
   let alt = $state(null); // {id, items} alternatives for one slot
 
   function hash(s) {

@@ -231,6 +231,16 @@ def client(indexed):
         yield c
 
 
+def test_discover_start(client, conn):
+    ids = {photo(conn, n)["id"] for n in ("IMG_0001.jpg", "IMG_0002.jpg", "IMG_0002_edit.png", "IMG_0003.png")}
+    starts = {client.get("/api/discover/start").json()["id"] for _ in range(20)}
+    assert starts <= ids and starts
+    one = photo(conn, "IMG_0001.jpg")["id"]
+    dated = client.get("/api/discover/start", params={"date_from": "2024-05-01", "date_to": "2024-05-01"}).json()
+    assert dated["id"] == one  # within the filters
+    assert client.get("/api/discover/start", params={"iso_min": 100000}).status_code == 404
+
+
 def test_discover_api(client, conn):
     a = photo(conn, "IMG_0001.jpg")["id"]
     res = client.get(f"/api/discover/{a}")
@@ -255,3 +265,43 @@ def test_discover_api(client, conn):
     assert [p for b in client.get(f"/api/discover/{a}", params={"rejects": "true"}).json()["branches"] for p in b["photos"]]
     scoped = client.get(f"/api/discover/{a}", params={"scoped": "true", "iso_min": 100000}).json()
     assert scoped["branches"] == []  # nothing within the filters
+
+
+def test_place_nearby_and_momentum():
+    pool = make_pool()
+    # Around a centre in Stockholm: 13 at 50 m (the same place), 14 1 km north, 15 1 km
+    # east, 16 2 km north; 12 has no trusted position (history far off: nan).
+    lat0, lon0 = 59.33, 18.06
+    north_1km, east_1km = 1000 / 111_320, 1000 / (111_320 * np.cos(np.radians(lat0)))
+    pool.lat = np.array([lat0, lat0, np.nan, lat0 + 0.00045, lat0 + north_1km, lat0, lat0 + 2 * north_1km])
+    pool.lon = np.array([lon0, lon0, np.nan, lon0, lon0, lon0 + east_1km, lon0])
+    place = first(pool, "place")
+    assert [p for p, *_ in place["photos"]] == [13] and "the same place" in place["reason"]
+    nearby = next(b for b in discover.discover(pool, 10, prefs={"nearby": 1}) if b["lens"] == "nearby")
+    assert [p for p, *_ in nearby["photos"]][:2] in ([14, 15], [15, 14])  # the nearest first, either way
+    assert nearby["reason"].split()[-1] in ("north", "east") and round(nearby["bearing"]) in (0, 90)
+    east = next(b for b in discover.discover(pool, 10, prefs={"nearby": 1}, heading=90.0) if b["lens"] == "nearby")
+    assert east["photos"][0][0] == 15 and "keeps heading" in east["reason"] and round(east["bearing"]) == 90
+    assert discover.compass(225) == "south-west" and discover.distance_text(1500) == "1.5 km"
+    pool.lat[0] = np.nan  # the centre without a trusted position: no place branches
+    assert not {"place", "nearby"} & {b["lens"] for b in discover.discover(pool, 10)}
+
+
+def test_uncertain_positions_are_used_but_rank_lower():
+    pool = make_pool()
+    lat0, lon0 = 59.33, 18.06
+    km = 1000 / 111_320
+    # 14 and 15 both 2 km north; 14 from camera GPS, 15 an estimate good to 600 m;
+    # 16 2 km north but uncertain by 3 km (too vague to compare).
+    pool.lat = np.array([lat0, lat0, np.nan, np.nan, lat0 + 2 * km, lat0 + 2 * km, lat0 + 2 * km])
+    pool.lon = np.array([lon0, lon0, np.nan, np.nan, lon0, lon0 + 0.0001, lon0])
+    pool.uncertainty = np.array([20.0, 20, np.nan, np.nan, 20, 600, 3000])
+    nearby = next(b for b in discover.discover(pool, 10, prefs={"nearby": 1}) if b["lens"] == "nearby")
+    got = {p: why for p, _, why, _ in nearby["photos"]}
+    assert list(got)[:2] == [14, 15]  # the certain one first
+    assert got[15].startswith("about ") and not got[14].startswith("about ")
+    assert 16 not in got
+    # An uncertain position widens "the same place" (15 counts at 300 m when uncertain by 600 m).
+    pool.lat[5] = lat0 + 0.3 * km
+    place = next(b for b in discover.discover(pool, 10, prefs={"place": 1}) if b["lens"] == "place")
+    assert [p for p, *_ in place["photos"]] == [15] and place["reason"].startswith("about the same place")

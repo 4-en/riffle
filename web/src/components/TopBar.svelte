@@ -1,5 +1,6 @@
 <script>
   import { view, prefs, setPref, search, clearAll } from '../lib/state.svelte.js';
+  import { fetchDiscoverStart } from '../lib/api.js';
   import ProfileMenu from './ProfileMenu.svelte';
 
   // The grid's own controls (count, group, sort, stacks) are in ViewBar.
@@ -98,6 +99,15 @@
           : 'Draft a small, varied selection (photo book, exhibition) from the current filters'}
       disabled={!!view.similar}
       onclick={() => (view.curate = true)}>Curate</button
+    >
+    <button
+      class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+      title="Walk from photo to photo, related in one way each; starts at a random photo in the current filters, often a recent one"
+      onclick={async () => {
+        try {
+          view.discover = { id: (await fetchDiscoverStart(view)).id };
+        } catch {}
+      }}>Discover</button
     >
     <button
       class="shrink-0 rounded px-2.5 py-1 text-xs font-medium {picks

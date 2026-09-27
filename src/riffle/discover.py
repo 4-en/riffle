@@ -11,6 +11,10 @@ aspect and are opposite in another; context lenses use time and place. The aspec
 - colour and light (colors.py): hue histogram, brightness, contrast, colourfulness;
 - a layout fingerprint: a 12×12 luminance grid of the thumbnail (``layout_of``);
 - the user's own tags (fixed and learned), and time;
+- place: every known position, with its uncertainty (camera GPS ~20 m, the location
+  history's estimates their own): the same place, and nearby places, keeping the
+  walk's heading when it has one (momentum). Uncertain positions rank below certain
+  ones and are worded "about …";
 - named axes of meaning (TEXT_AXES: close-up ↔ wide view, night ↔ daylight, city ↔
   nature…, a photo's position is its similarity to one end minus the other): shared
   traits match the centre on a few of them, a mirror flips it on one. (The library's
@@ -39,6 +43,12 @@ GRID = 12  # layout fingerprint: GRID × GRID luminance cells
 TOP_PHRASES = 12  # phrases kept per photo in its profile (the ones that stand out most)
 PER_LENS = 3  # photos per branch
 MAX_BRANCHES = 9  # the graph gets crowded beyond this (and keys 1–9 reach them all)
+SAME_PLACE = 150.0  # metres (widened by the positions' uncertainty, up to MAX_UNCERTAIN)
+NEARBY = (150.0, 25000.0)  # metres: nearby places, nearer ones preferred
+MOMENTUM = 0.5  # bonus for a nearby place in the walk's heading (cosine of the angle off it)
+CERTAIN = 200.0  # metres: positions less certain than this are worded "about …"
+MAX_UNCERTAIN = 1000.0  # metres: a pair of positions less certain than this is not compared
+UNCERTAINTY_COST = 0.4  # score lost at MAX_UNCERTAIN (so certain positions come first)
 DRIFT_WEIGHT = 0.15
 OTHER_KIND = 0.25  # penalty for a photo ↔ illustration jump in the colour, light, and shape lenses
 MIN_COLOUR = 0.04  # colour lenses need this much chroma-weighted hue mass in the centre
@@ -75,6 +85,9 @@ class Pool:
     axes: np.ndarray | None = None  # (n, axes) positions on TEXT_AXES, in standard deviations
     axis_ends: list[tuple[str, str]] = field(default_factory=list)  # per axis: (low end, high end) phrases
     pca: np.ndarray | None = None  # (n, k) positions on the library's own axes (library_axes), in SDs
+    lat: np.ndarray | None = None  # positions (nan: none)
+    lon: np.ndarray | None = None
+    uncertainty: np.ndarray | None = None  # metres, per position
     tags: dict[int, list[str]] = field(default_factory=dict)  # row -> the user's tags (fixed, learned), rarest first
     row: dict[int, int] = field(default_factory=dict)
 
@@ -190,6 +203,8 @@ LENS_LABELS = {
     "mirror": "Mirrored",
     "hidden_traits": "Hidden traits",
     "hidden_mirror": "Mirrored, hidden trait",
+    "place": "Same place",
+    "nearby": "Nearby",
     "closest": "Closest",
 }
 
@@ -377,6 +392,82 @@ def lens_hidden_mirror(pool, c, sim, rng=None):
     return _mirror(pool, c, sim, rng, pool.pca, lambda a, side: "a hidden trait flipped")
 
 
+def bearing(lat1, lon1, lat2, lon2):
+    """Compass bearing in degrees (0 north, 90 east) from point 1 to point(s) 2."""
+    p1, p2 = np.radians(lat1), np.radians(lat2)
+    dl = np.radians(lon2 - lon1)
+    y = np.sin(dl) * np.cos(p2)
+    x = np.cos(p1) * np.sin(p2) - np.sin(p1) * np.cos(p2) * np.cos(dl)
+    return (np.degrees(np.arctan2(y, x)) + 360) % 360
+
+
+COMPASS = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"]
+
+
+def compass(deg: float) -> str:
+    return COMPASS[int(((deg + 22.5) % 360) // 45)]
+
+
+def distance_text(m: float) -> str:
+    return f"{m:.0f} m" if m < 1000 else f"{m / 1000:.1f} km" if m < 10000 else f"{m / 1000:.0f} km"
+
+
+def _located(pool, c):
+    return pool.lat is not None and np.isfinite(pool.lat[c])
+
+
+def _uncertainty(pool, c) -> np.ndarray:
+    """The combined uncertainty (metres) of the centre's position and each other one."""
+    u = pool.uncertainty if pool.uncertainty is not None else np.zeros(len(pool.ids))
+    return (u[c] + u) / 2
+
+
+def lens_place(pool, c, sim, rng=None):
+    """The same place (within SAME_PLACE, widened by how uncertain the positions are),
+    looking different or at another time; certain positions first."""
+    if not _located(pool, c):
+        return None
+    from .curate import haversine
+
+    d = np.nan_to_num(haversine(pool.lat[c], pool.lon[c], pool.lat, pool.lon), nan=np.inf)
+    unc = _uncertainty(pool, c)
+    near = (d <= SAME_PLACE + unc) & (unc <= MAX_UNCERTAIN)
+    days = np.abs(pool.taken - pool.taken[c]) / 86400  # nan when either is undated
+    score = (1.0 - sim) + 0.3 * np.clip(np.nan_to_num(days, nan=0.0) / 30, 0, 1) - UNCERTAINTY_COST * np.clip(unc / MAX_UNCERTAIN, 0, 1)
+
+    def reason(j):
+        where = "about the same place" if unc[j] > CERTAIN else "the same place"
+        return f"{where}, {_gap(days[j])}" if np.isfinite(days[j]) else where
+
+    return np.where(near, score, -np.inf), -1.0, reason
+
+
+def lens_nearby(pool, c, sim, rng=None, heading=None):
+    """Nearby places, nearer ones first; with a heading (the walk's direction), places
+    further along it get a bonus, so a walk can keep going one way."""
+    if not _located(pool, c):
+        return None
+    from .curate import haversine
+
+    d = np.nan_to_num(haversine(pool.lat[c], pool.lon[c], pool.lat, pool.lon), nan=np.inf)
+    unc = _uncertainty(pool, c)
+    lo, hi = NEARBY
+    # Another place only when further than the positions are uncertain (else the direction is noise).
+    inside = (d > np.maximum(lo, unc)) & (d <= hi) & (unc <= MAX_UNCERTAIN)
+    closeness = 1.0 - np.log(np.clip(d, lo, hi) / lo) / np.log(hi / lo)  # 1 at lo … 0 at hi
+    b = bearing(pool.lat[c], pool.lon[c], pool.lat, pool.lon)
+    along = np.cos(np.radians(b - heading)) if heading is not None else np.zeros(len(d))
+    score = closeness + MOMENTUM * along - UNCERTAINTY_COST * np.clip(unc / MAX_UNCERTAIN, 0, 1)
+
+    def reason(j):
+        text = f"{'about ' if unc[j] > CERTAIN else ''}{distance_text(d[j])} {compass(b[j])}"
+        return text + (" · keeps heading" if heading is not None and along[j] > 0.7 else "")
+
+    score = np.where(inside, score, -np.inf)
+
+    return score, -1.0, reason
+
+
 def lens_closest(pool, c, sim, rng=None):
     return sim, 0.0, lambda j: f"similarity {sim[j]:.2f}"
 
@@ -394,6 +485,8 @@ LENSES = {
     "mirror": lens_mirror,
     "hidden_traits": lens_hidden_traits,
     "hidden_mirror": lens_hidden_mirror,
+    "place": lens_place,
+    "nearby": lens_nearby,
     "closest": lens_closest,
 }
 
@@ -432,6 +525,7 @@ def discover(
     prefs: dict[str, float] | None = None,
     drift: dict[str, float] | None = None,
     rng: np.random.Generator | None = None,
+    heading: float | None = None,
 ) -> list[dict]:
     """Branches from the centre: [{lens, label, reason, photos: [(id, score, reason)]}],
     each photo on at most one branch; favoured lenses (``prefs``: lens -> times chosen)
@@ -456,7 +550,7 @@ def discover(
     taken: set[int] = set()
     branches = []
     for key in order:
-        found = LENSES[key](pool, c, sim, rng)
+        found = lens_nearby(pool, c, sim, rng, heading) if key == "nearby" else LENSES[key](pool, c, sim, rng)
         if found is None:
             continue
         score, minimum, reason = found
@@ -478,7 +572,11 @@ def discover(
         photos = [(int(pool.ids[j]), float(score[j]), reason(j), float(sim[j])) for j in candidates]
         if photos and len(branches) < MAX_BRANCHES:
             taken.update(pool.row[p] for p, *_ in photos)
-            branches.append({"lens": key, "label": LENS_LABELS[key], "reason": photos[0][2], "photos": photos})
+            branch = {"lens": key, "label": LENS_LABELS[key], "reason": photos[0][2], "photos": photos}
+            if key == "nearby":  # placed at its real compass direction in the graph
+                j = pool.row[photos[0][0]]
+                branch["bearing"] = float(bearing(pool.lat[c], pool.lon[c], pool.lat[j], pool.lon[j]))
+            branches.append(branch)
     return branches
 
 
