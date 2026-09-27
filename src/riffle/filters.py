@@ -7,6 +7,7 @@ are OR-combined; different facets are AND-combined.
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -53,7 +54,12 @@ NAME_SORTS = {
     "folder": ("name", "-name"),
 }
 
-RANGE_COLUMNS = {"focal": "p.focal_length", "aperture": "p.aperture", "iso": "p.iso"}
+RANGE_COLUMNS = {
+    "focal": "p.focal_length",
+    "aperture": "p.aperture",
+    "iso": "p.iso",
+    "mp": "(p.width * p.height / 1e6)",  # resolution in megapixels
+}
 
 ORIENTATIONS = {
     "landscape": "p.width > p.height",
@@ -217,6 +223,8 @@ def photo_filter(
     aperture_max: float | None = None,
     iso_min: float | None = None,
     iso_max: float | None = None,
+    mp_min: float | None = None,
+    mp_max: float | None = None,
     orientation: list[str] = Query([]),
     gps: bool | None = None,
     flag: list[str] = Query([]),
@@ -256,6 +264,7 @@ def photo_filter(
             ("focal", focal_min, focal_max),
             ("aperture", aperture_min, aperture_max),
             ("iso", iso_min, iso_max),
+            ("mp", mp_min, mp_max),
         )
         if lo is not None or hi is not None
     }
@@ -322,6 +331,9 @@ def facets(conn: sqlite3.Connection, flt: PhotoFilter, model_id: str) -> dict:
         lo, hi, n = conn.execute(
             f"SELECT MIN({column}), MAX({column}), COUNT({column}) FROM photos p WHERE {w}", p
         ).fetchone()
+        if name == "mp" and n:
+            # Shown to one decimal: round outwards, so typing the shown bounds keeps every photo.
+            lo, hi = math.floor(lo * 10) / 10, math.ceil(hi * 10) / 10
         out[name] = {"min": lo, "max": hi, "count": n}
 
     w, p = where("orientation")

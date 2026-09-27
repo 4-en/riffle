@@ -494,7 +494,7 @@ styles:
 - `tags=1,2` (AND), `exclude_tags=3,4`;
 - `date_from`, `date_to` (`YYYY-MM-DD`);
 - repeated `camera=`, `lens=` (OR; empty = unknown);
-- `focal_min/max`, `aperture_min/max`, `iso_min/max`;
+- `focal_min/max`, `aperture_min/max`, `iso_min/max`, `mp_min/max` (megapixels, width × height / 10⁶);
 - repeated `orientation=`, `flag=` (`pick`, `reject`, `none`), `exposure=`;
 - `gps=`, `exported=`;
 - repeated `country=`, `region=`, `place=`, `loc_source=`;

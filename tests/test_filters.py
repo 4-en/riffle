@@ -55,6 +55,18 @@ def test_ranges_orientation_and_gps(client):
     assert client.get("/api/photos", params={"orientation": "diagonal"}).status_code == 400
 
 
+def test_megapixel_range(client, conn):
+    sizes = {"IMG_0001.jpg": (6000, 4000), "IMG_0002.jpg": (4000, 3000), "IMG_0002_edit.png": (1280, 960), "IMG_0003.png": (1920, 1080)}
+    for name, (w, h) in sizes.items():
+        conn.execute("UPDATE photos SET width = ?, height = ? WHERE rel_path LIKE ?", (w, h, f"%{name}"))
+    conn.commit()
+    assert names(client, mp_min=12) == ["IMG_0001.jpg", "IMG_0002.jpg"]
+    assert names(client, mp_max=2.1) == ["IMG_0002_edit.png", "IMG_0003.png"]
+    assert names(client, mp_min=2, mp_max=20) == ["IMG_0002.jpg", "IMG_0003.png"]
+    # Facet bounds round outwards to the one decimal shown (1.2288 -> 1.2, 24.0 stays).
+    assert client.get("/api/facets").json()["mp"] == {"min": 1.2, "max": 24.0, "count": 4}
+
+
 def test_filters_apply_to_search(client, conn):
     a = photo(conn, "IMG_0002.jpg")["id"]
     assert names(client, f"/api/search/similar/{a}", iso_min=200) == ["IMG_0001.jpg", "IMG_0003.png"]

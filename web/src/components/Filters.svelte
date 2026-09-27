@@ -46,6 +46,8 @@
     { key: 'aperture', label: 'Aperture', step: 0.1, span: (a, b) => `f/${a}–${b}` },
     { key: 'iso', label: 'ISO', step: 1, span: (a, b) => `${a}–${b}` },
   ];
+  const resolution = { key: 'mp', label: 'Megapixels', step: 0.1, span: (a, b) => `${a}–${b} MP` };
+  const rangeActive = (r) => (f[`${r.key}_min`] !== '' ? 1 : 0) + (f[`${r.key}_max`] !== '' ? 1 : 0);
   const orientationLabels = { landscape: 'Landscape', portrait: 'Portrait', square: 'Square' };
 
   function setValue(key, value) {
@@ -100,6 +102,29 @@
       onchange={(e) => setValue('date_to', e.currentTarget.value)}
       class="min-w-0 rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5 text-xs outline-none focus:border-sky-600"
     />
+  </div>
+{/snippet}
+
+{#snippet rangeInputs(r)}
+  {@const avail = facets[r.key]}
+  <p class="mb-1 mt-1.5 px-2 text-[11px] text-neutral-500">
+    {avail.count ? `${r.label} (${r.span(fmt(avail.min), fmt(avail.max))})` : r.label}
+  </p>
+  <div class="grid grid-cols-2 gap-1 px-2">
+    {#each ['min', 'max'] as end (end)}
+      {@const k = `${r.key}_${end}`}
+      <input
+        type="number"
+        inputmode="decimal"
+        step={r.step}
+        min="0"
+        aria-label="{r.label} {end}"
+        placeholder={end === 'min' ? `min ${fmt(avail.min)}` : `max ${fmt(avail.max)}`}
+        value={f[k]}
+        onchange={(e) => setValue(k, e.currentTarget.value)}
+        class="min-w-0 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-xs tabular-nums outline-none placeholder:text-neutral-600 focus:border-sky-600"
+      />
+    {/each}
   </div>
 {/snippet}
 
@@ -174,31 +199,18 @@
     {/if}
 
     {#if ranges.some((r) => showRange(r.key))}
-      <Section id="exposure" title="Exposure" active={ranges.reduce((n, r) => n + (f[`${r.key}_min`] !== '' ? 1 : 0) + (f[`${r.key}_max`] !== '' ? 1 : 0), 0)}>
+      <Section id="exposure" title="Exposure" active={ranges.reduce((n, r) => n + rangeActive(r), 0)}>
         {#each ranges as r (r.key)}
           {#if showRange(r.key)}
-            {@const avail = facets[r.key]}
-            <p class="mb-1 mt-1.5 px-2 text-[11px] text-neutral-500">
-              {avail.count ? `${r.label} (${r.span(fmt(avail.min), fmt(avail.max))})` : r.label}
-            </p>
-            <div class="grid grid-cols-2 gap-1 px-2">
-              {#each ['min', 'max'] as end (end)}
-                {@const k = `${r.key}_${end}`}
-                <input
-                  type="number"
-                  inputmode="decimal"
-                  step={r.step}
-                  min="0"
-                  aria-label="{r.label} {end}"
-                  placeholder={end === 'min' ? `min ${fmt(avail.min)}` : `max ${fmt(avail.max)}`}
-                  value={f[k]}
-                  onchange={(e) => setValue(k, e.currentTarget.value)}
-                  class="min-w-0 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-xs tabular-nums outline-none placeholder:text-neutral-600 focus:border-sky-600"
-                />
-              {/each}
-            </div>
+            {@render rangeInputs(r)}
           {/if}
         {/each}
+      </Section>
+    {/if}
+
+    {#if showRange('mp')}
+      <Section id="resolution" title="Resolution" active={rangeActive(resolution)}>
+        {@render rangeInputs(resolution)}
       </Section>
     {/if}
 
