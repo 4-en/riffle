@@ -400,7 +400,10 @@ def create_app(
         return mode
 
     def rank(conn, index: Index, query: np.ndarray, flt: PhotoFilter, exclude: int | None,
-             collapse: str, offset: int, limit: int) -> dict:
+             collapse: str, offset: int, limit: int, front: dict[int, str] | None = None) -> dict:
+        """Photos within the filters by similarity to ``query``. ``front``: photos
+        moved ahead ({id: "file" | "folder"}; file-name matches first), keeping the
+        similarity order within each group."""
         if index.E.size == 0:
             return {"total": 0, "items": []}
         where, params = flt.where(model_id)
@@ -416,6 +419,9 @@ def create_app(
         scores[~mask] = -np.inf
         order = np.argsort(-scores)[: int(mask.sum())]
         ranked = [int(index.ids[i]) for i in order]
+        if front:
+            tier = {"file": 0, "folder": 1}
+            ranked.sort(key=lambda pid: tier.get(front.get(pid), 2))  # stable: similarity order within
 
         if collapse != "none":
             column = "stack_id" if collapse == "stacks" else "dupe_group"
@@ -435,7 +441,12 @@ def create_app(
 
         page = ranked[offset : offset + limit]
         score_map = {pid: float(scores[index.row[pid]]) for pid in page}
-        return {"total": len(ranked), "items": items_for(conn, page, score_map)}
+        items = items_for(conn, page, score_map)
+        if front:
+            for item in items:
+                if item["id"] in front:
+                    item["name_match"] = front[item["id"]]
+        return {"total": len(ranked), "items": items}
 
     # ---- API -----------------------------------------------------------------
 
@@ -683,6 +694,7 @@ def create_app(
         collapse: str | None = None,
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
+        names: bool = True,  # also move file / folder name matches to the front
         conn=Depends(get_conn),
         index: Index = Depends(get_index),
     ):
@@ -696,7 +708,12 @@ def create_app(
         query = query_vectors(q, encoder)  # "a | b" alternatives, "-term" excludes (query.py)
         if query is None:
             raise HTTPException(400, "the search has no words")
-        return rank(conn, index, query, flt, None, collapse_mode(collapse, dupes), offset, limit)
+        front = None
+        if names:
+            from .query import name_matches
+
+            front = name_matches(q, conn.execute("SELECT id, source, rel_path FROM photos WHERE status = 'ok'"))
+        return rank(conn, index, query, flt, None, collapse_mode(collapse, dupes), offset, limit, front)
 
     @app.get("/api/search/similar/{photo_id}")
     def search_similar(

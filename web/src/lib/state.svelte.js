@@ -12,6 +12,27 @@ export function activeFilterCount(f) {
   return FILTER_ARRAYS.filter((k) => f[k].length).length + FILTER_SCALARS.filter((k) => f[k] !== '').length;
 }
 
+// Per-browser preferences (not in the URL).
+function loadPref(key, fallback) {
+  try {
+    const v = localStorage.getItem(`riffle.${key}`);
+    return v === null ? fallback : JSON.parse(v);
+  } catch {
+    return fallback;
+  }
+}
+
+export const prefs = $state({
+  nameMatch: loadPref('nameMatch', true), // text search also puts file / folder name matches first
+});
+
+export function setPref(key, value) {
+  prefs[key] = value;
+  try {
+    localStorage.setItem(`riffle.${key}`, JSON.stringify(value));
+  } catch {}
+}
+
 export const view = $state({
   q: '',
   similar: null, // photo id

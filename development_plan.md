@@ -413,6 +413,12 @@ Text search encodes the query with the CLIP text encoder and ranks the filtered 
   - Measured top-30 splits: 11/19 for "ducks | palace", 18/12 for "boats | flowers", 16/14 for "sunset | people -boats", but 30/0 for "sky | statue", because plain-sky photos reach far higher similarities than any statue.
   - Rescaling each alternative against the library (median → 0, 99th percentile → 1) balanced all four. Not adopted: realistic alternatives are of a kind ("cats | dogs"), with comparable similarities, and the plain maximum keeps the score a real CLIP similarity. Revisit if a realistic query shows the imbalance.
 
+**Names** (`query.name_matches`, on by default, `names=false` turns it off; a switch in the search box, remembered per browser): photos whose file name matches the search move to the front, then those whose parent folder does (for a file at a source's root, the source folder), keeping the image order within each group; they carry `name_match: file | folder` for a badge.
+
+- Names are split into words at separators, camelCase, and letter/digit boundaries. Camera prefixes (IMG, DSC, DSCF, PXL, MVIMG, _MG, P…), numbers other than years 1900–2099, and letters wedged between digits (`4cat7`) carry no words.
+- A name matches when it holds every word of any alternative (filler words like "at" and "the" ignored; a plural "s" either way) and no excluded term. Whole words keep short searches precise: "cat" matches `cat_01` and `cats-on-roof`, not `catalogue`.
+- On the first library, all 1,926 file names are camera names and yield no words; the folders ("Schweden 2026 und so", "Apr 2026") do, so "schweden" puts that trip first. Matching adds 14–20 ms per search.
+
 A text search takes about 10 ms.
 
 **Your tags** (`custom_tags.py`; stored in selections v3, examples by content hash). A photo belongs when its similarity to its best-matching example reaches a fixed level per model: the stack threshold minus 0.05 (strict), 0.08 (normal), or 0.12 (loose). That is 0.87 / 0.84 / 0.80 for ViT-L-14.
@@ -450,7 +456,7 @@ styles:
 | GET | `/api/photos?<filters>&collapse=&sort=&group=&offset=&limit=` | Grid listing. `collapse`: `dupes`, `stacks`, `none`. `sort`: `taken_at`, `-taken_at`, `name`, `-name`, `place`, `-place`, `taste`, `-taste`. With `group`, items carry their group key and `groups` lists all groups (§11.2) |
 | GET | `/api/groups?group=&<filters>` | Groups only, with count, date span, cover, label, and centre (calendar, map) |
 | GET | `/api/photos/{id}` | Detail: metadata, tags, RAWs, duplicates, stack, location, flag |
-| GET | `/api/search/text?q=&<filters>` | Text search (§10) |
+| GET | `/api/search/text?q=&names=&<filters>` | Text search (§10); `names=false` turns off file/folder name matching |
 | GET | `/api/search/similar/{id}?<filters>` | Similar photos |
 | GET | `/api/tags?<filters>` | Tags by family with counts within the filters; your tags (`custom`, with examples and counts); totals |
 | POST | `/api/custom-tags`, `/api/custom-tags/{id}`; DELETE `/api/custom-tags/{id}` | Create a tag from example photos; edit (name, strictness, add/remove examples); delete |

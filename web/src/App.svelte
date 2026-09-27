@@ -1,6 +1,6 @@
 <script>
   import { tick, untrack } from 'svelte';
-  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, curateKey, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup, hasOverview } from './lib/state.svelte.js';
+  import { view, prefs, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, curateKey, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup, hasOverview } from './lib/state.svelte.js';
   import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds, fetchTaste } from './lib/api.js';
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import { connection, connect } from './lib/connection.svelte.js';
@@ -166,7 +166,7 @@
 
   // Re-query whenever the search, filters or grouping change.
   $effect(() => {
-    view.q, view.similar, view.tags, view.excludeTags, view.ctags, view.excludeCtags, JSON.stringify(view.filters), view.group, view.collapse, view.sort;
+    view.q, view.similar, view.tags, view.excludeTags, view.ctags, view.excludeCtags, JSON.stringify(view.filters), view.group, view.collapse, view.sort, prefs.nameMatch;
     untrack(reset);
   });
 

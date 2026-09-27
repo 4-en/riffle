@@ -16,6 +16,7 @@ any open water, so it would drop every lake photo from "lake -boats".
 from __future__ import annotations
 
 import re
+from pathlib import PurePath, PurePosixPath
 from typing import Callable
 
 import numpy as np
@@ -57,3 +58,85 @@ def query_vectors(q: str, encode: Callable[[list[str]], np.ndarray]) -> np.ndarr
 def score(E: np.ndarray, Q: np.ndarray) -> np.ndarray:
     """Each photo's similarity to its best-matching alternative."""
     return (E @ Q.T).max(axis=1)
+
+
+# ---- file and folder names --------------------------------------------------------
+#
+# Text search also moves photos whose file name (first) or parent folder (next)
+# matches the search to the front, keeping the image ranking within each group.
+# Matching is by whole words, so short searches stay precise: "cat" matches
+# cat_01.jpg but not catalogue.jpg. Every search word must appear (a plural "s"
+# either way is allowed), filler words are ignored, and camera names carry no
+# words: IMG, DSC, PXL and frame numbers are skipped, years (1900–2099) are kept.
+
+CAMERA_WORDS = {"img", "dsc", "dscf", "dscn", "dcim", "pxl", "mvimg", "mg", "gopr", "dji", "sam", "vid", "p"}
+FILLER_WORDS = {"a", "an", "the", "of", "at", "in", "on", "and", "or", "with", "to", "for", "by", "from"}
+_WORD = re.compile(r"[^\W_]+")
+_PARTS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+|[^\W\d_a-zA-Z]+")
+
+
+def _is_year(w: str) -> bool:
+    return len(w) == 4 and w.isdigit() and 1900 <= int(w) <= 2099
+
+
+def name_words(name: str) -> set[str]:
+    """Meaningful words of a file or folder name: split at separators, camelCase,
+    and letter/digit boundaries; camera prefixes, frame numbers, and letters
+    wedged between digits left out."""
+    words = set()
+    for chunk in _WORD.findall(name):
+        for m in _PARTS.finditer(chunk):
+            w = m.group().casefold()
+            if w in CAMERA_WORDS or (w.isdigit() and not _is_year(w)):
+                continue
+            # Letters wedged between digits ("4cat7") are part of a code, not a word.
+            if not w.isdigit() and m.start() > 0 and m.end() < len(chunk) and chunk[m.start() - 1].isdigit() and chunk[m.end()].isdigit():
+                continue
+            words.add(w)
+    return words
+
+
+def _query_words(phrase: str) -> set[str]:
+    return {w.casefold() for w in _WORD.findall(phrase) if w.casefold() not in FILLER_WORDS}
+
+
+def _has(words: set[str], w: str) -> bool:
+    return w in words or f"{w}s" in words or (w.endswith("s") and w[:-1] in words)
+
+
+def _matches(phrase_words: set[str], words: set[str]) -> bool:
+    return bool(phrase_words) and all(_has(words, w) for w in phrase_words)
+
+
+def name_matcher(q: str) -> Callable[[str], bool] | None:
+    """A test for one name (file stem or folder): true when all words of any
+    alternative are in it and no excluded term is. None if nothing to match."""
+    positives, negatives = parse(q)
+    wanted = [w for w in (_query_words(p) for p in positives) if w]
+    unwanted = [w for w in (_query_words(n) for n in negatives) if w]
+    if not wanted:
+        return None
+
+    def test(name: str) -> bool:
+        words = name_words(name)
+        return any(_matches(w, words) for w in wanted) and not any(_matches(w, words) for w in unwanted)
+
+    return test
+
+
+def name_matches(q: str, photos) -> dict[int, str]:
+    """{photo id: "file" | "folder"} for photos whose file name or parent folder
+    matches ``q``. ``photos``: rows of (id, source, rel_path)."""
+    test = name_matcher(q)
+    if test is None:
+        return {}
+    out = {}
+    for pid, source, rel_path in photos:
+        path = PurePosixPath(rel_path)
+        if test(path.stem):
+            out[pid] = "file"
+        else:
+            parent = path.parent.name if str(path.parent) != "." else PurePath(source).name
+            if parent and test(parent):
+                out[pid] = "folder"
+    return out

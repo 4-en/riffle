@@ -142,6 +142,8 @@ Tags taught by example: select one or more photos, right-click → **Create tag 
 
 Search ranks the whole filtered set; it doesn't cut off results. Hyphenated words (`black-and-white`) are left alone.
 
+With **Names** on (the switch at the right end of the search box, on by default), photos whose file name contains all search words come first, then those whose folder does, each group in image order, with a small badge. Matching is by whole words (`cat` matches `cat_01.jpg`, not `catalogue.jpg`; a plural "s" is allowed), filler words like "at" and "the" are ignored, and camera names such as `IMG_4711` or `DSCF0012` contain no words, so out-of-camera files are unaffected.
+
 ## Location
 
 Camera files rarely have GPS, but your phone usually knew where you were. Add a location history under **Library → Location history**:
