@@ -97,6 +97,16 @@ class AlternativesIn(CurateIn):
     id: int
 
 
+class ProfileIn(BaseModel):
+    name: str
+    copy_from: str | None = None  # a profile slug; None = start empty
+    parts: list[str] | None = None  # what to copy: flags, exported, tags (default: all)
+
+
+class ProfileRename(BaseModel):
+    name: str
+
+
 class CustomTagIn(BaseModel):
     name: str
     photo_ids: list[int]
@@ -155,15 +165,23 @@ class TasteStore:
     next to the embeddings, loaded at startup. Scores for the indexed photos are
     recomputed (cheaply, without retraining) when the embeddings change."""
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, selections_path, profile: str = "default"):
+        self.cfg = cfg
+        self.lock = threading.Lock()
+        self.use(selections_path, profile)
+
+    def use(self, selections_path, profile: str) -> None:
+        """Switch to a profile: its flags train the model, and its model is its own
+        file (the default profile keeps the original name)."""
         from . import taste
 
-        self.cfg = cfg
-        self.path = cfg.embeddings_dir / f"{cfg.model.model_id}.taste.npz"
-        self.lock = threading.Lock()
-        self.model = taste.TasteModel.load(self.path)
-        self.scores: dict[int, float] = {}
-        self.scored_stamp = None
+        suffix = "" if profile == "default" else f".{profile}"
+        with self.lock:
+            self.selections_path = selections_path
+            self.path = self.cfg.embeddings_dir / f"{self.cfg.model.model_id}{suffix}.taste.npz"
+            self.model = taste.TasteModel.load(self.path)
+            self.scores: dict[int, float] = {}
+            self.scored_stamp = None
 
     def _refresh_scores(self, index: Index) -> None:
         if self.scored_stamp == index.stamp:
@@ -177,7 +195,7 @@ class TasteStore:
     def calibrate(self, index: Index):
         from . import taste
 
-        conn = db.connect_readonly(self.cfg.db_path, self.cfg.selections_path)
+        conn = db.connect_readonly(self.cfg.db_path, self.selections_path)
         try:
             model = taste.train(conn, index.E, index.ids)
         finally:
@@ -233,14 +251,24 @@ def create_app(
         "stopping": False,
     }
     job = index_job(cfg, run=index_runner)
-    taste_store = TasteStore(cfg)
+    # The active profile's selections database (profiles.py); switched at runtime.
+    from . import profiles
+
+    state["profile"] = profiles.active_slug(cfg)
+    state["selections"] = profiles.path_for(cfg, state["profile"])
+    state["profile_version"] = 0
+
+    def sel_path():
+        return state["selections"]
+
+    taste_store = TasteStore(cfg, sel_path(), state["profile"])
     export_job = BackgroundJob(cfg, run_export)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Make sure the catalogue exists so read-only connections work before the first index.
         db.connect(cfg.db_path).close()
-        selections.ensure(cfg.selections_path)
+        selections.ensure(sel_path())
         state["index"] = Index(cfg)
         if state["encoder"] is None:
             threading.Thread(target=load_encoder, name="riffle-model", daemon=True).start()
@@ -268,6 +296,9 @@ def create_app(
             "model": state["model"],
             "model_error": state["model_error"],
             "log": str(log_file) if log_file else None,
+            # tabs reload their data when another tab switches the profile
+            "profile": state["profile"],
+            "profile_version": state["profile_version"],
         }
 
     async def watch_clients():
@@ -289,7 +320,7 @@ def create_app(
     app.state.end_streams = lambda: state.__setitem__("stopping", True)
 
     def get_conn():
-        conn = db.connect_readonly(cfg.db_path, cfg.selections_path)
+        conn = db.connect_readonly(cfg.db_path, sel_path())
         try:
             yield conn
         finally:
@@ -671,7 +702,7 @@ def create_app(
                 "region_key": f"{cc}|{region}",
                 "country_key": cc,
             }
-        photo["export"] = selections.export_info(cfg.selections_path, r["sha256"]) if r["sha256"] else None
+        photo["export"] = selections.export_info(sel_path(), r["sha256"]) if r["sha256"] else None
         photo["taste"] = taste_store.score_of(photo_id)
         photo["flag"] = conn.execute(
             f"SELECT {FLAG_EXPR} FROM photos p WHERE p.id = ?", (photo_id,)
@@ -820,7 +851,7 @@ def create_app(
         every affected photo, which the UI keeps for undo."""
         try:
             previous = selections.set_flags(
-                conn, cfg.selections_path, [(op.ids, op.flag) for op in body.ops]
+                conn, sel_path(), [(op.ids, op.flag) for op in body.ops]
             )
         except ValueError as e:
             raise HTTPException(400, str(e))
@@ -830,11 +861,11 @@ def create_app(
     def reset_exported(body: ResetIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn)):
         """Forget the export history, of everything or of the photos within the filters."""
         if body.scope == "all":
-            n = selections.clear_exported(conn, cfg.selections_path)
+            n = selections.clear_exported(conn, sel_path())
         elif body.scope == "filtered":
             where, params = flt.where(model_id)
             ids = [r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)]
-            n = selections.clear_exported(conn, cfg.selections_path, ids)
+            n = selections.clear_exported(conn, sel_path(), ids)
         else:
             raise HTTPException(400, "scope must be all or filtered")
         return {"cleared": n}
@@ -844,11 +875,11 @@ def create_app(
         """Unflag everything, or every photo within the filters. Returns the
         previous flags, like /api/flags, so the reset can be undone."""
         if body.scope == "all":
-            previous = selections.clear_flags(conn, cfg.selections_path)
+            previous = selections.clear_flags(conn, sel_path())
         elif body.scope == "filtered":
             where, params = flt.where(model_id)
             ids = [r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)]
-            previous = selections.clear_flags(conn, cfg.selections_path, ids)
+            previous = selections.clear_flags(conn, sel_path(), ids)
         else:
             raise HTTPException(400, "scope must be all or filtered")
         return {"previous": {str(k): v for k, v in previous.items()}}
@@ -1017,7 +1048,7 @@ def create_app(
     def create_custom_tag(body: CustomTagIn, conn=Depends(get_conn)):
         """A tag from example photos (stored with the flags, by content hash)."""
         try:
-            tag_id = selections.create_tag(conn, cfg.selections_path, body.name, body.photo_ids, body.strictness)
+            tag_id = selections.create_tag(conn, sel_path(), body.name, body.photo_ids, body.strictness)
         except selections.TagError as e:
             raise tag_error(e)
         return {"id": tag_id}
@@ -1045,7 +1076,7 @@ def create_app(
     def edit_custom_tag(tag_id: int, body: CustomTagEdit, conn=Depends(get_conn)):
         try:
             selections.update_tag(
-                conn, cfg.selections_path, tag_id,
+                conn, sel_path(), tag_id,
                 name=body.name, strictness=body.strictness, add=body.add, remove=body.remove,
             )
         except selections.TagError as e:
@@ -1054,10 +1085,61 @@ def create_app(
 
     @app.delete("/api/custom-tags/{tag_id}")
     def delete_custom_tag(tag_id: int):
-        if not selections.delete_tag(cfg.selections_path, tag_id):
+        if not selections.delete_tag(sel_path(), tag_id):
             raise HTTPException(404, "no such tag")
         ctag_cache.pop(tag_id, None)
         return {"deleted": tag_id}
+
+    # ---- profiles (profiles.py) ------------------------------------------------------
+
+    def profile_error(e: Exception) -> HTTPException:
+        text = str(e)
+        return HTTPException(404 if text.startswith("no such") else 409 if "already exists" in text else 400, text)
+
+    @app.get("/api/profiles")
+    def list_profiles():
+        return {"profiles": profiles.list_profiles(cfg), "active": state["profile"]}
+
+    @app.post("/api/profiles", dependencies=[Depends(require_json)])
+    def create_profile(body: ProfileIn):
+        try:
+            slug = profiles.create(cfg, body.name, body.copy_from, set(body.parts) if body.parts is not None else None)
+        except profiles.ProfileError as e:
+            raise profile_error(e)
+        return {"slug": slug}
+
+    @app.post("/api/profiles/{slug}/activate", dependencies=[Depends(require_json)])
+    def activate_profile(slug: str):
+        """Switch every tab to this profile's flags, export history, and custom tags."""
+        if job.running or export_job.running:
+            raise HTTPException(409, "wait until indexing or the export has finished")
+        try:
+            path = profiles.switch(cfg, slug)
+        except profiles.ProfileError as e:
+            raise profile_error(e)
+        selections.ensure(path)
+        state["profile"], state["selections"] = slug, path
+        state["profile_version"] += 1
+        ctag_cache.clear()
+        taste_store.use(path, slug)
+        return {"active": slug}
+
+    @app.post("/api/profiles/{slug}", dependencies=[Depends(require_json)])
+    def rename_profile(slug: str, body: ProfileRename):
+        try:
+            profiles.rename(cfg, slug, body.name)
+        except profiles.ProfileError as e:
+            raise profile_error(e)
+        state["profile_version"] += 1  # other tabs show the new name
+        return {"slug": slug}
+
+    @app.delete("/api/profiles/{slug}")
+    def delete_profile(slug: str):
+        try:
+            moved = profiles.delete(cfg, slug)
+        except profiles.ProfileError as e:
+            raise profile_error(e)
+        return {"deleted": slug, "moved_to": str(moved)}
 
     @app.get("/api/styles")
     def list_styles():
@@ -1175,6 +1257,7 @@ def create_app(
             raw_fallback=body.raw_fallback,
             structure=body.structure,
             add_location=body.add_location and bool(cfg.location_history),
+            selections_path=str(sel_path()),  # its history stays in this profile
         )
         if not started:
             raise HTTPException(409, "an export is already running")
@@ -1286,7 +1369,7 @@ def create_app(
             ],
             "editable": cfg.path is not None,
             "config": str(cfg.path) if cfg.path else None,
-            "selections": str(cfg.selections_path),
+            "selections": str(sel_path()),
             "data_dir": str(cfg.data_dir),
         }
 

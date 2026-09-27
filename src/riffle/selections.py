@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS custom_tag_examples (
   added_at    REAL NOT NULL,
   PRIMARY KEY (tag_id, sha256)
 );
+
+-- v4: this file's profile name (profiles.py); empty in the default profile.
+CREATE TABLE IF NOT EXISTS profile (
+  name TEXT NOT NULL
+);
 """
 
 STRICTNESS = ("strict", "normal", "loose")
@@ -78,7 +83,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
-    conn.execute("PRAGMA user_version = 3")
+    conn.execute("PRAGMA user_version = 4")
     conn.commit()
     return conn
 

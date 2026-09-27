@@ -11,6 +11,15 @@ import sys
 from .config import load_config
 
 
+def _active_selections(cfg) -> str:
+    """The active profile's selections file, with the profile's name if not the default."""
+    from . import profiles
+
+    slug = profiles.active_slug(cfg)
+    path = profiles.path_for(cfg, slug)
+    return str(path) if slug == profiles.DEFAULT else f"{path}  (profile: {slug})"
+
+
 def main(argv: list[str] | None = None) -> None:
     multiprocessing.freeze_support()  # thumbnail workers in a frozen (standalone) build
     parser = argparse.ArgumentParser(
@@ -53,7 +62,7 @@ def main(argv: list[str] | None = None) -> None:
         rows = [
             ("config", cfg.path),
             ("vocabulary", cfg.vocabulary_path),
-            ("your flags", cfg.selections_path),
+            ("your flags", _active_selections(cfg)),
             ("derived data", cfg.data_dir),
         ]
         for label, path in rows:

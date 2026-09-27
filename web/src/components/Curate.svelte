@@ -6,6 +6,7 @@
   // never change flags. Only "Mark as picks" does, and Ctrl+Z undoes it.
   import { untrack } from 'svelte';
   import { view, curateKey } from '../lib/state.svelte.js';
+  import { connection } from '../lib/connection.svelte.js';
   import { fetchCurate, fetchAlternatives, fetchStyles, fetchHues } from '../lib/api.js';
   import { applyFlags, flagOf } from '../lib/culling.svelte.js';
   import { justify, layoutAspect } from '../lib/justify.js';
@@ -24,7 +25,11 @@
   ];
 
   // The draft is remembered per filter set: tags, excluded tags and filters.
-  const key = untrack(() => `riffle.curate.${hash(JSON.stringify(curateKey()))}`);
+  // (Per profile; the default profile keeps the original keys, so older drafts remain.)
+  const key = untrack(() => {
+    const profile = connection.profile && connection.profile !== 'default' ? `${connection.profile}.` : '';
+    return `riffle.curate.${profile}${hash(JSON.stringify(curateKey()))}`;
+  });
   const saved = load();
   // A search on the main page comes along (it scores the candidates; it does not filter).
   const startQuery = untrack(() => view.q) || saved.settings?.query || '';

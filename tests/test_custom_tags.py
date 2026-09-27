@@ -134,7 +134,7 @@ def test_tags_survive_reindexing_and_lost_examples(indexed, conn, archive_dir):
         assert listed(c, ctags=tag) == []
 
 
-def test_selections_migrate_to_v3(tmp_path):
+def test_selections_migrate_from_v2(tmp_path):
     path = tmp_path / "selections.sqlite3"
     old = sqlite3.connect(path)
     old.executescript(
@@ -147,6 +147,6 @@ def test_selections_migrate_to_v3(tmp_path):
     old.commit()
     old.close()
     conn = selections.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] >= 3
     assert conn.execute("SELECT flag FROM flags").fetchone()[0] == "pick"
     assert conn.execute("SELECT COUNT(*) FROM custom_tags").fetchone()[0] == 0

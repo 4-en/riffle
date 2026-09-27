@@ -1,7 +1,7 @@
 <script>
   import { tick, untrack } from 'svelte';
   import { view, prefs, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, curateKey, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup, hasOverview } from './lib/state.svelte.js';
-  import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds, fetchTaste } from './lib/api.js';
+  import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds, fetchTaste, fetchProfiles } from './lib/api.js';
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import { connection, connect } from './lib/connection.svelte.js';
   import TopBar from './components/TopBar.svelte';
@@ -38,6 +38,17 @@
   let loaded = false; // first page of the current query has arrived
 
   let facets = $state(null);
+  // Profiles (for the top bar switcher and the Library); refreshed on renames and switches.
+  let profiles = $state([]);
+  function loadProfiles() {
+    fetchProfiles()
+      .then((p) => (profiles = p.profiles))
+      .catch(() => {});
+  }
+  $effect(() => {
+    connection.profileVersion;
+    untrack(loadProfiles);
+  });
   // The taste model's status; refreshed with the sidebar (it retrains in the background).
   let taste = $state(null);
   function loadTaste() {
@@ -459,9 +470,9 @@
       {connection.log ? `Details: ${connection.log}` : 'See the terminal for details.'} Restart Riffle to try again (it needs an internet connection the first time).
     </div>
   {/if}
-  <TopBar bind:this={topBar} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} />
+  <TopBar bind:this={topBar} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} {profiles} />
   <div class="flex min-h-0 flex-1">
-    <Sidebar {tags} {facets} />
+    <Sidebar {tags} {facets} profile={profiles.find((p) => p.active && p.slug !== 'default')?.name} />
     <div class="flex min-w-0 flex-1 flex-col">
       {#if !(tags && tags.photos === 0 && !loading)}
         <ViewBar {total} {loading} {taste} />
@@ -589,5 +600,7 @@
       taste = t;
       if (view.sort === 'taste' || view.sort === '-taste') reset(); // new scores: new order
     }}
+    {profiles}
+    onprofiles={loadProfiles}
   />
 {/if}

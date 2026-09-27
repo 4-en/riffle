@@ -3,7 +3,8 @@
   import Filters from './Filters.svelte';
   import Section from './Section.svelte';
 
-  let { tags, facets } = $props();
+  // profile: the active profile's name when it is not the default (shown at the top).
+  let { tags, facets, profile = null } = $props();
 
   const titles = { subject: 'Subject', scene: 'Scene', look: 'Look' };
   // Server order follows vocabulary.yaml; only tags present in the current filter are listed.
@@ -14,6 +15,11 @@
   {#if !tags}
     <p class="px-2 text-neutral-500">Loading tags…</p>
   {:else}
+    {#if profile}
+      <p class="mb-2 truncate rounded bg-sky-950/60 px-2 py-1 text-xs text-sky-200" title="Picks, rejects, export history and your tags belong to this profile">
+        Profile: {profile}
+      </p>
+    {/if}
     {#if activeCount()}
       <div class="mb-3 flex items-center justify-between rounded bg-neutral-800/60 px-2 py-1.5 text-xs">
         <span class="text-neutral-400">{activeCount()} active</span>

@@ -130,6 +130,15 @@ Tags taught by example: select one or more photos, right-click → **Create tag 
 - To add examples, select photos, right-click, and pick the tag under **Add to a tag**.
 - Tags are stored with your flags in `selections.sqlite3`, by file content, so they survive re-indexing, moved files, and model changes.
 
+## Profiles
+
+A profile is a separate set of your own data: picks and rejects, export history, your tags, and the taste model. Use one per project, e.g. a photo book next to your general culling. The photos, their index, and the settings are shared.
+
+- **Library → Profiles** lists them with their counts. A new profile starts empty, or copies any of flags, export history, and your tags from the current one (e.g. keep your tags but start the picks from scratch).
+- Once there is more than one, the top bar shows the active profile with a menu to switch; other open tabs follow.
+- Switching waits until indexing or an export has finished; an export records its history in the profile it started in.
+- Each profile is one SQLite file. The default is `selections.sqlite3`; the others are in `profiles/` next to it. Deleting one moves its file to `profiles/deleted/`.
+
 ## Search syntax
 
 | Query | Meaning |
@@ -205,7 +214,7 @@ A photo scores a tag by its best-matching phrase. Tags within a family compete t
 | What | Where | Notes |
 |---|---|---|
 | `config.yaml`, `vocabulary.yaml` | `~/.config/riffle/` | Created on first run from `src/riffle/defaults/` |
-| `selections.sqlite3` (flags, export history, your tags) | `~/.local/share/riffle/` | Your data: back it up |
+| `selections.sqlite3` (flags, export history, your tags) | `~/.local/share/riffle/` | Your data: back it up. Other profiles: `profiles/*.sqlite3` next to it |
 | Catalogue, thumbnails, previews, embeddings | `~/.cache/riffle/` | Derived; safe to delete, `riffle index` rebuilds it |
 | `riffle.log` (downloadable builds only) | `~/.cache/riffle/` | The previous run's log is `riffle.log.1` |
 | CLIP model weights | `~/.cache/huggingface/` | Downloaded once |

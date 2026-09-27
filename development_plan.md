@@ -252,6 +252,13 @@ CREATE TABLE custom_tags (            -- v3: tags taught by example photos (§10
 CREATE TABLE custom_tag_examples (tag_id, sha256, source, rel_path, added_at);
 ```
 
+- **Profiles** (`profiles.py`, selections v4 adds a `profile` name table): each profile is one selections file. The default is the configured file; others are `profiles/<slug>.sqlite3` next to it; the active one is remembered in `active_profile` there (per machine, not in `config.yaml`).
+  - The server reads the active file through `sel_path()`.
+  - On a switch it clears the custom-tag cache and loads that profile's taste model (`<model_id>.<slug>.taste.npz`; the default keeps `<model_id>.taste.npz`).
+  - The SSE status carries the profile, so other tabs reload. The client drops custom tag filters (ids differ per profile) and reloads the page, which resets the flag overlay, undo history, and selection.
+  - New profiles start empty or copy chosen tables (flags, exported, custom tags) with `ATTACH` + `INSERT … SELECT`.
+  - Switching is refused while indexing or an export runs, and an export records history in the file it started with.
+  - Deleted profiles move to `profiles/deleted/`. Curate drafts are keyed per profile.
 - Keyed by content hash, so flags survive deleting the cache, re-indexing, moving, and renaming. Exact copies share a flag; editing a file drops it.
 - Unflagged photos have no row. Export history is independent of the flag.
 - Catalogue connections `ATTACH` this file as `sel`, so filters and listings join flags in SQL (`selections.flag_expr`).
@@ -469,6 +476,7 @@ styles:
 | GET / POST | `/api/export` | Export status / start (picks, filtered picks, or `photo_ids`) |
 | POST | `/api/exported/reset?<filters>` `{scope}` | Forget export history |
 | GET / POST | `/api/taste`, `/api/taste/calibrate` | Taste model status / calibrate |
+| GET, POST, DELETE | `/api/profiles`, `/api/profiles/{slug}`, `/api/profiles/{slug}/activate` | List (with counts), create (empty or copying parts), rename, delete, switch |
 | GET | `/api/styles`, `/api/hues` | Curate's styles and colour swatches |
 | POST | `/api/curate?<filters>`, `/api/curate/alternatives?<filters>` | Curate draft; alternatives for one slot (§12) |
 | GET, POST, DELETE | `/api/sources` | Photo folders (written to `config.yaml`); changes start indexing |
@@ -512,7 +520,8 @@ A single page without a router. View state lives in a Svelte store mirrored into
   - Groups appear in date order, or trip order for places (by each group's first photo), or path order for folders.
 - **Overviews**: a year calendar (days with a cover and count), or a map with one cluster per place, region, or country. Clicking opens the group in the grid. The map draws bundled Natural Earth outlines (`world-atlas` 50m, loaded lazily) with d3-geo and d3-zoom; street-level detail was left out deliberately.
 - **Photo view**: preview, metadata, tags, location with source and accuracy, taste score, and flag buttons. Actions: Stack, Find similar, Show day, Show place, Copy path.
-- **Library**: photo folders, folder browser, **Index now** with progress, location history, taste model, and flag / export-history resets.
+- **Library**: photo folders, folder browser, **Index now** with progress, location history, profiles, taste model, and flag / export-history resets.
+- **Profiles**: a switcher in the top bar once there are two or more, and "Profile: <name>" at the top of the sidebar outside the default profile.
 - **Help**: the workflow in steps and all shortcuts.
 
 Tailwind only; no component library.

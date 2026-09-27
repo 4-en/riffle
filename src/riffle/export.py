@@ -204,8 +204,11 @@ def run_export(
     raw_fallback: bool = True,
     structure: str = "flat",
     add_location: bool = False,
+    selections_path: str | Path | None = None,
 ) -> dict:
-    """Copy the files. Runs as a BackgroundJob; returns the summary."""
+    """Copy the files. Runs as a BackgroundJob; returns the summary. The export
+    history goes to ``selections_path`` (the profile active when it started),
+    else the config's."""
     from . import db
 
     dest = Path(folder)
@@ -256,7 +259,7 @@ def run_export(
     exported_ids = sorted({f.photo_id for f in files if f.status in ("copied", "skipped") and f.kind != "sidecar"})
     conn = db.connect(cfg.db_path)
     try:
-        marked = selections.mark_exported(conn, cfg.selections_path, exported_ids, str(dest)) if exported_ids else 0
+        marked = selections.mark_exported(conn, selections_path or cfg.selections_path, exported_ids, str(dest)) if exported_ids else 0
     finally:
         conn.close()
 

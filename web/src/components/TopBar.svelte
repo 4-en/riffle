@@ -1,8 +1,9 @@
 <script>
   import { view, prefs, setPref, search, clearAll } from '../lib/state.svelte.js';
+  import ProfileMenu from './ProfileMenu.svelte';
 
   // The grid's own controls (count, group, sort, stacks) are in ViewBar.
-  let { indexStatus = null, textSearch = true, picks = 0 } = $props();
+  let { indexStatus = null, textSearch = true, picks = 0, profiles = [] } = $props();
 
   const indexPct = $derived(
     indexStatus?.running && indexStatus.total ? Math.round((100 * indexStatus.done) / indexStatus.total) : null
@@ -108,6 +109,8 @@
   </div>
 
   <div class="h-5 w-px shrink-0 bg-neutral-800"></div>
+
+  <ProfileMenu {profiles} />
 
   <button
     class="flex shrink-0 items-center gap-2 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"

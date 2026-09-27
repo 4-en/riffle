@@ -120,6 +120,14 @@ export const deleteCustomTag = (id) => send('DELETE', `/api/custom-tags/${id}`);
 export const previewCustomTag = (photoIds, strictness) =>
   send('POST', '/api/custom-tags/preview', { photo_ids: photoIds, strictness });
 
+/** Profiles: switchable sets of flags, export history, and custom tags. */
+export const fetchProfiles = () => get('/api/profiles');
+export const createProfile = (name, copyFrom = null, parts = null) =>
+  send('POST', '/api/profiles', { name, copy_from: copyFrom, parts });
+export const activateProfile = (slug) => send('POST', `/api/profiles/${slug}/activate`);
+export const renameProfile = (slug, name) => send('POST', `/api/profiles/${slug}`, { name });
+export const deleteProfile = (slug) => send('DELETE', `/api/profiles/${slug}`);
+
 export const fetchSources = () => get('/api/sources');
 export const addSource = (path) => send('POST', '/api/sources', { path });
 export const removeSource = (path) => send('DELETE', '/api/sources', { path });
