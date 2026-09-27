@@ -435,7 +435,7 @@ A text search takes about 10 ms.
 - **Filtering**: members are computed from the in-memory embeddings (cached per tag version and embedding file) and passed to the shared filter as one JSON array per tag (`p.id IN (SELECT value FROM json_each(?))`), so every endpoint honours `ctags=` / `exclude_ctags=`.
 - **Speed** on the first library (a three-example gull tag: 44 / 57 / 68 photos at strict / normal / loose): sidebar counts 36 ms, a filtered listing 5 ms, the dialog preview 13 ms.
 
-**Vocabulary** (`vocabulary.yaml`, ~110 tags). Families are top-level keys; an entry is a name, or a name with alternative phrases (the name is always one of them). `styles:` holds Curate's style prompt pairs (§12).
+**Vocabulary** (`vocabulary.yaml`, ~110 tags). Families are top-level keys; an entry is a name, or a name with alternative phrases (the name is always one of them). `styles:` holds Curate's style prompt pairs (§12). `family_templates:` gives single families their own prompt templates; `kind` (photograph, illustration or drawing, painting, document; confidence ≥ 0.7) uses the bare phrase (§14.2). Tags added to the default reach existing users only by editing their copy; the first user's was extended by hand (backup kept).
 
 ```yaml
 templates: ["a photo of {}", "a photograph of {}", "a street photo of {}"]
@@ -509,7 +509,8 @@ Mutating endpoints accept only JSON bodies, so other sites can't trigger them wi
 A single page without a router. View state lives in a Svelte store mirrored into the URL (search, tags, filters, grouping, sort, open photo), so views can be bookmarked.
 
 - **Top bar**: search; a "similar to" chip; the workflow (**Review stacks**, **Curate**, **Export**); then **Library** (with indexing progress) and **?** (help).
-- **Toolbar above the grid**: result count; **Group** with a **Grid | Calendar/Map** switch; **Sort**; **Stacks**.
+- **Toolbar above the grid**: result count; **Group** with a **Grid | Calendar/Map** switch (or **Broad · Medium · Fine** for Similar); **Sort**; **Stacks**.
+- **Similar grouping** (`clusters.py`; `group=similar&level=`): hierarchical clustering (average linkage, cosine; cuts 0.45 / 0.35 / 0.25) of the photos the listing shows, so filters shape the themes. Above 6,000 photos a fixed sample is clustered and the rest assigned to the nearest centre. Clusters under 5 photos go to Other. Keys rank clusters by size; the photo → key map is a JSON object looked up per row in SQL (13 ms; a join against a JSON list took 470 ms). Cached per listing, level, and embedding file. Names: the kind of image when most members are not photographs, else the nearest subject/scene tags (skipping catch-alls; a second within 0.015), else the members' most common subject tag. On the first library: 300 ms for 2,132 photos (42 ms cached); the Sweden trip 70 ms, 20 medium groups.
   - A grouping keeps groups together, so it allows the date sorts, plus the place sorts for location groups and the file-name sorts for folders. Those order the groups by name, and the photos within them by the same sort.
 - **Sidebar**: "N active · Clear all" when anything narrows the view; then collapsible filter sections (Flag, Folder, Date, Camera, Lens, Exposure, Orientation, Location, Places) and tag families. Subject, Scene, and Look start open; each section remembers its state.
   - Options show counts within the other filters.
@@ -666,6 +667,33 @@ Not adopted: it would mean re-embedding every photo and keeping a second matrix,
 
 **Open:** more nuanced concepts could favour deeper features, which this benchmark could not test: one particular person, pet, or character among others of its kind. That needs a labelled set with such identities. See §15.
 
+### 14.2 Experiment: clustering and a 2D map (27 Sep 2026)
+
+Question: can the CLIP embeddings group a library into broader themes than stacks (a "Similar" grouping), and lay it out as a 2D map? Tried on the first library (2,132 photos) in a separate environment with scikit-learn.
+
+**Clustering:**
+
+| Method | Time | Clusters of ≥ 5 | Photos in one |
+|---|---|---|---|
+| Hierarchical, average linkage, cosine, cut 0.45 (broad) | 0.4 s | 23 | 98 % |
+| same, cut 0.35 (medium) | 0.4 s | 56 | 94 % |
+| same, cut 0.25 (fine) | 0.4 s | 95 | 83 % |
+| HDBSCAN (min cluster size 5 / 10) | 3 s | 119 / 51 | 76 / 66 % |
+
+- **Medium** clusters were coherent in contact sheets: waterfront, flowers, birds in the sky, meadows, busy streets, sheep, ducks, palace gardens, palace interiors, illustrations, blurred abstracts.
+- **Fine** split the largest into sensible parts: lakes, ferries, sailboats, and waterfront buildings; drawn illustrations and photographed figurines.
+- **Broad** was too coarse: one cluster held 518 nature photos.
+- **HDBSCAN** left a quarter to a third of the photos out, so it is not used.
+
+**Naming** by the tag nearest the cluster centre worked except where the vocabulary lacked a tag (illustrations named "a portrait") and where catch-alls ("other") won. The fixes were a `kind` family and three new subject tags (castles and palaces, candles, paintings and artworks), checked with contact sheets:
+- "Toys and figurines" was dropped: CLIP put it on illustrations whatever the phrasing (292 of 329).
+- Kind "a screenshot" and "a 3D render" were left out: the library has none, so the softmax gave them random product shots and landscapes (14 each even at 0.8 confidence).
+- Kind needs the bare phrase as its template: with "a photo of {}", only 856 photos counted as photographs and 167 as screenshots; with "{}", 1,629 and 24.
+
+**2D map:** t-SNE (scikit-learn, cosine) in 1.8 s. Thumbnails formed clear regions: illustrations, interiors and museums, streets and squares, waterfront, skies, flowers, meadows and wildlife. UMAP was not tried; it needs numba (heavy, slow to start, awkward in PyInstaller builds).
+
+**Adopted:** the "Similar" grouping (§11.2); the map stays a candidate (§15).
+
 ## 15. Candidates
 
 Roughly in order of value:
@@ -681,7 +709,7 @@ Roughly in order of value:
 9. Deeper image features (the penultimate CLIP layer, mean-centred) for find similar and your tags. They weren't better on everyday concepts (§14.1), but could be for individuals or characters, where the text-aligned embedding may blur one member of a kind into the others. Test first on a labelled set of such identities, then weigh it against the cost of a second embedding.
 10. People and pets: detect and group individuals (faces with a dedicated recognition model; pets via animal detection and crop embeddings). See §15.1.
 11. Mean-centring the current embedding for find similar and your tags: a small, free gain in §14.1, with the thresholds retuned.
-12. An embedding map (UMAP) for exploration.
+12. A 2D map of the library: t-SNE (§14.2, 1.8 s for 2,132 photos), computed once per index and cached so positions stay put under filters; zoom and pan like the location map, with cluster names over their regions; box-select to filter, flag, or teach a tag. Needs scikit-learn (~40 MB in the releases, no numba).
 13. Captions and OCR through a local vision-language model.
 14. Flags as XMP sidecars in the export folder, for Lightroom and darktable.
 

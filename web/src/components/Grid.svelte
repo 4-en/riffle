@@ -196,7 +196,7 @@
           <span class="text-xs text-neutral-400">{dateSpan(info.get(section.key).first, info.get(section.key).last)}</span>
         {/if}
         <span class="text-xs tabular-nums text-neutral-500">{info.get(section.key)?.count ?? section.items.length}</span>
-        {#if section.key}
+        {#if section.key && mode !== 'similar'}
           <button
             class="ml-auto text-xs text-neutral-500 hover:text-sky-400"
             title={isLocationGroup(mode) ? `Show only this ${mode}` : `Set the date filter to this ${mode}`}

@@ -42,7 +42,8 @@ export const view = $state({
   excludeCtags: [], // custom tag ids: photos must be in none of them
   tagDialog: null, // custom tag dialog: {mode: 'create', photoIds} | {mode: 'edit', tag} (not in the URL)
   filters: emptyFilters(),
-  group: '', // '' | 'day' | 'month' | 'year' | 'place' | 'region' | 'country' (browsing only, not search)
+  group: '', // '' | 'day' | 'month' | 'year' | 'place' | 'region' | 'country' | 'folder' | 'similar' (browsing only)
+  level: 'medium', // for group 'similar': 'broad' | 'medium' | 'fine'
   collapse: 'dupes', // 'dupes' | 'stacks': one tile per duplicate group or per stack
   sort: 'taken_at', // 'taken_at' | '-taken_at' | 'taste' (likely keepers first) | '-taste' (likely rejects first)
   overview: false, // calendar (date grouping) or map (location grouping) instead of the grid
@@ -66,6 +67,7 @@ export function readUrl() {
   view.photo = p.has('photo') ? Number(p.get('photo')) : null;
   view.raws = p.has('raws');
   view.group = GROUPS.includes(p.get('group')) ? p.get('group') : '';
+  view.level = LEVELS.includes(p.get('level')) ? p.get('level') : 'medium';
   view.collapse = p.get('collapse') === 'stacks' ? 'stacks' : 'dupes';
   view.sort = SORTS.includes(p.get('sort')) ? p.get('sort') : 'taken_at';
   view.overview = p.has('overview') && GROUPS.includes(view.group);
@@ -86,6 +88,7 @@ export function urlFor(v) {
   for (const k of FILTER_ARRAYS) for (const x of v.filters[k]) p.append(k, x);
   for (const k of FILTER_SCALARS) if (v.filters[k] !== '') p.set(k, v.filters[k]);
   if (v.group) p.set('group', v.group);
+  if (v.group === 'similar' && v.level !== 'medium') p.set('level', v.level);
   if (v.collapse === 'stacks') p.set('collapse', 'stacks');
   if (v.sort !== 'taken_at') p.set('sort', v.sort);
   if (v.overview) p.set('overview', '');
@@ -110,7 +113,9 @@ export function sortFits(group, sort) {
 
 export const DATE_GROUPS = ['day', 'month', 'year'];
 export const LOCATION_GROUPS = ['place', 'region', 'country'];
-export const GROUPS = [...DATE_GROUPS, ...LOCATION_GROUPS, 'folder'];
+export const GROUPS = [...DATE_GROUPS, ...LOCATION_GROUPS, 'folder', 'similar'];
+/** How finely the "Similar" grouping clusters. */
+export const LEVELS = ['broad', 'medium', 'fine'];
 /** Groupings with an overview: a calendar for dates, a map for locations (none for folders). */
 export const hasOverview = (mode) => DATE_GROUPS.includes(mode) || LOCATION_GROUPS.includes(mode);
 export const isLocationGroup = (mode) => LOCATION_GROUPS.includes(mode);
@@ -128,6 +133,7 @@ export function groupKey(photo, mode) {
 export function groupLabel(key, mode, label = null) {
   if (isLocationGroup(mode)) return label || (key ? key : 'Unknown location');
   if (mode === 'folder') return label || key || 'Unknown folder';
+  if (mode === 'similar') return label || (key ? 'Similar photos' : 'Other');
   if (!key) return 'Undated';
   const [y, m = 1, d = 1] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d);

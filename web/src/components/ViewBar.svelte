@@ -1,7 +1,7 @@
 <script>
   // The toolbar above the grid: how the photos are shown (count, grouping and its
   // overview, sort order, stacks). The top bar keeps search and the workflow actions.
-  import { view, hasOverview, isLocationGroup, sortFits } from '../lib/state.svelte.js';
+  import { view, hasOverview, isLocationGroup, sortFits, LEVELS } from '../lib/state.svelte.js';
 
   // taste: the taste model's status (enables the "likely keepers / rejects" sorts).
   let { total, loading, taste = null } = $props();
@@ -18,7 +18,7 @@
     {#if loading && !total}Loading…{:else}{total.toLocaleString()} {total === 1 ? 'photo' : 'photos'}{/if}
   </span>
 
-  <div class="flex items-center gap-1.5 {searching ? 'opacity-40' : ''}" title={searching ? 'Grouping applies when browsing, not to search results' : 'Group the grid by date, place, or folder'}>
+  <div class="flex items-center gap-1.5 {searching ? 'opacity-40' : ''}" title={searching ? 'Grouping applies when browsing, not to search results' : 'Group the grid by date, place, folder, or similar content'}>
     <label for="viewbar-group">Group</label>
     <select
       id="viewbar-group"
@@ -43,7 +43,27 @@
       <optgroup label="Files">
         <option value="folder">Folder</option>
       </optgroup>
+      <optgroup label="Content">
+        <option value="similar">Similar</option>
+      </optgroup>
     </select>
+    {#if view.group === 'similar'}
+      <div
+        class="flex overflow-hidden rounded border border-neutral-700"
+        role="group"
+        aria-label="How finely to group"
+        title="How finely similar photos are grouped: a few broad themes, or many small, close groups"
+      >
+        {#each LEVELS as level, i (level)}
+          <button
+            class="{segment} {i ? 'border-l border-neutral-700' : ''} {view.level === level ? on : off}"
+            aria-pressed={view.level === level}
+            disabled={searching}
+            onclick={() => (view.level = level)}>{level[0].toUpperCase() + level.slice(1)}</button
+          >
+        {/each}
+      </div>
+    {/if}
     {#if hasOverview(view.group)}
       <div class="flex overflow-hidden rounded border border-neutral-700" role="group" aria-label="Grid or overview">
         <button class="{segment} {view.overview ? off : on}" aria-pressed={!view.overview} disabled={searching} onclick={() => (view.overview = false)}>Grid</button>

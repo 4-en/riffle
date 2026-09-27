@@ -7,10 +7,10 @@ You search and browse by image content, cull by picking and rejecting photos, co
 ## Features
 
 - **Search** by text (`red lanterns at night`) or by example ("find similar"). Exclude terms with a minus (`street -people`), match either of several with `|` (`beach | lake`).
-- **Tags** for subject, scene, and look, from an editable vocabulary with alternative phrases per tag. Click a tag to include it, Alt+click (or hover and click **−**) to exclude it.
+- **Tags** for subject, scene, look, and kind of image (photograph, illustration, painting, document), from an editable vocabulary with alternative phrases per tag. Click a tag to include it, Alt+click (or hover and click **−**) to exclude it.
 - **Your tags**: select a few photos, right-click → **Create tag**, and photos like them get the tag. Works like the other tags in the sidebar and in every filter.
 - **Filters** for flag, folder, date, camera, lens, focal length, aperture, ISO, orientation, and location. Counts reflect the other active filters; filters that can't narrow the result are hidden.
-- **Grouping** by day, month, year, place, region, country, or folder, with a calendar or map overview.
+- **Grouping** by day, month, year, place, region, country, or folder, with a calendar or map overview; or by **Similar** content (clusters of alike photos, Broad · Medium · Fine), named after their tags.
 - **Culling**: pick or reject one photo at a time in the loupe or many at once in the grid, with undo.
 - **Stacks**: bursts and near-identical shots are grouped automatically and compared side by side, with sharpness, clipping warnings, and a suggested keeper.
 - **Taste model**: once you have flagged enough, Riffle can sort by what you tend to keep. It only orders photos; it never flags them.
@@ -187,7 +187,7 @@ Each model keeps its own embeddings and tags, so you can switch back and forth. 
 
 ## Tags
 
-Tags are defined in `vocabulary.yaml` (next to your config), grouped into families (`subject`, `scene`, `look`). An entry is a name, optionally with alternative phrases:
+Tags are defined in `vocabulary.yaml` (next to your config), grouped into families (`subject`, `scene`, `look`, `kind`). An entry is a name, optionally with alternative phrases:
 
 ```yaml
 subject:
@@ -196,6 +196,12 @@ subject:
 ```
 
 A photo scores a tag by its best-matching phrase. Tags within a family compete through a softmax, so avoid overlaps: prefer "cats", "dogs", "birds" over a general "animals". Per-family thresholds (`min_prob`, `max_tags`) are in `config.yaml`. After editing either file, run `riffle tag` (seconds; reuses stored embeddings).
+
+The `kind` family (photograph, illustration or drawing, painting, document) says what sort of image a file is, so illustrations or scans can be filtered in or out. It only tags when confident (`min_prob` 0.7). Its phrases are scored without the "a photo of …" templates (`family_templates:` in `vocabulary.yaml`), which confused it: with them, 167 ordinary photos counted as screenshots.
+
+## Similar grouping
+
+**Group → Similar** clusters the photos in the current view by content: a trip gets its own themes (waterfront, streets, palaces, birds…), the whole library broader ones. **Broad · Medium · Fine** sets how finely. Clusters are named after the nearest tags (or the kind of image, e.g. illustrations), largest first; photos that fit no group of five or more are under **Other**. Clusters follow what the model sees, content and scene, not events: for those, group by day or place.
 
 ## Keyboard
 

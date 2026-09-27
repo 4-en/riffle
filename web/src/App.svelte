@@ -177,7 +177,7 @@
 
   // Re-query whenever the search, filters or grouping change.
   $effect(() => {
-    view.q, view.similar, view.tags, view.excludeTags, view.ctags, view.excludeCtags, JSON.stringify(view.filters), view.group, view.collapse, view.sort, prefs.nameMatch;
+    view.q, view.similar, view.tags, view.excludeTags, view.ctags, view.excludeCtags, JSON.stringify(view.filters), view.group, view.level, view.collapse, view.sort, prefs.nameMatch;
     untrack(reset);
   });
 

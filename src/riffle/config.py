@@ -37,6 +37,9 @@ class TagConfig:
         default_factory=lambda: {
             "subject": FamilyThresholds(0.15, 3),
             "scene": FamilyThresholds(0.30, 1),
+            # confident only: the softmax always picks some kind, and a wrong one
+            # would hide a photo when that kind is excluded
+            "kind": FamilyThresholds(0.70, 1),
         }
     )
 

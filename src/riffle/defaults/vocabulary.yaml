@@ -68,6 +68,10 @@ subject:
   - fences and walls: [a fence, a wire fence, a brick wall, a stone wall, graffiti on a wall]
   - furniture: [chairs, a table, a bench, a sofa, a bed]
   - screens and phones: [a mobile phone, a person using a smartphone, a television, a computer screen]
+  # added Sep 2026 (missing when clustering the first library)
+  - castles and palaces: [a castle, a palace, a fortress, a royal palace]
+  - candles: [a candle, a burning candle, tea lights]
+  - paintings and artworks: [a framed painting on a wall, artworks in a gallery, a picture frame]
   # nature
   - trees: [a tree, trees, a forest, bamboo, a tree trunk]
   - flowers: [flowers, a flower bed, blossoms, cherry blossoms, potted plants]
@@ -126,6 +130,18 @@ look:
   - vivid colour: [a colourful scene, vivid colours, bright saturated colours]
   - shallow depth of field: [a blurred background, bokeh, shallow depth of field]
   - ordinary daylight: [an ordinary daytime photo, a photo in plain daylight]
+
+# What kind of image it is: a camera photo, or not (to filter illustrations and
+# scans in or out). Scored with the bare phrase; see family_templates below.
+kind:
+  - a photograph: [a camera photo, a snapshot]
+  - an illustration or drawing: [a drawing, digital art, an anime illustration, a cartoon, a sketch]
+  - a painting: [an oil painting, a watercolour painting]
+  - a document: [a page of text, a scanned document, a receipt]
+
+# Prompt templates for single families ("templates" above applies to the rest).
+family_templates:
+  kind: ["{}"]
 
 # Styles for Curate's sliders (not tags). Each style is scored by how much more a
 # photo looks like the "towards" phrases than the "away" phrases (CLIP). Checked

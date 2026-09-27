@@ -6,7 +6,7 @@
   // profile: the active profile's name when it is not the default (shown at the top).
   let { tags, facets, profile = null } = $props();
 
-  const titles = { subject: 'Subject', scene: 'Scene', look: 'Look' };
+  const titles = { subject: 'Subject', scene: 'Scene', look: 'Look', kind: 'Kind' };
   // Server order follows vocabulary.yaml; only tags present in the current filter are listed.
   const families = $derived(tags ? Object.entries(tags.families) : []);
 </script>

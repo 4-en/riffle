@@ -7,6 +7,7 @@ background (the first start downloads it), so the UI is usable at once.
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 import json
 import logging
 import os
@@ -45,6 +46,11 @@ from .selections import EXPORTED_EXPR, FLAG_EXPR, flag_expr
 log = logging.getLogger(__name__)
 
 # The built UI (`npm run build` in web/ writes it here; package data in the wheel).
+# The "Similar" grouping's key: a photo's cluster, looked up in a JSON object {photo id:
+# cluster key} held by the clusters CTE (similar_clusters). A lookup by key: a join
+# against a JSON list scanned the whole list per photo (470 ms vs 13 ms for 2,132).
+SIMILAR_KEY = """json_extract((SELECT map FROM clusters), '$."' || p.id || '"')"""
+
 WEB_DIST = Path(__file__).resolve().parent / "web"
 
 TextEncoder = Callable[[list[str]], np.ndarray]
@@ -485,8 +491,8 @@ def create_app(
         """SQL pieces for the grid listing: (cte, shown, order, params).
         ``{cte} SELECT ... {shown}`` selects the listed photos as ``p``."""
         where, params = flt.where(model_id)
-        if group and group not in GROUP_KEYS:
-            raise HTTPException(400, f"group must be one of {', '.join(GROUP_KEYS)}")
+        if group and group not in GROUP_KEYS and group != "similar":
+            raise HTTPException(400, f"group must be one of {', '.join([*GROUP_KEYS, 'similar'])}")
         order = {
             "taken_at": "p.taken_at IS NULL, p.taken_at, p.source, p.rel_path",
             "-taken_at": "p.taken_at IS NULL, p.taken_at DESC, p.source, p.rel_path",
@@ -521,9 +527,11 @@ def create_app(
         collapse: str | None = None,
         sort: str = "taken_at",
         group: str | None = None,
+        level: str = "medium",  # for group=similar: broad, medium, or fine
         offset: int = Query(0, ge=0),
         limit: int = Query(200, ge=1, le=1000),
         conn=Depends(get_conn),
+        index: Index = Depends(get_index),
     ):
         """Paged listing. With ``group`` (day, month, year) photos come in date
         order, each item carries its group key ("" = undated, last), and
@@ -534,11 +542,14 @@ def create_app(
         if sort in ("taste", "-taste"):
             return taste_listing(flt, collapse_mode(collapse, dupes), sort, offset, limit, conn)
         cte, shown, order, params = listing(flt, collapse_mode(collapse, dupes), sort, group)
-        key = GROUP_KEYS[group] if group else "NULL"
+        names = None
+        if group == "similar":
+            cte, params, names = similar_clusters(conn, cte, shown, params, index, level)
+        key = SIMILAR_KEY if group == "similar" else GROUP_KEYS[group] if group else "NULL"
         total = conn.execute(f"{cte} SELECT COUNT(*) {shown}", params).fetchone()[0]
         direction = "DESC" if sort == "-taken_at" else ""
         by_location = group in LOCATION_KEYS
-        groups = group_summary(conn, cte, shown, params, group, direction, sort) if group else None
+        groups = group_summary(conn, cte, shown, params, group, direction, sort, names) if group else None
         if group and sort in NAME_SORTS.get(group, ()):
             # Groups by name (place or folder), in the order of the summary; the sort within them.
             if groups:
@@ -551,6 +562,9 @@ def create_app(
         elif group == "folder":
             # Folders in path order (each folder's photos together), by date within a folder.
             order = f"grp, {order}"
+        elif group == "similar":
+            # Clusters largest first (their keys are ranks), "Other" last; date order within.
+            order = f"grp IS NULL, grp, {order}"
         rows = conn.execute(
             f"{cte} SELECT p.id, {key} AS grp {shown} ORDER BY {order} LIMIT ? OFFSET ?",
             [*params, limit, offset],
@@ -588,14 +602,14 @@ def create_app(
                 return " / ".join([s.name, *rest.split("/")]) if rest else s.name
         return key.rstrip("/")
 
-    def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "", sort: str = "") -> list[dict]:
+    def group_summary(conn, cte: str, shown: str, params: list, group: str, direction: str = "", sort: str = "", names: dict | None = None) -> list[dict]:
         """Every non-empty group of the listing, in display order, with its count,
         first/last capture time, and a cover photo (a pick if the group has one,
         else its first photo). Location groups add a label and a centre point.
         With a name sort (``NAME_SORTS``), groups are ordered by their label, unknown last."""
-        key = GROUP_KEYS[group]
+        key = SIMILAR_KEY if group == "similar" else GROUP_KEYS[group]
         by_location = group in LOCATION_KEYS
-        group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else f"grp {direction}"
+        group_order = f"MIN(p.taken_at) {direction}, grp" if by_location else "grp" if group == "similar" else f"grp {direction}"
         extra = ""
         if by_location:
             lat = "(SELECT l.lat FROM photo_locations l WHERE l.photo_id = p.id)"
@@ -622,6 +636,8 @@ def create_app(
             g = {"key": k or "", "count": r[1], "first": r[2], "last": r[3], "cover": covers.get(k)}
             if group == "folder":
                 g["label"] = folder_label(k)
+            if group == "similar":
+                g["label"] = (names or {}).get(k, "Similar photos") if k else "Other"
             if by_location:
                 g["label"] = labels.get(k, "Unknown location") if k else "Unknown location"
                 g["lat"], g["lon"] = (r[4], r[5]) if k else (None, None)
@@ -637,13 +653,90 @@ def create_app(
         flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
+        level: str = "medium",
         conn=Depends(get_conn),
+        index: Index = Depends(get_index),
     ):
         """Only the groups of a grouped listing (for the calendar and map overviews)."""
-        if group not in GROUP_KEYS:
-            raise HTTPException(400, f"group must be one of {', '.join(GROUP_KEYS)}")
+        if group not in GROUP_KEYS and group != "similar":
+            raise HTTPException(400, f"group must be one of {', '.join([*GROUP_KEYS, 'similar'])}")
         cte, shown, _, params = listing(flt, collapse_mode(collapse, dupes), "taken_at", group)
-        return {"group": group, "groups": group_summary(conn, cte, shown, params, group)}
+        names = None
+        if group == "similar":
+            cte, params, names = similar_clusters(conn, cte, shown, params, index, level)
+        return {"group": group, "groups": group_summary(conn, cte, shown, params, group, names=names)}
+
+    # ---- "Similar" grouping (clusters.py) ----------------------------------------------
+
+    cluster_cache: OrderedDict = OrderedDict()  # (listing, level, embeddings) -> (mapping json, names)
+    tag_vector_cache: dict = {}
+
+    def naming_vectors():
+        """Subject and scene tag text vectors for naming clusters (None without the model)."""
+        from .tags import load_vocabulary, phrase_vectors
+
+        encoder = state["encoder"]
+        if encoder is None:
+            return None, []
+        try:
+            stamp = Path(cfg.vocabulary_path).stat().st_mtime_ns
+        except OSError:
+            stamp = None
+        if tag_vector_cache.get("stamp") != (stamp, id(encoder)):
+            vocab = load_vocabulary(cfg.vocabulary_path)
+            names, vecs = [], []
+            for family in ("subject", "scene"):
+                for label in vocab.families.get(family, []):
+                    v = phrase_vectors(label.phrases, vocab.templates_for(family), encoder).mean(axis=0)
+                    names.append(label.name)
+                    vecs.append(v / np.linalg.norm(v))
+            tag_vector_cache.update(stamp=(stamp, id(encoder)), names=names, vecs=np.array(vecs) if vecs else None)
+        return tag_vector_cache["vecs"], tag_vector_cache["names"]
+
+    def similar_clusters(conn, cte: str, shown: str, params: list, index: Index, level: str):
+        """Cluster the listing's photos; returns the CTE and params extended with
+        ``clusters(pid, k)``, and the names per cluster key."""
+        from . import clusters
+
+        if level not in clusters.LEVELS:
+            raise HTTPException(400, f"level must be one of {', '.join(clusters.LEVELS)}")
+        cache_key = (cte, shown, json.dumps(params, default=str), level, index.stamp, state["encoder"] is not None)
+        hit = cluster_cache.get(cache_key)
+        if hit is None:
+            ids = [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY p.id", params)]
+            ids = [i for i in ids if i in index.row]
+            rows = [index.row[i] for i in ids]
+            labels = clusters.cluster(index.E[rows], level) if rows else np.zeros(0, int)
+            members: dict[int, list[int]] = {}
+            for pid, lab in zip(ids, labels):
+                if lab >= 0:
+                    members.setdefault(int(lab), []).append(pid)
+            kinds = dict(conn.execute(
+                """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
+                   WHERE t.family = 'kind' AND pt.model_id = ?""", (model_id,)))
+            vecs, tag_names = naming_vectors()
+            subjects: dict[int, list[str]] = {}
+            if vecs is None:
+                for pid, name in conn.execute(
+                    """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
+                       WHERE t.family = 'subject' AND pt.model_id = ?""", (model_id,)):
+                    subjects.setdefault(pid, []).append(name)
+            names = {}
+            for lab, pids in members.items():
+                centroid = index.E[[index.row[p] for p in pids]].mean(axis=0)
+                names[f"{lab:04d}"] = clusters.name(
+                    centroid, tag_names, vecs,
+                    member_kinds=[kinds.get(p) for p in pids],
+                    member_tags=[t for p in pids for t in subjects.get(p, [])],
+                )
+            mapping = json.dumps({str(pid): f"{lab:04d}" for lab, pids in members.items() for pid in pids})
+            hit = cluster_cache[cache_key] = (mapping, names)
+            while len(cluster_cache) > 8:
+                cluster_cache.popitem(last=False)
+        cluster_cache.move_to_end(cache_key)
+        mapping, names = hit
+        cte += ", clusters(map) AS (SELECT ?)"
+        return cte, [*params, mapping], names
 
     @app.get("/api/photos/{photo_id}")
     def photo_detail(photo_id: int, conn=Depends(get_conn), index: Index = Depends(get_index)):

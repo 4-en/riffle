@@ -38,7 +38,7 @@ export function fetchResults(view, offset, limit) {
   if (view.q) return get('/api/search/text', { ...common, q: view.q, names: prefs.nameMatch ? undefined : 'false' });
   // Grouped views allow only the sorts that keep groups together (date, or the groups' names).
   const sort = sortFits(view.group, view.sort) ? view.sort : 'taken_at';
-  return get('/api/photos', { ...common, group: view.group, sort });
+  return get('/api/photos', { ...common, group: view.group, level: view.group === 'similar' ? view.level : undefined, sort });
 }
 
 /** Tags with counts within the current filter; tags no matching photo carries are omitted. */
