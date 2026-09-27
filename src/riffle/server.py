@@ -7,6 +7,7 @@ background (the first start downloads it), so the UI is usable at once.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections import OrderedDict
 import json
 import logging
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
+import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -730,29 +732,48 @@ def create_app(
         return {"points": points, "groups": groups, "other": len(members.get(None, []))}
 
     cluster_cache: OrderedDict = OrderedDict()  # (listing, level, embeddings) -> (mapping json, names)
-    tag_vector_cache: dict = {}
+    tag_vector_cache: dict = {}  # the cluster namer, per embeddings and encoder
 
-    def naming_vectors():
-        """Subject and scene tag text vectors for naming clusters (None without the model)."""
+    def cluster_namer(index: Index):
+        """The naming vocabulary's text vectors (cached on disk per model, like the
+        embeddings) and the library's mean similarity to each phrase. None without
+        the model."""
+        from . import clusters, paths
         from .tags import load_vocabulary, phrase_vectors
 
         encoder = state["encoder"]
-        if encoder is None:
-            return None, []
+        if encoder is None or index.E.size == 0:
+            return None
+        if tag_vector_cache.get("index") == (index.stamp, id(encoder)):
+            return tag_vector_cache["namer"]
+        raw = yaml.safe_load(paths.default_file("cluster_names.yaml").read_text())
+        things, media, settings = (list(raw.get(k) or []) for k in ("things", "media", "settings"))
+        phrases = things + media + settings
+        templates = load_vocabulary(cfg.vocabulary_path).templates
+        signature = json.dumps([phrases, templates])
+        path = cfg.embeddings_dir / f"{model_id}.names.npz"
+        vecs = None
         try:
-            stamp = Path(cfg.vocabulary_path).stat().st_mtime_ns
-        except OSError:
-            stamp = None
-        if tag_vector_cache.get("stamp") != (stamp, id(encoder)):
-            vocab = load_vocabulary(cfg.vocabulary_path)
-            names, vecs = [], []
-            for family in ("subject", "scene"):
-                for label in vocab.families.get(family, []):
-                    v = phrase_vectors(label.phrases, vocab.templates_for(family), encoder).mean(axis=0)
-                    names.append(label.name)
-                    vecs.append(v / np.linalg.norm(v))
-            tag_vector_cache.update(stamp=(stamp, id(encoder)), names=names, vecs=np.array(vecs) if vecs else None)
-        return tag_vector_cache["vecs"], tag_vector_cache["names"]
+            with np.load(path) as f:
+                if str(f["signature"]) == signature:
+                    vecs = f["vecs"]
+        except (OSError, KeyError, ValueError):
+            pass
+        if vecs is None:
+            vecs = phrase_vectors(phrases, templates, encoder)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp.npz")
+            np.savez(tmp, vecs=vecs, signature=np.array(signature))
+            os.replace(tmp, path)
+        namer = clusters.Namer(
+            phrases=phrases,
+            vecs=vecs,
+            baseline=index.E.mean(axis=0) @ vecs.T,
+            setting=np.array([False] * (len(things) + len(media)) + [True] * len(settings)),
+            media=np.array([False] * len(things) + [True] * len(media) + [False] * len(settings)),
+        )
+        tag_vector_cache.update(index=(index.stamp, id(encoder)), namer=namer)
+        return namer
 
     def similar_clusters(conn, cte: str, shown: str, params: list, index: Index, level: str):
         """Cluster the listing's photos; returns the CTE and params extended with
@@ -761,7 +782,8 @@ def create_app(
 
         if level not in clusters.LEVELS:
             raise HTTPException(400, f"level must be one of {', '.join(clusters.LEVELS)}")
-        cache_key = (cte, shown, json.dumps(params, default=str), level, index.stamp, state["encoder"] is not None)
+        tag_versions = tuple(conn.execute("SELECT id, updated_at, strictness FROM sel.custom_tags ORDER BY id").fetchall())
+        cache_key = (cte, shown, json.dumps(params, default=str), level, index.stamp, state["encoder"] is not None, tag_versions)
         hit = cluster_cache.get(cache_key)
         if hit is None:
             ids = [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY p.id", params)]
@@ -775,21 +797,32 @@ def create_app(
             kinds = dict(conn.execute(
                 """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
                    WHERE t.family = 'kind' AND pt.model_id = ?""", (model_id,)))
-            vecs, tag_names = naming_vectors()
+            namer = cluster_namer(index)
             subjects: dict[int, list[str]] = {}
-            if vecs is None:
+            if namer is None:
                 for pid, name in conn.execute(
                     """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
                        WHERE t.family = 'subject' AND pt.model_id = ?""", (model_id,)):
                     subjects.setdefault(pid, []).append(name)
-            names = {}
-            for lab, pids in members.items():
-                centroid = index.E[[index.row[p] for p in pids]].mean(axis=0)
-                names[f"{lab:04d}"] = clusters.name(
-                    centroid, tag_names, vecs,
-                    member_kinds=[kinds.get(p) for p in pids],
-                    member_tags=[t for p in pids for t in subjects.get(p, [])],
-                )
+            # The user's custom tags of each photo (a cluster mostly in one takes its name).
+            ctags = custom_tag_list(conn)
+            tag_members = custom_tag_members(conn, index, ctags)
+            own: dict[int, list[str]] = {}
+            for t in ctags:
+                for pid in tag_members[t["id"]]:
+                    own.setdefault(pid, []).append(t["name"])
+            if namer is not None and rows:
+                # Distinctive within this view (see clusters.names), not the whole library.
+                namer = dataclasses.replace(namer, baseline=index.E[rows].mean(axis=0) @ namer.vecs.T)
+            keys = sorted(members)
+            labels_ = clusters.names(
+                [index.E[[index.row[p] for p in members[k]]].mean(axis=0) for k in keys],
+                namer,
+                member_kinds=[[kinds.get(p) for p in members[k]] for k in keys],
+                member_tags=[[t for p in members[k] for t in subjects.get(p, [])] for k in keys],
+                member_custom=[[own.get(p, []) for p in members[k]] for k in keys],
+            )
+            names = {f"{k:04d}": label for k, label in zip(keys, labels_)}
             mapping = json.dumps({str(pid): f"{lab:04d}" for lab, pids in members.items() for pid in pids})
             hit = cluster_cache[cache_key] = (mapping, names)
             while len(cluster_cache) > 8:

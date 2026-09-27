@@ -33,6 +33,23 @@ def test_clusters_by_size_with_other(data):
     assert np.array_equal(labels, clusters.cluster(data, "medium"))  # deterministic
 
 
+def test_a_too_large_cluster_splits(monkeypatch):
+    rng = np.random.default_rng(3)
+    def sub(axis, n):
+        X = np.zeros((n, DIM))
+        X[:, 0], X[:, axis] = 1.0, 0.55  # two subjects sharing one strong direction ("illustration")
+        X += 0.02 * rng.normal(size=(n, DIM))
+        return X / np.linalg.norm(X, axis=1, keepdims=True)
+    X = np.vstack([sub(5, 20), sub(6, 20)])
+    monkeypatch.setattr(clusters, "MIN_CAP", 25)
+    monkeypatch.setattr(clusters, "MAX_SHARE", {**clusters.MAX_SHARE, "medium": 1.0})
+    assert len(set(clusters.cluster(X, "medium"))) == 1  # no cap: one cluster of 40
+    monkeypatch.setattr(clusters, "MAX_SHARE", {**clusters.MAX_SHARE, "medium": 0.5})
+    labels = clusters.cluster(X, "medium")  # capped at 25: split by subject
+    assert set(labels[:20]) != set(labels[20:]) and len(set(labels[:20])) == 1 and len(set(labels[20:])) == 1
+    assert (labels >= 0).all()  # nothing lost to Other by the split
+
+
 def test_levels_get_finer(monkeypatch):
     monkeypatch.setattr(clusters, "MIN_SIZE", 1)  # count every cluster
     rng = np.random.default_rng(1)
@@ -52,17 +69,66 @@ def test_sampled_path_labels_everything(data, monkeypatch):
     assert set(labels[23:]) == {0} and set(labels[:12]) == {1}  # same clusters from a sample
 
 
-def test_names():
-    tags = ["boats", "other", "sheep", "sheep and lambs"]
-    vecs = np.eye(4)
-    near = np.array([0.1, 0.9, 0.2, 0.0])  # nearest is the catch-all "other"
-    assert clusters.name(near, tags, vecs) == "sheep"
-    close_pair = np.array([0, 0, 1.0, 0.99])
-    assert clusters.name(close_pair, tags, vecs) == "sheep · sheep and lambs"
-    assert clusters.name(near, tags, vecs, member_kinds=["an illustration or drawing"] * 3 + [None]) == "an illustration or drawing"
-    assert clusters.name(near, tags, vecs, member_kinds=["a photograph"] * 4) == "sheep"  # catch-all kind ignored
-    assert clusters.name(near, [], None, member_tags=["sheep", "sheep", "boats", "other"]) == "sheep"  # no model
-    assert clusters.name(near, [], None) == "Similar photos"
+def namer(phrases, setting=(), baseline=None):
+    vecs = np.eye(len(phrases))
+    return clusters.Namer(
+        phrases=list(phrases),
+        vecs=vecs,
+        baseline=np.zeros(len(phrases)) if baseline is None else np.array(baseline, float),
+        setting=np.array([p in setting for p in phrases]),
+    )
+
+
+def test_names_pick_the_distinctive_phrase():
+    n = namer(["sheep", "a meadow", "a blue sky"], baseline=[0.1, 0.6, 0.0])
+    # "a meadow" is nearest, but every photo of this library is: "sheep" is what stands out
+    assert clusters.names([np.array([0.5, 0.8, 0.0])], n, [[]]) == ["sheep"]
+    assert clusters.names([np.array([0.5, 0.8, 0.0])], namer(["sheep", "a meadow", "a blue sky"]), [[]]) == ["a meadow"]
+
+
+def test_a_thing_close_behind_a_setting_comes_first():
+    n = namer(["birds in flight", "boats", "a blue sky"], setting=["a blue sky"])
+    close = np.array([0.80, 0.0, 0.82])  # the sky wins, the birds are close behind
+    assert clusters.names([close], n, [[]]) == ["birds in flight · a blue sky"]
+    far = np.array([0.40, 0.0, 0.82])  # nothing close: the setting alone
+    assert clusters.names([far], n, [[]]) == ["a blue sky"]
+
+
+def test_custom_tags_name_first():
+    n = namer(["cats", "dogs"])
+    members = [["Our cat"], ["Our cat"], ["Our cat", "Garden"], []]
+    illus = ["an illustration or drawing"] * 4
+    assert clusters.names([np.array([1.0, 0])], n, [illus], member_custom=[members]) == ["Our cat"]  # 3 of 4
+    few = [["Our cat"], [], [], []]
+    assert clusters.names([np.array([1.0, 0])], n, [[None] * 4], member_custom=[few]) == ["cats"]  # 1 of 4: not enough
+
+
+def test_several_clusters_of_a_kind_are_named_by_content():
+    n = namer(["an anime illustration", "swimmers", "figurines", "boats"])
+    illus = ["an illustration or drawing"] * 4
+    photos = ["a photograph"] * 12
+    swim = np.array([0.9, 0.5, 0.0, 0.0])  # both illustration clusters are very "anime illustration"...
+    figs = np.array([0.9, 0.0, 0.5, 0.0])  # ...and differ in what they show
+    boats = np.array([0.0, 0.0, 0.0, 1.0])
+    got = clusters.names([swim, figs, boats], n, [illus, illus, photos])
+    assert got == ["Illustrations: swimmers", "Illustrations: figurines", "boats"]
+
+
+def test_kind_first_duplicates_and_fallbacks():
+    n = namer(["anime figures", "sheep", "lambs"])
+    illus = ["an illustration or drawing"] * 3 + [None]
+    photos = ["a photograph"] * 6
+    # In a mixed view, a cluster of illustrations is named by its kind...
+    assert clusters.names([np.array([1.0, 0, 0]), np.array([0, 1.0, 0])], n, [illus, photos])[0] == "Illustrations"
+    # ...but not when illustrations fill the view: then the kind says nothing about it.
+    assert clusters.names([np.array([1.0, 0, 0])], n, [illus]) == ["anime figures"]
+    assert clusters.names([np.array([1.0, 0, 0])], n, [["a photograph"] * 4]) == ["anime figures"]  # catch-all kind
+    two = clusters.names([np.array([0, 1.0, 0.5]), np.array([0, 1.0, 0.2])], n, [[], []])
+    assert two == ["sheep", "sheep 2"]  # told apart; "lambs" fits the second too poorly to name it
+    close = clusters.names([np.array([0, 1.0, 0.96]), np.array([0, 1.0, 0.98])], n, [[], []])
+    assert close == ["sheep", "sheep · lambs"]  # a well-fitting phrase tells them apart
+    assert clusters.names([np.zeros(3) + 1], None, [[]], [["sheep", "sheep", "boats", "other"]]) == ["sheep"]
+    assert clusters.names([np.zeros(3) + 1], None, [[]], [[]]) == ["Similar photos"]
 
 
 def at(axis: int, jitter: float) -> np.ndarray:
@@ -148,3 +214,23 @@ def test_similar_map_with_clusters_and_other(indexed, conn, monkeypatch):
         res = c.get("/api/similar/map", params={"dupes": "all"})
         assert res.status_code == 200, res.text
         assert res.json()["other"] == 1 and [g["count"] for g in res.json()["groups"]] == [3]
+
+
+def test_a_custom_tag_names_its_cluster(indexed, conn, monkeypatch):
+    monkeypatch.setattr(clusters, "MIN_SIZE", 2)
+    vectors = {
+        "IMG_0001.jpg": at(0, 0.05),
+        "IMG_0003.png": at(0, 0.10),
+        "IMG_0002.jpg": at(4, 0.05),
+        "IMG_0002_edit.png": at(4, 0.10),
+    }
+    E, ids = load_embeddings(indexed)
+    by_id = {photo(conn, n)["id"]: v for n, v in vectors.items()}
+    save_embeddings(indexed, np.stack([by_id[int(i)] for i in ids]), ids)
+    pair = [photo(conn, "IMG_0001.jpg")["id"], photo(conn, "IMG_0003.png")["id"]]
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:
+        before = c.get("/api/groups", params={"group": "similar", "dupes": "all"}).json()["groups"]
+        assert "Lanterns" not in [g["label"] for g in before]
+        c.post("/api/custom-tags", json={"name": "Lanterns", "photo_ids": pair, "strictness": "strict"})
+        after = c.get("/api/groups", params={"group": "similar", "dupes": "all"}).json()["groups"]  # not the cached names
+        assert "Lanterns" in [g["label"] for g in after]

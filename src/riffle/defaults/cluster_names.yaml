@@ -1,0 +1,536 @@
+# Names for clusters in the Similar grouping (clusters.py). Not tags: only used to
+# name groups of alike photos. A cluster is named after the phrase that is most
+# distinctive for it (closer to the cluster than to the average photo). A "thing"
+# close behind a "setting" is named first ("birds in flight · a blue sky").
+
+things:
+  - sheep
+  - lambs
+  - cows
+  - horses
+  - goats
+  - pigs
+  - chickens
+  - ducks
+  - swans
+  - geese
+  - seagulls
+  - pigeons
+  - crows
+  - ravens
+  - magpies
+  - sparrows
+  - songbirds
+  - birds of prey
+  - owls
+  - herons
+  - storks
+  - peacocks
+  - parrots
+  - flamingos
+  - penguins
+  - cats
+  - kittens
+  - dogs
+  - puppies
+  - rabbits
+  - squirrels
+  - deer
+  - foxes
+  - wolves
+  - bears
+  - moose
+  - reindeer
+  - horses grazing
+  - donkeys
+  - camels
+  - elephants
+  - giraffes
+  - zebras
+  - lions
+  - tigers
+  - monkeys
+  - seals
+  - dolphins
+  - whales
+  - fish
+  - koi carp
+  - jellyfish
+  - crabs
+  - snails
+  - frogs
+  - turtles
+  - lizards
+  - snakes
+  - bees
+  - bumblebees
+  - butterflies
+  - moths
+  - dragonflies
+  - ladybirds
+  - spiders
+  - ants
+  - beetles
+  - insects on flowers
+  - birds in flight
+  - a flock of birds
+  - birds on a wire
+  - flowers
+  - tulips
+  - roses
+  - daisies
+  - pansies
+  - lilacs
+  - cherry blossoms
+  - apple blossoms
+  - sunflowers
+  - poppies
+  - lavender
+  - orchids
+  - lilies
+  - dandelions
+  - wildflowers
+  - a flower meadow
+  - flower beds
+  - potted plants
+  - houseplants
+  - cacti
+  - succulents
+  - ferns
+  - moss
+  - mushrooms
+  - lichen
+  - leaves
+  - autumn leaves
+  - green leaves
+  - tree bark
+  - tree branches
+  - bare trees
+  - blossoming trees
+  - pine trees
+  - birch trees
+  - palm trees
+  - willows
+  - a forest
+  - a pine forest
+  - woodland paths
+  - reeds
+  - tall grass
+  - a lawn
+  - a meadow
+  - a field of crops
+  - wheat fields
+  - vineyards
+  - hedges
+  - bushes
+  - a garden
+  - a vegetable garden
+  - water lilies
+  - seaweed
+  - driftwood
+  - rocks
+  - pebbles
+  - sand
+  - dunes
+  - cliffs
+  - boulders
+  - mountains
+  - snowy mountains
+  - hills
+  - valleys
+  - canyons
+  - caves
+  - volcanoes
+  - glaciers
+  - icebergs
+  - snow
+  - frost
+  - ice
+  - rain
+  - fog
+  - mist
+  - a sunset
+  - a sunrise
+  - the moon
+  - stars at night
+  - the milky way
+  - a rainbow
+  - lightning
+  - a storm
+  - a lake
+  - a calm lake
+  - a river
+  - a stream
+  - a waterfall
+  - a pond
+  - the sea
+  - ocean waves
+  - a beach
+  - a sandy beach
+  - a rocky shore
+  - a coastline
+  - an island
+  - small islands
+  - an archipelago
+  - a harbour
+  - a marina
+  - a pier
+  - a jetty
+  - a canal
+  - a fountain
+  - reflections in water
+  - water droplets
+  - a swimming pool
+  - a bay
+  - a fjord
+  - sailboats
+  - yachts
+  - ferries
+  - cruise ships
+  - fishing boats
+  - rowing boats
+  - canoes
+  - kayaks
+  - speedboats
+  - a tall ship
+  - an old sailing ship
+  - warships
+  - tugboats
+  - cargo ships
+  - cars
+  - vintage cars
+  - sports cars
+  - taxis
+  - buses
+  - double-decker buses
+  - trams
+  - trains
+  - steam trains
+  - subway trains
+  - a metro station
+  - train tracks
+  - a railway station
+  - bicycles
+  - parked bicycles
+  - cyclists
+  - motorcycles
+  - scooters
+  - trucks
+  - tractors
+  - airplanes
+  - helicopters
+  - hot air balloons
+  - a road
+  - a highway
+  - a bridge
+  - a car park
+  - traffic lights
+  - a palace
+  - a royal palace
+  - a castle
+  - a fortress
+  - a round fortress tower
+  - city walls
+  - a church
+  - a cathedral
+  - a chapel
+  - church spires
+  - a bell tower
+  - a clock tower
+  - a lighthouse
+  - a windmill
+  - a manor house
+  - a country house
+  - a farmhouse
+  - a barn
+  - a cottage
+  - wooden houses
+  - red wooden houses
+  - colourful houses
+  - townhouses
+  - apartment blocks
+  - skyscrapers
+  - a city skyline
+  - old town streets
+  - a narrow alley
+  - cobblestone streets
+  - a town square
+  - a market square
+  - a street market
+  - shop fronts
+  - cafes
+  - restaurants
+  - a bar
+  - a hotel
+  - a museum
+  - an art gallery
+  - a library
+  - a theatre
+  - a concert hall
+  - a stadium
+  - a school
+  - a university building
+  - an office
+  - a factory
+  - chimneys
+  - an industrial area
+  - a power plant
+  - a harbour crane
+  - warehouses
+  - a construction site
+  - scaffolding
+  - ruins
+  - a monument
+  - a statue
+  - a bronze statue
+  - a marble sculpture
+  - an equestrian statue
+  - a fountain in a square
+  - a park
+  - a formal garden
+  - a palace garden
+  - an avenue of trees
+  - a playground
+  - a cemetery
+  - gravestones
+  - a zoo
+  - an amusement park
+  - a fairground
+  - a ferris wheel
+  - a roller coaster
+  - a campsite
+  - a tent
+  - a palace interior
+  - a grand hall
+  - a ballroom
+  - chandeliers
+  - ornate ceilings
+  - painted ceilings
+  - frescoes
+  - tapestries
+  - wallpaper
+  - a church interior
+  - stained glass windows
+  - an organ
+  - a staircase
+  - a spiral staircase
+  - a corridor
+  - doors
+  - windows
+  - a window view
+  - a living room
+  - a bedroom
+  - a kitchen
+  - a bathroom
+  - a dining table
+  - a desk
+  - a workspace
+  - a bookshelf
+  - books
+  - a sofa
+  - lamps
+  - candles
+  - candlelight
+  - fairy lights
+  - a fireplace
+  - a hotel room
+  - a train interior
+  - an airport
+  - a waiting room
+  - a shop interior
+  - a supermarket
+  - museum exhibits
+  - display cases
+  - a lecture hall
+  - people
+  - a crowd
+  - tourists
+  - a portrait
+  - a selfie
+  - a man
+  - a woman
+  - a child
+  - children playing
+  - a baby
+  - a family
+  - friends
+  - a couple
+  - elderly people
+  - people walking
+  - people sitting
+  - people eating
+  - people at a table
+  - people on a boat
+  - people on a bench
+  - a person reading
+  - a person photographing
+  - hands
+  - a face close-up
+  - eyes
+  - silhouettes of people
+  - dancers
+  - musicians
+  - a concert
+  - a festival
+  - a wedding
+  - a party
+  - sports
+  - runners
+  - swimmers
+  - skiers
+  - hikers
+  - climbers
+  - food
+  - a meal
+  - breakfast
+  - bread
+  - pastries
+  - cakes
+  - cookies
+  - muffins
+  - ice cream
+  - coffee
+  - tea
+  - a cup of coffee
+  - wine
+  - beer
+  - bottles
+  - cocktails
+  - fruit
+  - vegetables
+  - a market stall
+  - pizza
+  - burgers
+  - fries
+  - sushi
+  - seafood
+  - a picnic
+  - a birthday cake
+  - toys
+  - figurines
+  - anime figures
+  - dolls
+  - teddy bears
+  - lego
+  - board games
+  - video games
+  - a game controller
+  - a computer
+  - a laptop
+  - a keyboard
+  - a smartphone
+  - a camera
+  - lenses
+  - headphones
+  - a watch
+  - jewellery
+  - shoes
+  - sneakers
+  - clothes
+  - a hat
+  - glasses
+  - sunglasses
+  - a bag
+  - a backpack
+  - a suitcase
+  - keys
+  - tools
+  - a guitar
+  - a piano
+  - a clock
+  - a mirror
+  - a vase
+  - a bowl
+  - a plate
+  - cups
+  - glasses on a table
+  - a bottle of water
+  - cans
+  - packaging
+  - a box
+  - a parcel
+  - a toy car
+  - a model train
+  - a gift
+
+# What kind of image it is (illustration, painting, screenshot…). Not used for the
+# clusters of one kind ("Illustrations: …" would repeat it).
+media:
+  - an illustration
+  - an anime illustration
+  - a manga drawing
+  - a cartoon
+  - a comic
+  - digital art
+  - concept art
+  - fan art
+  - a painting
+  - an oil painting
+  - a watercolour
+  - a portrait painting
+  - a landscape painting
+  - a sketch
+  - a pencil drawing
+  - calligraphy
+  - graffiti
+  - street art
+  - a mural
+  - a poster
+  - a sign
+  - a map
+  - a document
+  - text on paper
+  - a newspaper
+  - a book page
+  - a screenshot
+  - a user interface
+  - a video game scene
+  - a 3D render
+  - a logo
+  - geometric shapes
+  - a mosaic
+  - a stained glass pattern
+  - a photograph of a photograph
+
+# Light, style, sky, and texture: describe how a photo looks rather than what it shows.
+settings:
+  - a texture
+  - a pattern
+  - an abstract image
+  - clouds
+  - a blue sky
+  - a blurry photo
+  - an out of focus photo
+  - bokeh
+  - a macro photo
+  - an extreme close-up
+  - a long exposure
+  - light trails
+  - motion blur
+  - a silhouette
+  - backlight
+  - golden hour light
+  - blue hour
+  - night lights
+  - city lights at night
+  - neon lights
+  - a dark photo
+  - an overexposed photo
+  - a black and white photo
+  - a sepia photo
+  - high contrast
+  - soft light
+  - harsh shadows
+  - reflections
+  - a mirror reflection
+  - a view through a window
+  - a view from above
+  - an aerial view
+  - a panorama
+  - a wide landscape
+  - a minimalist photo
+  - negative space
+  - an empty sky
+  - a plain background
+  - symmetry
+  - leading lines
