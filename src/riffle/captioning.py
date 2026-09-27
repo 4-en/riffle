@@ -9,6 +9,9 @@ Methods, photos first:
   language model; needs the ``captions`` extra and an NVIDIA GPU).
 - ``ocr``: the text in the photo, in its own script, with an English translation,
   from Qwen3-VL-8B (same requirements). Stored apart from the caption.
+- ``qwen``: a caption, keywords, and the text in one pass of Qwen3-VL-8B: about 20%
+  faster than three prompts (the image is read once), but slower than ``ocr`` alone
+  when only the text is wanted (it always writes a caption).
 
 For illustrations, low-key: ``wd`` (the WD EVA02 tagger: booru tags, ONNX, also on
 the CPU) and JoyCaption's Danbooru preset, optionally kept to a master tag list
@@ -75,7 +78,7 @@ class Method:
         ok, reason = True, ""
         if self.key == "wd" and not _has("onnxruntime"):
             ok, reason = False, 'needs the captions extra: pip install -e ".[captions]"'
-        elif self.key in ("joycaption", "ocr"):
+        elif self.key in ("joycaption", "ocr", "qwen"):
             if not _has("transformers"):
                 ok, reason = False, 'needs the captions extra: pip install -e ".[captions]"'
             elif not _cuda():
@@ -98,6 +101,7 @@ METHODS = {
         Method("phrases", "Scene phrases", "photo", ("tags",), "needs the AI model"),
         Method("joycaption", "JoyCaption", "photo", ("caption", "tags"), "", "16 GB", JOY_REPO, True),
         Method("ocr", "Read text", "photo", ("text",), "", "17 GB", QWEN_REPO, True),
+        Method("qwen", "Caption, keywords and text", "photo", ("caption", "tags", "text"), "", "17 GB", QWEN_REPO, True),
         Method("wd", "WD tagger", "illustration", ("tags",), "", "1.2 GB", WD_REPO, True),
     )
 }
@@ -226,6 +230,27 @@ def taglists(root: Path, hub_wd: bool = True) -> dict[str, Path]:
     return out
 
 
+def character_tags(root: Path) -> frozenset[str]:
+    """Tags known to name characters (category 4 in the WD tagger's list and in a
+    downloaded Danbooru list), lowercased with spaces, for naming clusters."""
+    out = set()
+    for path in taglists(root).values():
+        if path.suffix.lower() != ".csv":
+            continue
+        try:
+            with open(path, newline="", encoding="utf-8") as fh:
+                rows = csv.reader(fh)
+                first = next(rows, [])
+                wd = first[:2] == ["tag_id", "name"]  # WD: tag_id,name,category,count
+                for r in rows if wd else [first, *rows]:
+                    name, category = (r[1], r[2]) if wd else (r[0], r[1] if len(r) > 1 else "")
+                    if category == "4":
+                        out.add(" ".join(name.replace("_", " ").casefold().split()))
+        except (OSError, csv.Error, IndexError):
+            continue
+    return frozenset(out)
+
+
 def download_danbooru(root: Path) -> Path:
     """The Danbooru tag list with aliases (from the a1111 tagcomplete extension)."""
     import urllib.request
@@ -242,6 +267,20 @@ def download_danbooru(root: Path) -> Path:
 
 
 # ---- output clean-up ------------------------------------------------------------------
+
+_tokenizer = None
+
+
+def token_count(text: str) -> int:
+    """CLIP tokens in ``text`` (without start/end), as Stable Diffusion training
+    counts a caption: its text encoder takes 75."""
+    global _tokenizer
+    if _tokenizer is None:
+        from open_clip.tokenizer import SimpleTokenizer
+
+        _tokenizer = SimpleTokenizer()
+    return len(_tokenizer.encode(text))
+
 
 # Emoticon tags keep their underscore (it is part of the face); the list the common
 # taggers and training scripts use.
@@ -388,18 +427,35 @@ TRANSLATE_PROMPT = "Translate this text into English. Keep the line breaks. Answ
 NO_TEXT = re.compile(r"^\W*(no (readable |visible )?text\b.*|none|n/?a)\W*$", re.I)
 
 
+def _json_object(raw: str) -> dict | None:
+    """The JSON object in a model's answer (code fences and prose around it ignored).
+    An answer cut off by the token limit (long documents) still yields the string
+    fields it got to, the last one up to where it stopped."""
+    start, end = raw.find("{"), raw.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            data = json.loads(raw[start : end + 1])
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+    if start < 0:
+        return None
+    fields = {}
+    for m in re.finditer(r'"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)("?)', raw[start:], re.S):
+        try:
+            fields[m.group(1)] = json.loads('"' + m.group(2).rstrip("\\") + '"')
+        except json.JSONDecodeError:
+            fields[m.group(1)] = m.group(2)
+    return fields or None
+
+
 def parse_ocr(answer: str) -> dict:
     """The model's answer as {text, translation, language}: the JSON object in it
     (code fences and prose around it ignored), else the whole answer as the text.
     "No text"-style answers give an empty text (read, none found)."""
     raw = answer.strip()
-    start, end = raw.find("{"), raw.rfind("}")
-    data = None
-    if start >= 0 and end > start:
-        try:
-            data = json.loads(raw[start : end + 1])
-        except json.JSONDecodeError:
-            data = None
+    data = _json_object(raw)
     if not isinstance(data, dict):
         text = re.sub(r"^```\w*\n?|\n?```$", "", raw).strip()
         data = {"text": "" if NO_TEXT.match(text) else text}
@@ -413,10 +469,36 @@ def parse_ocr(answer: str) -> dict:
     return {"text": text, "translation": english, "language": language if text else None}
 
 
-def load_qwen_ocr(options: dict):
-    """Qwen3-VL as ``run(images, ids) -> [{text: {text, translation, language}}]``.
-    With ``retranslate``, it translates ``options["texts"][id]`` instead (the current,
-    possibly edited, text; no image) -> [{translation_only}]."""
+COMBINED_PROMPT = (
+    "Describe this image and read any text in it. Answer only with JSON: "
+    '{"caption": "...", "keywords": [...], "text": "...", "language": "...", "english": "..."}. '
+    '"caption": a descriptive caption in a formal tone within 50 words: the subject, the setting, and the light. '
+    '"keywords": 10 to 15 lowercase keywords: the subject, the setting, the light, and the mood. '
+    '"text": all text visible in the image exactly as written, in its original language and script, keeping line breaks, or "" if none. '
+    '"language": the language of the text in English. "english": an English translation of the text, or "" if it is already English or there is none.'
+)
+
+
+def parse_combined(answer: str) -> dict:
+    """The combined answer as {caption, tags, text: {text, translation, language}}.
+    Without usable JSON the whole answer is taken as the caption."""
+    raw = answer.strip()
+    data = _json_object(raw)
+    if not isinstance(data, dict):
+        return {"caption": re.sub(r"^```\w*\n?|\n?```$", "", raw).strip()}
+    keywords = data.get("keywords") or []
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    out = {
+        "caption": str(data.get("caption") or "").strip(),
+        "tags": split_tags(", ".join(str(k) for k in keywords), booru=False),
+        "text": parse_ocr(json.dumps({k: data.get(k) for k in ("text", "language", "english")}, ensure_ascii=False)),
+    }
+    return out
+
+
+def _qwen():
+    """Qwen3-VL-8B on the GPU: ``(ask(prompt, image=None) -> answer, free)``."""
     import torch
     from huggingface_hub import snapshot_download
     from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -424,21 +506,14 @@ def load_qwen_ocr(options: dict):
     path = snapshot_download(QWEN_REPO)
     proc = AutoProcessor.from_pretrained(path)
     model = AutoModelForImageTextToText.from_pretrained(path, dtype=torch.bfloat16, device_map="cuda").eval()
-    translate = options.get("translate", True)
-    texts = options.get("texts") or {}
 
     def ask(prompt: str, img=None) -> str:
         content = ([{"type": "image"}] if img is not None else []) + [{"type": "text", "text": prompt}]
         chat = proc.apply_chat_template([{"role": "user", "content": content}], add_generation_prompt=True, tokenize=False)
         x = proc(text=[chat], images=[img] if img is not None else None, return_tensors="pt").to("cuda")
         with torch.inference_mode():
-            ids = model.generate(**x, max_new_tokens=1024, do_sample=False)
+            ids = model.generate(**x, max_new_tokens=2048, do_sample=False)  # old maps: 300+ words
         return proc.batch_decode(ids[:, x["input_ids"].shape[1]:], skip_special_tokens=True)[0].strip()
-
-    def run(images, ids):
-        if options.get("retranslate"):
-            return [{"translation_only": ask(TRANSLATE_PROMPT + texts[str(i)]) if texts.get(str(i)) else ""} for i in ids]
-        return [{"text": parse_ocr(ask(OCR_PROMPT if translate else OCR_PROMPT_NO_TRANSLATION, img))} for img in images]
 
     def free():
         nonlocal model
@@ -446,10 +521,66 @@ def load_qwen_ocr(options: dict):
         gc.collect()
         torch.cuda.empty_cache()
 
+    return ask, free
+
+
+# ---- quick check for text (CLIP), before reading ----------------------------------------
+# Reading a photo without text still takes Qwen 1.3 s. The photos' CLIP embeddings
+# (already computed) against prompts for text and for plain photos leave out the
+# ones that most likely have none. On the first library (§14.5) text was common (21%
+# of photos: boat names, shop signs; most illustrations: signatures), and small text
+# is what CLIP misses: at TEXT_MIN it keeps 95% of photos with text and skips 22% of
+# photos (but misses 8 of 28 signed illustrations). A text detector (PP-OCRv4) did
+# barely better (27% at 95%), so it was not added.
+
+TEXT_PROMPTS = [
+    "a photo of a sign with text", "a photo with writing on it", "a photo of printed text", "a street sign",
+    "a shop sign with lettering", "a poster with text", "a menu", "a label with words", "a document", "a screenshot",
+    "a book page", "a caption or watermark with text", "a plaque with an inscription", "a board with writing", "a signpost",
+]
+PLAIN_PROMPTS = [
+    "a photo", "a landscape photo", "a photo of nature", "a photo of people", "a photo of an animal",
+    "a photo of a building", "a photo of food", "an illustration", "a close-up photo", "a photo of the sky",
+]
+TEXT_MIN = -0.097  # max(text prompts) - max(plain prompts); 95% recall on the first library's photos
+
+
+def text_check_vectors(encode_text) -> tuple[np.ndarray, np.ndarray]:
+    return encode_text(TEXT_PROMPTS), encode_text(PLAIN_PROMPTS)
+
+
+def text_scores(E: np.ndarray, text_vecs: np.ndarray, plain_vecs: np.ndarray) -> np.ndarray:
+    """How much more a photo looks like text than like a plain photo."""
+    return (E @ text_vecs.T).max(1) - (E @ plain_vecs.T).max(1)
+
+
+def text_likely(E: np.ndarray, text_vecs: np.ndarray, plain_vecs: np.ndarray) -> np.ndarray:
+    return text_scores(E, text_vecs, plain_vecs) >= TEXT_MIN
+
+
+def load_qwen_ocr(options: dict):
+    """Qwen3-VL as ``run(images, ids) -> [{text: {text, translation, language}}]``.
+    With ``retranslate``, it translates ``options["texts"][id]`` instead (the current,
+    possibly edited, text; no image) -> [{translation_only}]."""
+    ask, free = _qwen()
+    translate = options.get("translate", True)
+    texts = options.get("texts") or {}
+
+    def run(images, ids):
+        if options.get("retranslate"):
+            return [{"translation_only": ask(TRANSLATE_PROMPT + texts[str(i)]) if texts.get(str(i)) else ""} for i in ids]
+        return [{"text": parse_ocr(ask(OCR_PROMPT if translate else OCR_PROMPT_NO_TRANSLATION, img))} for img in images]
+
     return run, free
 
 
-LOADERS: dict[str, Callable] = {"wd": load_wd, "joycaption": load_joycaption, "ocr": load_qwen_ocr}
+def load_qwen_all(options: dict):
+    """Qwen3-VL as ``run(images, ids) -> [{caption, tags, text}]`` in one pass per photo."""
+    ask, free = _qwen()
+    return (lambda images, ids: [parse_combined(ask(COMBINED_PROMPT, img)) for img in images]), free
+
+
+LOADERS: dict[str, Callable] = {"wd": load_wd, "joycaption": load_joycaption, "ocr": load_qwen_ocr, "qwen": load_qwen_all}
 
 
 def run_captioning(
@@ -460,7 +591,7 @@ def run_captioning(
     photos: list[tuple[int, Path]],
     method: str,
     options: dict,
-    store: Callable[[dict[int, dict]], int],
+    store: Callable[[dict[int, dict]], int],  # stores a batch of results; how many changed
     taglist: Path | None = None,
     cancel: threading.Event | None = None,
     load: Callable | None = None,

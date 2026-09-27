@@ -156,6 +156,7 @@ class TagOpIn(BaseModel):
     op: str  # add | remove | rename
     tag: str
     to: str | None = None
+    at: str = "end"  # add: at the start or the end of the tags
 
 
 class CaptioningIn(BaseModel):
@@ -164,6 +165,9 @@ class CaptioningIn(BaseModel):
     options: dict = {}
     mode: str = "add"  # selections.GENERATE_MODES
     taglist: str | None = None  # a master list name (GET /api/taglists)
+    at: str = "end"  # new tags at the start or the end of the tags kept
+    limit_kind: str | None = None  # tokens | tags: stop adding tags past limit (e.g. 75 CLIP tokens)
+    limit: int = 75
 
 
 class FlagOp(BaseModel):
@@ -814,6 +818,8 @@ def create_app(
         tag_vector_cache.update(index=(index.stamp, id(encoder)), namer=namer)
         return namer
 
+    character_cache: dict = {}  # character tags from the tag lists (captioning.character_tags)
+
     def similar_clusters(conn, cte: str, shown: str, params: list, index: Index, level: str):
         """Cluster the listing's photos; returns the CTE and params extended with
         ``clusters(pid, k)``, and the names per cluster key."""
@@ -822,7 +828,8 @@ def create_app(
         if level not in clusters.LEVELS:
             raise HTTPException(400, f"level must be one of {', '.join(clusters.LEVELS)}")
         tag_versions = tuple(conn.execute("SELECT id, updated_at, strictness FROM sel.custom_tags ORDER BY id").fetchall())
-        cache_key = (cte, shown, json.dumps(params, default=str), level, index.stamp, state["encoder"] is not None, tag_versions)
+        fixed_version = tuple(conn.execute("SELECT COUNT(*), MAX(added_at) FROM sel.fixed_tags").fetchone())
+        cache_key = (cte, shown, json.dumps(params, default=str), level, index.stamp, state["encoder"] is not None, tag_versions, fixed_version)
         hit = cluster_cache.get(cache_key)
         if hit is None:
             ids = [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY p.id", params)]
@@ -850,6 +857,16 @@ def create_app(
             for t in ctags:
                 for pid in tag_members[t["id"]]:
                     own.setdefault(pid, []).append(t["name"])
+            # Fixed tags of each photo (common in a cluster and rare in the others: its name).
+            fixed: dict[int, list[str]] = {}
+            if fixed_version[0]:
+                for pid, tag in conn.execute(
+                    "SELECT p.id, t.tag FROM sel.fixed_tags t JOIN photos p ON p.sha256 = t.sha256 "
+                    "WHERE p.status = 'ok' ORDER BY t.position"
+                ):
+                    fixed.setdefault(pid, []).append(tag)
+                if "characters" not in character_cache:
+                    character_cache["characters"] = captioning.character_tags(cfg.root)
             if namer is not None and rows:
                 # Distinctive within this view (see clusters.names), not the whole library.
                 namer = dataclasses.replace(namer, baseline=index.E[rows].mean(axis=0) @ namer.vecs.T)
@@ -860,6 +877,8 @@ def create_app(
                 member_kinds=[[kinds.get(p) for p in members[k]] for k in keys],
                 member_tags=[[t for p in members[k] for t in subjects.get(p, [])] for k in keys],
                 member_custom=[[own.get(p, []) for p in members[k]] for k in keys],
+                member_fixed=[[fixed.get(p, []) for p in members[k]] for k in keys] if fixed else None,
+                characters=character_cache.get("characters", frozenset()),
             )
             names = {f"{k:04d}": label for k, label in zip(keys, labels_)}
             mapping = json.dumps({str(pid): f"{lab:04d}" for lab, pids in members.items() for pid in pids})
@@ -1365,7 +1384,13 @@ def create_app(
         names = dict(conn.execute(
             "SELECT id, rel_path FROM photos WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(wanted),)
         ).fetchall())
-        return {"captions": {str(k): v | {"rel_path": names.get(k)} for k, v in found.items()}}
+        # CLIP tokens of the tags as a caption file would have them (training limit: 75).
+        return {
+            "captions": {
+                str(k): v | {"rel_path": names.get(k), "tokens": captioning.token_count(", ".join(v["tags"])) if v["tags"] else 0}
+                for k, v in found.items()
+            }
+        }
 
     @app.post("/api/captions", dependencies=[Depends(require_json)])
     def set_captions(body: CaptionsIn, conn=Depends(get_conn)):
@@ -1382,7 +1407,7 @@ def create_app(
     def bulk_tags(body: TagOpIn, conn=Depends(get_conn)):
         """Add a tag to all these photos, remove it, or rename it. Returns the previous values."""
         try:
-            previous = selections.bulk_tags(conn, sel_path(), body.ids, body.op, body.tag, body.to)
+            previous = selections.bulk_tags(conn, sel_path(), body.ids, body.op, body.tag, body.to, body.at)
         except ValueError as e:
             raise caption_error(e)
         return {"previous": list(previous.values())}
@@ -1428,6 +1453,26 @@ def create_app(
             raise HTTPException(400, f"no tag list named {name}")
         return found
 
+    text_filter_cache: dict = {}  # CLIP text vectors of the "has text" check, per encoder
+
+    def skip_textless(conn, index: Index, ids: list[int], mode: str) -> tuple[list[int], int]:
+        """Before reading text: leave out photos that CLIP says have none (most photos),
+        marking the unread ones as read by "clip" (so filling gaps skips them; the
+        view says they were skipped). Photos that already have text are always read."""
+        encoder = state["encoder"]
+        if encoder is None or index.E.size == 0:
+            return ids, 0
+        if text_filter_cache.get("encoder") is not encoder:
+            text_filter_cache.update(encoder=encoder, vecs=captioning.text_check_vectors(encoder))
+        current = selections.captions_for(conn, sel_path(), ids)
+        known = [i for i in ids if i in index.row and not (current.get(i) or {}).get("text")]
+        likely = captioning.text_likely(index.E[[index.row[i] for i in known]], *text_filter_cache["vecs"]) if known else []
+        unlikely = {i for i, ok in zip(known, likely) if not ok}
+        unread = {i: {"text": {"text": ""}} for i in unlikely if (current.get(i) or {}).get("text") is None}
+        if unread:
+            selections.store_generated(conn, sel_path(), unread, "clip", mode)
+        return [i for i in ids if i not in unlikely], len(unlikely)
+
     @app.get("/api/captioning")
     def captioning_status():
         return {"methods": [m.status() for m in captioning.METHODS.values()], "job": caption_job.status()}
@@ -1441,6 +1486,15 @@ def create_app(
             raise HTTPException(400, f"method must be one of {', '.join(captioning.METHODS)}")
         if body.mode not in selections.GENERATE_MODES:
             raise HTTPException(400, f"mode must be one of {', '.join(selections.GENERATE_MODES)}")
+        if body.at not in selections.TAG_POSITIONS:
+            raise HTTPException(400, f"at must be one of {', '.join(selections.TAG_POSITIONS)}")
+        if body.limit_kind not in (None, "tokens", "tags") or body.limit < 1:
+            raise HTTPException(400, "limit_kind must be tokens or tags, with a limit of at least 1")
+        placing = {
+            "at": body.at,
+            "limit": (body.limit_kind, body.limit) if body.limit_kind else None,
+            "count_tokens": captioning.token_count,
+        }
         status = method.status()
         if not status["available"]:
             raise HTTPException(400, f"{method.label} {status['reason']}")
@@ -1452,7 +1506,7 @@ def create_app(
                 tl = captioning.TagList.load(taglist)
                 for r in results.values():
                     r["tags"] = tl.filter(r["tags"])
-            changed = selections.store_generated(conn, sel_path(), results, method.key, body.mode)
+            changed = selections.store_generated(conn, sel_path(), results, method.key, body.mode, **placing)
             return {"done": True, "changed": changed, "photos": len(results)}
         options = dict(body.options)
         if method.key == "ocr" and options.get("retranslate"):
@@ -1462,6 +1516,11 @@ def create_app(
             ids = [i for i in ids if str(i) in options["texts"]]
             if not ids:
                 raise HTTPException(400, "none of these photos has text to translate")
+        skipped = 0
+        if method.key == "ocr" and not options.get("retranslate") and options.get("prefilter"):
+            ids, skipped = skip_textless(conn, index, ids, body.mode)
+            if not ids:
+                return {"done": True, "changed": skipped, "photos": 0, "skipped": skipped}
         rows = conn.execute(
             "SELECT id, source, rel_path FROM photos WHERE status = 'ok' AND id IN (SELECT value FROM json_each(?))",
             (json.dumps(ids),),
@@ -1478,7 +1537,7 @@ def create_app(
         def store(results: dict[int, dict]) -> int:
             c = db.connect_readonly(cfg.db_path, path)
             try:
-                return selections.store_generated(c, path, results, method.key, body.mode)
+                return selections.store_generated(c, path, results, method.key, body.mode, **placing)
             finally:
                 c.close()
 
@@ -1489,7 +1548,7 @@ def create_app(
         )
         if not started:
             raise HTTPException(409, "captioning is already running")
-        return {"done": False, "job": caption_job.status()}
+        return {"done": False, "job": caption_job.status(), "skipped": skipped}
 
     @app.post("/api/captioning/cancel", dependencies=[Depends(require_json)])
     def cancel_captioning():
@@ -1509,6 +1568,7 @@ def create_app(
             path = captioning.download_danbooru(cfg.root)
         except Exception as e:
             raise HTTPException(502, f"could not download the list: {e}")
+        character_cache.clear()  # the list knows more characters
         return {"name": path.stem, "path": str(path)}
 
     # ---- profiles (profiles.py) ------------------------------------------------------

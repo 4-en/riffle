@@ -377,6 +377,7 @@ def delete_tag(path: str | Path, tag_id: int) -> bool:
 
 GENERATE_MODES = ("add", "replace", "replace_all")
 TAG_OPS = ("add", "remove", "rename")
+TAG_POSITIONS = ("end", "start")  # where new tags go
 
 
 def clean_tag(tag: str) -> str:
@@ -530,11 +531,14 @@ def set_captions(catalogue: sqlite3.Connection, path: str | Path, items: list[di
 
 
 def bulk_tags(
-    catalogue: sqlite3.Connection, path: str | Path, photo_ids: list[int], op: str, tag: str, to: str | None = None
+    catalogue: sqlite3.Connection, path: str | Path, photo_ids: list[int], op: str, tag: str, to: str | None = None,
+    at: str = "end",
 ) -> dict[int, dict]:
-    """Add a tag to all these photos, remove it from them, or rename it (renaming onto
-    a tag a photo already has merges the two). Returns the previous state of the
-    photos that changed (for undo)."""
+    """Add a tag to all these photos (``at`` the start or the end of their tags),
+    remove it from them, or rename it (renaming onto a tag a photo already has merges
+    the two). Returns the previous state of the photos that changed (for undo)."""
+    if at not in TAG_POSITIONS:
+        raise ValueError(f"at must be one of {', '.join(TAG_POSITIONS)}")
     if op not in TAG_OPS:
         raise ValueError(f"op must be one of {', '.join(TAG_OPS)}")
     tag = clean_tag(tag)
@@ -554,7 +558,7 @@ def bulk_tags(
                 if op == "add":
                     if tag.casefold() in keys:
                         continue
-                    new = [*tags, (tag, "manual")]
+                    new = [(tag, "manual"), *tags] if at == "start" else [*tags, (tag, "manual")]
                 elif tag.casefold() not in keys:
                     continue
                 elif op == "remove":
@@ -575,7 +579,8 @@ def bulk_tags(
 
 
 def store_generated(
-    catalogue: sqlite3.Connection, path: str | Path, results: dict[int, dict], method: str, mode: str = "add"
+    catalogue: sqlite3.Connection, path: str | Path, results: dict[int, dict], method: str, mode: str = "add",
+    *, at: str = "end", limit: tuple[str, int] | None = None, count_tokens=None,
 ) -> int:
     """Store generated ``{photo id: {caption?, tags?, text?, translation_only?}}``.
     Modes:
@@ -585,9 +590,21 @@ def store_generated(
     replace_all: everything replaced.
     ``text`` is {text, translation, language} ("" text: read, none found);
     ``translation_only`` (translating the current text again) always replaces the
-    translation of text that was read. Returns how many photos changed."""
+    translation of text that was read.
+    New tags go ``at`` the start or the end of the tags kept. ``limit`` ("tokens" |
+    "tags", n) stops adding new tags once the whole list would exceed n (tokens as
+    counted by ``count_tokens`` on the comma-separated list); kept tags always stay.
+    Returns how many photos changed."""
     if mode not in GENERATE_MODES:
         raise ValueError(f"mode must be one of {', '.join(GENERATE_MODES)}")
+    if at not in TAG_POSITIONS:
+        raise ValueError(f"at must be one of {', '.join(TAG_POSITIONS)}")
+
+    def size(tags: list[tuple[str, str]]) -> int:
+        if limit[0] == "tags":
+            return len(tags)
+        return count_tokens(", ".join(t for t, _ in tags))
+
     rows = _photos(catalogue, list(results))
     conn = connect(path)
     try:
@@ -611,17 +628,24 @@ def store_generated(
                     else:
                         kept = []
                     seen = {t.casefold() for t, _ in kept}
-                    tags = list(kept)
+                    new: list[tuple[str, str]] = []
                     for t in clean_tags(res["tags"]):
                         if t.casefold() not in seen:
+                            candidate = [*new, (t, method)]
+                            whole = [*candidate, *kept] if at == "start" else [*kept, *candidate]
+                            if limit and size(whole) > limit[1]:
+                                break  # in the model's order: the least certain go
                             seen.add(t.casefold())
-                            tags.append((t, method))
+                            new = candidate
+                    tags = [*new, *kept] if at == "start" else [*kept, *new]
                     if tags == st["tags"]:
                         tags = ...
                 ocr = ...
                 if isinstance(res.get("text"), dict):
                     old = st["ocr"]
-                    keep = old is not None and (mode == "add" or (mode == "replace" and old["edited"]))
+                    # A photo only skipped by the quick text check ("clip") was never read.
+                    guessed = old is not None and old["method"] == "clip" and method != "clip"
+                    keep = old is not None and not guessed and (mode == "add" or (mode == "replace" and old["edited"]))
                     if not keep:
                         ocr = res["text"]
                 elif "translation_only" in res and st["ocr"] is not None:

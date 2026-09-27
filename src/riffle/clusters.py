@@ -17,6 +17,7 @@ or wrong name ("a portrait" for illustrations, "sky and clouds", "grass").
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 import numpy as np
@@ -33,6 +34,18 @@ CUSTOM_SHARE = 0.6
 # How a kind of image reads as the start of a cluster name.
 KIND_LABELS = {"an illustration or drawing": "Illustrations", "a painting": "Paintings", "a document": "Documents"}  # a custom tag names a cluster when this share of its photos has it
 CATCH_ALL = {"other", "ordinary daylight", "a photograph"}
+# Fixed tags (written on photos, selections.py) name a cluster when one is on this
+# share of its photos and this many times as common there as in the clusters it is
+# compared with (those of its kind, else the view); at least FIXED_COVERAGE of its
+# photos must have fixed tags at all. Characters come first; at most two tags.
+FIXED_SHARE, FIXED_LIFT, FIXED_COVERAGE, FIXED_MAX = 0.5, 2.0, 0.5, 2
+# Tags about the picture, not what is in it, and booru staples that set nothing apart.
+FIXED_SKIP = {
+    "artist name", "signature", "watermark", "twitter username", "web address", "artist logo", "dated",
+    "patreon username", "commentary request", "highres", "absurdres", "english text",
+    "simple background", "white background", "grey background", "gradient background",
+    "1girl", "solo", "looking at viewer", "blush", "breasts", "thighs",
+}
 SECOND_NAME_WITHIN = 0.01  # a second phrase joins the name when this close to the first
 SUBJECT_WITHIN = 0.035  # a thing this close behind a setting phrase is named first
 
@@ -158,12 +171,49 @@ def _describe(namer: Namer, order: np.ndarray, score: np.ndarray, raw: np.ndarra
     return parts
 
 
+def _tag_key(tag: str) -> str:
+    return " ".join(tag.replace("_", " ").casefold().split())
+
+
+def _fixed_name(cluster: list[list[str]], compare: list[list[str]], characters: frozenset[str]) -> list[str] | None:
+    """The fixed tags that name a cluster (``cluster`` / ``compare``: tags per photo), or None."""
+    if not cluster or sum(1 for tags in cluster if tags) < FIXED_COVERAGE * len(cluster):
+        return None
+    shown: dict[str, str] = {}
+    inside: Counter = Counter()
+    for tags in cluster:
+        keys = {_tag_key(t) for t in tags}
+        inside.update(keys)
+        for t in tags:
+            shown.setdefault(_tag_key(t), t)
+    outside = Counter(k for tags in compare for k in {_tag_key(t) for t in tags})
+    picks = []
+    for key, n in inside.items():
+        share, base = n / len(cluster), outside[key] / max(len(compare), 1)
+        if key in FIXED_SKIP or share < FIXED_SHARE or base <= 0 or share / base < FIXED_LIFT:
+            continue
+        picks.append((key in characters, round(share - base, 6), len(key.split()), key))
+    picks.sort(reverse=True)  # characters first, then how much more common it is here, then the more specific
+    chosen: list[str] = []
+    for *_, key in picks:
+        words = set(key.split())
+        # "black choker" says what "choker" would add: skip tags within a chosen one (or the reverse).
+        if any(words <= set(c.split()) or set(c.split()) <= words for c in chosen):
+            continue
+        chosen.append(key)
+        if len(chosen) == FIXED_MAX:
+            break
+    return [shown[k] for k in chosen] or None
+
+
 def names(
     centroids: list[np.ndarray],
     namer: Namer | None,
     member_kinds: list[list[str | None]],
     member_tags: list[list[str]] | None = None,
     member_custom: list[list[list[str]]] | None = None,
+    member_fixed: list[list[list[str]]] | None = None,
+    characters: frozenset[str] = frozenset(),
 ) -> list[str]:
     """A name per cluster (clusters in the same order as ``centroids``). Names say
     what sets a cluster apart from the rest of the view: ``namer.baseline`` is the
@@ -172,6 +222,10 @@ def names(
 
     - When most members (CUSTOM_SHARE) have the same custom tag, the tag names it:
       it is the user's own, most specific word for them.
+    - Else fixed tags (``member_fixed``: per cluster, per photo) that are common in
+      the cluster and rare among the clusters it is compared with (see FIXED_*), a
+      character first (``characters``: tags known to be characters, e.g. from the
+      WD tagger's list); after the kind prefix when there is one.
     - When most members are not photographs (the kind tag), and that kind does not
       also fill most of the view, the kind names it ("Illustrations"; plain
       similarity called those "a portrait"). Several clusters of one kind add what
@@ -211,6 +265,22 @@ def names(
                 mean = sum(sizes[i] * np.asarray(centroids[i]) for i in members) / sum(sizes[i] for i in members)
                 kind_baseline[kind] = mean @ namer.vecs.T
 
+    # Fixed tags, compared with the other clusters of the same kind (else the view),
+    # so "1girl" does not name every illustration cluster among photos.
+    kind_groups: dict[str, list[int]] = {}
+    for i, (what, k) in enumerate(source):
+        if what == "kind":
+            kind_groups.setdefault(k, []).append(i)
+    fixed_names: list[list[str] | None] = [None] * len(centroids)
+    if member_fixed:
+        everyone = [tags for per_photo in member_fixed for tags in per_photo]
+        for i, (what, value) in enumerate(source):
+            if what == "custom":
+                continue
+            group = kind_groups.get(value, []) if what == "kind" and len(kind_groups.get(value, [])) > 1 else None
+            compare = [tags for j in group for tags in member_fixed[j]] if group else everyone
+            fixed_names[i] = _fixed_name(member_fixed[i], compare, characters)
+
     # Each name as (prefix, phrases): the phrases are what the duplicate check compares.
     out: list[tuple[str | None, list[str]]] = []
     rankings = []
@@ -226,6 +296,8 @@ def names(
         rankings.append(ranking)
         if what == "custom":
             out.append((None, [value]))
+        elif fixed_names[i]:
+            out.append((KIND_LABELS.get(value, value) if what == "kind" else None, fixed_names[i]))
         elif what == "kind":
             label = KIND_LABELS.get(value, value)
             out.append((label, _describe(namer, *ranking)) if value in kind_baseline else (None, [label]))

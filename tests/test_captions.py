@@ -58,7 +58,7 @@ def test_edit_bulk_and_undo(client, conn):
     NO_TEXT = {"text": None, "translation": "", "language": None, "text_method": None, "text_edited": False}
     assert res.json()["previous"] == [{"id": a, "caption": None, "method": None, "edited": False, "tags": []} | NO_TEXT]
     got = captions(client, a, b)
-    assert got[str(a)] == {"caption": "A boat at dusk", "method": "manual", "edited": True, "tags": ["boat", "dusk"], "rel_path": "trip/IMG_0001.jpg"} | NO_TEXT
+    assert got[str(a)] == {"caption": "A boat at dusk", "method": "manual", "edited": True, "tags": ["boat", "dusk"], "rel_path": "trip/IMG_0001.jpg", "tokens": captioning.token_count("boat, dusk")} | NO_TEXT
     assert got[str(b)]["tags"] == [] and got[str(b)]["caption"] is None
 
     # Add to all (skips the photo that has it), rename onto an existing tag (merges), remove.
@@ -131,6 +131,9 @@ def test_cheap_methods(client, conn, monkeypatch):
         if t["name"] not in CATCH_ALL and not (t["family"] == "kind" and "photo" in t["name"])
     ]
     assert tags == expected and expected
+    one = client.post("/api/captioning", json={"ids": [a], "method": "riffle", "mode": "replace_all", "limit_kind": "tags", "limit": 1})
+    assert one.status_code == 200 and captions(client, a)[str(a)]["tags"] == expected[:1]
+    assert client.post("/api/captioning", json={"ids": [a], "method": "riffle", "limit_kind": "words"}).status_code == 400
     assert client.post("/api/captioning", json={"ids": [a], "method": "nope"}).status_code == 400
     phrases = client.post("/api/captioning", json={"ids": [a], "method": "phrases", "mode": "replace_all"})
     assert phrases.status_code == 200
@@ -151,7 +154,7 @@ def test_model_method_runs_as_a_job(client, conn, monkeypatch):
 
     monkeypatch.setitem(captioning.LOADERS, "wd", fake_load)
     status = client.get("/api/captioning").json()
-    assert {m["key"] for m in status["methods"]} == {"riffle", "phrases", "joycaption", "ocr", "wd"}
+    assert {m["key"] for m in status["methods"]} == {"riffle", "phrases", "joycaption", "ocr", "qwen", "wd"}
     res = client.post("/api/captioning", json={"ids": [a, b], "method": "wd", "mode": "add"})
     assert res.status_code == 200 and res.json()["done"] is False
     deadline = time.time() + 10
@@ -394,3 +397,88 @@ def test_selections_migrate_from_v5(tmp_path):
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
     assert conn.execute("SELECT text FROM captions").fetchone()[0] == "kept"
     assert conn.execute("SELECT COUNT(*) FROM photo_text").fetchone()[0] == 0
+
+
+def test_parse_combined():
+    answer = """```json
+{"caption": "A red sign in Beijing.", "keywords": ["Sign", "photograph", "city"], "text": "出口", "language": "Chinese", "english": "Exit"}
+```"""
+    assert captioning.parse_combined(answer) == {
+        "caption": "A red sign in Beijing.",
+        "tags": ["sign", "city"],
+        "text": {"text": "出口", "translation": "Exit", "language": "Chinese"},
+    }
+    none = captioning.parse_combined('{"caption": "A beetle.", "keywords": "beetle", "text": "", "language": "", "english": ""}')
+    assert none["text"] == {"text": "", "translation": "", "language": None} and none["tags"] == ["beetle"]
+    assert captioning.parse_combined("Just prose.") == {"caption": "Just prose."}
+
+
+def test_ocr_text_check_skips_photos_without_text(client, conn, monkeypatch):
+    a, b, c = pid(conn, "IMG_0001.jpg"), pid(conn, "IMG_0002.jpg"), pid(conn, "IMG_0003.png")
+    monkeypatch.setattr(captioning, "_has", lambda m: True)
+    monkeypatch.setattr(captioning, "_cuda", lambda: True)
+    read = []
+
+    def fake_load(options):
+        def run(images, ids):
+            read.extend(ids)
+            return [{"text": {"text": f"T{i}"}} for i in ids]
+
+        return run, lambda: None
+
+    monkeypatch.setitem(captioning.LOADERS, "ocr", fake_load)
+    marks = []  # what the check says for the photos it is asked about, per call
+    monkeypatch.setattr(captioning, "text_likely", lambda E, *v: [bool(x) for x in marks.pop(0)])
+
+    def go(ids, **options):
+        res = client.post("/api/captioning", json={"ids": ids, "method": "ocr", "options": options}).json()
+        while client.get("/api/captioning").json()["job"]["running"]:
+            time.sleep(0.05)
+        return res
+
+    marks.append([1, 0, 0])  # only IMG_0001 looks like it has text
+    res = go([a, b, c], prefilter=True)
+    assert res["skipped"] == 2 and read == [a]
+    got = captions(client, a, b, c)
+    assert got[str(a)]["text"] == f"T{a}"
+    assert got[str(b)]["text"] == "" and got[str(b)]["text_method"] == "clip"  # skipped, marked as such
+
+    # Without the check, skipped photos count as unread and are read (add mode).
+    res = go([b, c], prefilter=False)
+    assert read == [a, b, c] and captions(client, b)[str(b)]["text"] == f"T{b}"
+
+    # Photos that already have text are never left out by the check (it isn't asked).
+    res = client.post("/api/captioning", json={"ids": [a], "method": "ocr", "mode": "replace_all"}).json()
+    while client.get("/api/captioning").json()["job"]["running"]:
+        time.sleep(0.05)
+    assert res["skipped"] == 0 and read[-1] == a and not marks
+
+
+def test_parse_ocr_of_an_answer_cut_off():
+    cut = '{\n  "text": "Delineation Oppa Trachta\\nhwarest Rijt: Admiralen Grewe Gustaff Otto St'
+    got = captioning.parse_ocr(cut)
+    assert got["text"] == "Delineation Oppa Trachta\nhwarest Rijt: Admiralen Grewe Gustaff Otto St"
+    both = captioning.parse_ocr('{"text": "Anno 1656", "language": "Swedish", "english": "Year 16')
+    assert both == {"text": "Anno 1656", "translation": "Year 16", "language": "Swedish"}
+
+
+
+def test_new_tags_at_the_start_and_limits(client, conn, indexed):
+    path = indexed.selections_path
+    a, b = pid(conn, "IMG_0001.jpg"), pid(conn, "IMG_0003.png")
+    client.post("/api/captions", json={"items": [{"id": a, "tags": ["kept"]}]})
+    # A trigger word first in every photo.
+    client.post("/api/captions/tags", json={"ids": [a, b], "op": "add", "tag": "mychar", "at": "start"})
+    assert captions(client, a)[str(a)]["tags"] == ["mychar", "kept"]
+    assert client.post("/api/captions/tags", json={"ids": [a], "op": "add", "tag": "x", "at": "middle"}).status_code == 400
+    # Generated tags at the start, in the model's order, until the limit; kept tags stay.
+    new = [f"tag{i}" for i in range(10)]
+    selections.store_generated(conn, path, {a: {"tags": new}}, "wd", "add", at="start", limit=("tags", 5))
+    assert selections.captions_for(conn, path, [a])[a]["tags"] == ["tag0", "tag1", "tag2", "mychar", "kept"]
+    long = ["long hair", "looking at viewer", "animal ears", "blue sky", "outdoors", "smile"] * 4
+    long = [f"{t} {i}" for i, t in enumerate(long)]
+    selections.store_generated(conn, path, {b: {"tags": long}}, "wd", "replace_all", limit=("tokens", 30), count_tokens=captioning.token_count)
+    tags = selections.captions_for(conn, path, [b])[b]["tags"]
+    assert captioning.token_count(", ".join(tags)) <= 30 < captioning.token_count(", ".join(long[: len(tags) + 1]))
+    assert tags == long[: len(tags)]
+    assert captions(client, b)[str(b)]["tokens"] == captioning.token_count(", ".join(tags))

@@ -103,6 +103,33 @@ def test_custom_tags_name_first():
     assert clusters.names([np.array([1.0, 0])], n, [[None] * 4], member_custom=[few]) == ["cats"]  # 1 of 4: not enough
 
 
+def test_fixed_tags_name_clusters():
+    n = namer(["an anime illustration", "swimmers", "figurines", "boats"])
+    illus = ["an illustration or drawing"] * 4
+    photos = ["a photograph"] * 12  # illustrations don't fill the view, so the kind prefixes their names
+    swim = np.array([0.9, 0.5, 0.0, 0.0])
+    figs = np.array([0.9, 0.0, 0.5, 0.0])
+    boats = np.array([0.0, 0.0, 0.0, 1.0])
+    # Two illustration clusters, compared with each other: "1girl" and "long hair" are on most illustrations, so
+    # they name neither; the character and "water" set the first apart; the second has
+    # no distinctive fixed tag and keeps its phrase. Photos have no fixed tags.
+    nia = [["1girl", "nia_(xenoblade)", "water", "long hair"]] * 3 + [["1girl", "long hair"]]
+    other = [["1girl", "long hair"]] * 4
+    fixed = [nia, other, [[]] * 12]
+    got = clusters.names([swim, figs, boats], n, [illus, illus, photos], member_fixed=fixed, characters=frozenset({"nia (xenoblade)"}))
+    assert got == ["Illustrations: nia_(xenoblade) · water", "Illustrations: figurines", "boats"]
+    # A second tag within the first ("choker" in "black choker") says nothing more.
+    chokers = [[["black choker", "choker", "tail"]] * 4, other, [[]] * 12]
+    got = clusters.names([swim, figs, boats], n, [illus, illus, photos], member_fixed=chokers)
+    assert got[0] in ("Illustrations: black choker · tail", "Illustrations: tail · black choker")
+    # Too few photos with fixed tags at all (1 of 4): the phrase names it.
+    sparse = [[["water"], [], [], []], [[]] * 4, [[]] * 12]
+    assert clusters.names([swim, figs, boats], n, [illus, illus, photos], member_fixed=sparse)[0] == "Illustrations: swimmers"
+    # Learned (custom) tags still come first.
+    custom = [[["Nia"]] * 4, [[]] * 4, [[]] * 12]
+    assert clusters.names([swim, figs, boats], n, [illus, illus, photos], member_custom=custom, member_fixed=fixed)[0] == "Nia"
+
+
 def test_several_clusters_of_a_kind_are_named_by_content():
     n = namer(["an anime illustration", "swimmers", "figurines", "boats"])
     illus = ["an illustration or drawing"] * 4
@@ -234,3 +261,23 @@ def test_a_custom_tag_names_its_cluster(indexed, conn, monkeypatch):
         c.post("/api/custom-tags", json={"name": "Lanterns", "photo_ids": pair, "strictness": "strict"})
         after = c.get("/api/groups", params={"group": "similar", "dupes": "all"}).json()["groups"]  # not the cached names
         assert "Lanterns" in [g["label"] for g in after]
+
+
+def test_fixed_tags_name_a_cluster_in_the_api(indexed, conn, monkeypatch):
+    monkeypatch.setattr(clusters, "MIN_SIZE", 2)
+    vectors = {
+        "IMG_0001.jpg": at(0, 0.05),
+        "IMG_0003.png": at(0, 0.10),
+        "IMG_0002.jpg": at(4, 0.05),
+        "IMG_0002_edit.png": at(4, 0.10),
+    }
+    E, ids = load_embeddings(indexed)
+    by_id = {photo(conn, n)["id"]: v for n, v in vectors.items()}
+    save_embeddings(indexed, np.stack([by_id[int(i)] for i in ids]), ids)
+    pair = [photo(conn, "IMG_0001.jpg")["id"], photo(conn, "IMG_0003.png")["id"]]
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:
+        before = c.get("/api/groups", params={"group": "similar", "dupes": "all"}).json()["groups"]
+        assert "Midsummer" not in [g["label"] for g in before]
+        c.post("/api/captions", json={"items": [{"id": i, "tags": ["Midsummer"]} for i in pair]})
+        after = c.get("/api/groups", params={"group": "similar", "dupes": "all"}).json()["groups"]  # not the cached names
+        assert "Midsummer" in [g["label"] for g in after]

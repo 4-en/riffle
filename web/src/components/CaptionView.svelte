@@ -194,6 +194,7 @@
 
   let methods = $state([]);
   let job = $state(null);
+  let skippedLast = 0; // photos the text check left out of the running job
   let lists = $state([]);
   const setting = (k, fallback) => loadSetting(`caption.${k}`, fallback);
   let choice = $state(setting('choice', 'riffle')); // riffle | phrases | joy | wd | joy-booru
@@ -208,24 +209,29 @@
   let keepPrefixed = $state(false);
   let taglist = $state(setting('taglist', ''));
   let booruUnderscores = $state(setting('booruUnderscores', false)); // booru tags as long_hair instead of long hair
+  let limitKind = $state(setting('limitKind', 'tokens')); // booru tags: 'tokens' | 'tags' | 'off'
+  let limitN = $state(setting('limitN', 75)); // 75 CLIP tokens: what Stable Diffusion's text encoder takes
+  let tagAt = $state(setting('tagAt', 'end')); // new tags (generated or added to all): 'end' | 'start'
   let ocrTranslate = $state(setting('ocrTranslate', true));
+  let ocrPrefilter = $state(setting('ocrPrefilter', false)); // skip photos CLIP says have no text
   let retranslate = $state(false); // translate the current text again instead of reading
   let booruOpen = $state(untrack(() => choice === 'wd' || choice === 'joy-booru')); // open if last used
   let downloading = $state(false);
 
   const method = (key) => methods.find((m) => m.key === key);
   const booru = $derived(choice === 'wd' || choice === 'joy-booru');
-  const chosen = $derived(method({ riffle: 'riffle', phrases: 'phrases', joy: 'joycaption', ocr: 'ocr', wd: 'wd', 'joy-booru': 'joycaption' }[choice]));
-  const makesCaption = $derived(choice === 'joy' && !!joyCaption);
-  const makesText = $derived(choice === 'ocr');
+  const chosen = $derived(method({ riffle: 'riffle', phrases: 'phrases', joy: 'joycaption', ocr: 'ocr', qwen: 'qwen', wd: 'wd', 'joy-booru': 'joycaption' }[choice]));
+  const makesCaption = $derived((choice === 'joy' && !!joyCaption) || choice === 'qwen');
+  const makesText = $derived(choice === 'ocr' || choice === 'qwen');
   const makesTags = $derived(choice !== 'ocr' && (choice !== 'joy' || joyKeywords));
   // Photos still missing what this method makes (a choice only when adding: replacing
   // is for photos that have something). Read text counts once read, even if none was found.
   const missing = $derived(
-    work.filter((id) => data[id] && ((makesCaption && !data[id].caption) || (makesTags && !data[id].tags.length) || (makesText && data[id].text == null)))
+    work.filter((id) => data[id] && ((makesCaption && !data[id].caption) || (makesTags && !data[id].tags.length) || (makesText && (data[id].text == null || (data[id].text_method === 'clip' && !(choice === 'ocr' && ocrPrefilter))))))
   );
   const withText = $derived(work.filter((id) => data[id]?.text));
-  const targets = $derived(makesText && retranslate ? withText : mode === 'add' && scope === 'empty' ? missing : work);
+  const retranslating = $derived(choice === 'ocr' && retranslate);
+  const targets = $derived(retranslating ? withText : mode === 'add' && scope === 'empty' ? missing : work);
 
   async function refreshStatus() {
     try {
@@ -236,7 +242,11 @@
       if (job.running || wasRunning) load();
       if (wasRunning && !job.running) {
         onchange();
-        notice = job.error ? '' : job.result ? `Done: ${job.result.changed} of ${job.result.photos} photos changed.` : '';
+        notice = job.error
+          ? ''
+          : job.result
+            ? `Done: ${job.result.changed} of ${job.result.photos} photos changed.${skippedLast ? ` ${skippedLast} skipped: probably no text.` : ''}`
+            : '';
         if (job.error) error = job.error;
       }
     } catch (e) {
@@ -254,14 +264,16 @@
   });
 
   async function generate() {
-    const body = { ids: targets, mode, options: {} };
+    const body = { ids: targets, mode, options: {}, at: tagAt };
     if (choice === 'riffle' || choice === 'phrases') body.method = choice;
     else if (choice === 'joy') {
       body.method = 'joycaption';
       body.options = { caption: joyCaption || null, tags: joyKeywords ? 'keywords' : null, prompt: joyPrompt };
+    } else if (choice === 'qwen') {
+      body.method = 'qwen';
     } else if (choice === 'ocr') {
       body.method = 'ocr';
-      body.options = retranslate ? { retranslate: true } : { translate: ocrTranslate };
+      body.options = retranslate ? { retranslate: true } : { translate: ocrTranslate, prefilter: ocrPrefilter };
     } else if (choice === 'joy-booru') {
       body.method = 'joycaption';
       body.options = { caption: null, tags: 'booru', keep_prefixed: keepPrefixed, underscores: booruUnderscores };
@@ -270,17 +282,20 @@
       body.options = { threshold: Number(wdThreshold), characters: wdCharacters, rating: wdRating, underscores: booruUnderscores };
     }
     if (booru && taglist) body.taglist = taglist;
-    for (const [k, v] of Object.entries({ choice, mode, scope, joyCaption, joyKeywords, wdThreshold, wdCharacters, wdRating, taglist, ocrTranslate, booruUnderscores }))
+    if (booru && limitKind !== 'off') Object.assign(body, { limit_kind: limitKind, limit: Math.max(1, Number(limitN) || 75) });
+    for (const [k, v] of Object.entries({ choice, mode, scope, joyCaption, joyKeywords, wdThreshold, wdCharacters, wdRating, taglist, ocrTranslate, ocrPrefilter, booruUnderscores, limitKind, limitN, tagAt }))
       saveSetting(`caption.${k}`, v);
     error = notice = '';
     try {
       const res = await startCaptioning(body);
+      const skippedNote = res.skipped ? ` ${res.skipped} skipped: probably no text.` : '';
       if (res.done) {
-        notice = `Done: ${res.changed} of ${res.photos} photos changed.`;
+        notice = res.photos ? `Done: ${res.changed} of ${res.photos} photos changed.${skippedNote}` : `Nothing to read:${skippedNote}`;
         await load();
         onchange();
       } else {
         job = res.job;
+        skippedLast = res.skipped ?? 0;
       }
     } catch (e) {
       error = e.message;
@@ -377,12 +392,21 @@
             <label class="flex items-center gap-2"><input type="radio" bind:group={retranslate} value={false} /> Read the text</label>
             {#if !retranslate}
               <label class="ml-5 flex items-center gap-2"><input type="checkbox" bind:checked={ocrTranslate} /> Translate into English</label>
+              <label class="ml-5 flex items-start gap-2">
+                <input type="checkbox" bind:checked={ocrPrefilter} class="mt-0.5" />
+                <span>
+                  Skip photos that probably have no text
+                  <span class="block text-neutral-500">A quick check (CLIP): about 20% faster, but misses some small text, e.g. 1 in 20 signs and many signatures on illustrations.</span>
+                </span>
+              </label>
             {/if}
             <label class="flex items-center gap-2" title="After editing the text: translate what is there now">
               <input type="radio" bind:group={retranslate} value={true} /> Translate the current text again ({withText.length})
             </label>
           </div>
         {/if}
+
+        {@render methodCard('qwen', 'qwen', 'Caption, keywords and text', 'All three in one pass of Qwen3-VL: about 20% faster than separately, but only reading text is much quicker on photos without any.')}
 
         <details bind:open={booruOpen} class="rounded border border-neutral-800">
           <summary class="cursor-pointer px-2.5 py-1.5 text-neutral-400">Illustrations / booru tags</summary>
@@ -404,6 +428,19 @@
             {/if}
             <label class="flex items-center gap-2 px-1" title="Tags are stored with spaces (long hair), as most training tools expect; emoticons like ^_^ keep theirs">
               <input type="checkbox" bind:checked={booruUnderscores} /> Keep underscores (long_hair)
+            </label>
+            <label class="flex items-center justify-between gap-2 px-1" title="Stop adding tags once a photo's tags reach this (existing tags stay). 75 CLIP tokens is what Stable Diffusion's text encoder takes; the most certain tags come first.">
+              Limit
+              <span class="flex items-center gap-1">
+                {#if limitKind !== 'off'}
+                  <input type="number" min="1" max="500" bind:value={limitN} class="w-14 rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5" />
+                {/if}
+                <select bind:value={limitKind} class="rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5">
+                  <option value="tokens">tokens</option>
+                  <option value="tags">tags</option>
+                  <option value="off">no limit</option>
+                </select>
+              </span>
             </label>
             <label class="block">
               <span class="text-neutral-400">Master tag list</span>
@@ -429,7 +466,16 @@
             <option value="replace_all">replace everything</option>
           </select>
         </label>
-        {#if mode === 'add' && !(makesText && retranslate)}
+        {#if makesTags}
+          <label class="flex items-center justify-between gap-2">
+            New tags
+            <select bind:value={tagAt} class="rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5">
+              <option value="end">after the existing ones</option>
+              <option value="start">before the existing ones</option>
+            </select>
+          </label>
+        {/if}
+        {#if mode === 'add' && !retranslating}
           <label class="flex items-center justify-between gap-2">
             Photos
             <select bind:value={scope} class="rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5">
@@ -469,10 +515,17 @@
             e.preventDefault();
             const t = addAll.trim();
             addAll = '';
-            if (t) change(() => bulkTags(work, 'add', t));
+            if (t) {
+              saveSetting('caption.tagAt', tagAt);
+              change(() => bulkTags(work, 'add', t, null, tagAt));
+            }
           }}
         >
           <input bind:value={addAll} list="caption-tags" placeholder="Add a tag to them" class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5" />
+          <select bind:value={tagAt} title="Where the new tag goes in each photo's tags" class="rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5">
+            <option value="end">last</option>
+            <option value="start">first</option>
+          </select>
           <button class={btn} disabled={!addAll.trim()}>Add</button>
         </form>
         <form
@@ -547,6 +600,7 @@
           <button class="text-sky-400 hover:underline" onclick={() => checkAll(shown.filter(isEmpty))}>without caption or tags</button>
           <button class="text-sky-400 hover:underline" onclick={() => checkAll(shown.filter((id) => data[id]?.text))}>with text</button>
           <button class="text-sky-400 hover:underline" onclick={() => checkAll(shown.filter((id) => data[id] && data[id].text == null))}>text not read</button>
+          <button class="text-sky-400 hover:underline" onclick={() => checkAll(shown.filter((id) => data[id]?.text === '' && data[id].text_method === 'clip'))}>skipped by the text check</button>
           {#if checked.size}
             <button class="text-sky-400 hover:underline" onclick={() => checked.clear()}>none</button>
             <span class="text-sky-300">{checked.size} checked: the panel on the left works on them</span>
@@ -592,6 +646,12 @@
                     ></textarea>
                   {/key}
                   <div class="flex flex-wrap items-center gap-1">
+                    {#if d.tags.length}
+                      <span
+                        class="order-last ml-auto text-[10px] tabular-nums {limitKind === 'tokens' && d.tokens > limitN ? 'text-amber-400' : 'text-neutral-600'}"
+                        title="CLIP tokens of the tags as a caption file lists them (Stable Diffusion's text encoder takes 75)">{d.tokens} tokens</span
+                      >
+                    {/if}
                     {#each d.tags as tag, i (tag)}
                       <span
                         role="listitem"
@@ -625,6 +685,10 @@
                   <!-- Text in the photo (OCR) and its English translation -->
                   {#if d.text == null}
                     <p class="text-[11px] text-neutral-600">Text in the photo: not read</p>
+                  {:else if d.text === '' && d.text_method === 'clip'}
+                    <p class="text-[11px] text-neutral-600" title="Left out by the quick check; to read it anyway, check it and read text without the check">
+                      Text in the photo: probably none (skipped by the quick check)
+                    </p>
                   {:else if d.text === ''}
                     <p class="text-[11px] text-neutral-600">Text in the photo: none found</p>
                   {:else}

@@ -131,8 +131,8 @@ export async function fetchCaptions(ids) {
 }
 /** items: [{id, caption?, tags?}]; resolves to {previous: [...]} for undo. */
 export const saveCaptions = (items) => send('POST', '/api/captions', { items });
-/** op: add | remove | rename; resolves to {previous: [...]} for undo. */
-export const bulkTags = (ids, op, tag, to = null) => send('POST', '/api/captions/tags', { ids, op, tag, to });
+/** op: add | remove | rename; at: 'end' | 'start' (add); resolves to {previous: [...]} for undo. */
+export const bulkTags = (ids, op, tag, to = null, at = 'end') => send('POST', '/api/captions/tags', { ids, op, tag, to, at });
 /** {methods: [{key, label, group, outputs, available, reason, download}], job}. */
 export const fetchCaptioning = () => get('/api/captioning');
 export const startCaptioning = (body) => send('POST', '/api/captioning', body);
