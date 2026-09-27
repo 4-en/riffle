@@ -3,13 +3,14 @@
   // opening it. Flag actions apply to the whole selection when the photo is part
   // of a multi-selection; the rest act on the photo that was right-clicked.
   import { untrack } from 'svelte';
-  import { view, findSimilar, toggleTag, toggleExcludeTag, DATE_GROUPS, LOCATION_GROUPS } from '../lib/state.svelte.js';
-  import { fetchPhoto } from '../lib/api.js';
+  import { view, findSimilar, toggleTag, toggleExcludeTag, toggleCtag, toggleExcludeCtag, DATE_GROUPS, LOCATION_GROUPS } from '../lib/state.svelte.js';
+  import { fetchPhoto, editCustomTag } from '../lib/api.js';
   import { selection } from '../lib/culling.svelte.js';
   import { copyText } from '../lib/clipboard.js';
 
   // at: {x, y, id}; onflag(flag): flag the selection; ontimeline(photo, kind); onclose()
-  let { at, onflag, ontimeline, onclose } = $props();
+  // customTags: the user's tags [{id, name}]; ontagchange({id}): after adding photos to one.
+  let { at, onflag, ontimeline, onclose, customTags = [], ontagchange = () => {} } = $props();
 
   // A new menu is created for every right-click, so the position and photo are read once.
   const { x, y, id } = untrack(() => at);
@@ -23,6 +24,12 @@
     .catch(() => {});
 
   const n = selection.size > 1 && selection.has(id) ? selection.size : 1;
+  const targets = n > 1 ? [...selection] : [id];
+
+  async function addToTag(tag) {
+    await editCustomTag(tag.id, { add: targets });
+    ontagchange({ id: tag.id });
+  }
   const dateMode = DATE_GROUPS.includes(view.group) ? view.group : 'day';
   const placeMode = LOCATION_GROUPS.includes(view.group) ? view.group : 'place';
 
@@ -106,6 +113,36 @@
     </button>
   {/if}
   <button class={item} role="menuitem" disabled={!photo} onclick={() => run(() => copyText(photo.path))}>Copy path</button>
+  <div class="my-1 border-t border-neutral-700"></div>
+  <button class={item} role="menuitem" onclick={() => run(() => (view.tagDialog = { mode: 'create', photoIds: targets }))}>
+    Create tag from {n > 1 ? `${n} photos` : 'this photo'}…
+  </button>
+  {#if customTags.length}
+    <p class="px-3 pb-1 pt-0.5 text-[11px] text-neutral-500">Add {n > 1 ? `${n} photos` : 'it'} to a tag as an example</p>
+    <div class="flex max-w-72 flex-wrap gap-1 px-3 pb-1.5">
+      {#each customTags as tag (tag.id)}
+        <button class="rounded-full border border-neutral-600 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700" onclick={() => run(() => addToTag(tag))}>
+          + {tag.name}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
+  {#if photo?.custom_tags?.length}
+    <div class="my-1 border-t border-neutral-700"></div>
+    <p class="px-3 pb-1 pt-0.5 text-[11px] text-neutral-500">Your tags · click to filter, Alt+click to hide</p>
+    <div class="flex max-w-72 flex-wrap gap-1 px-3 pb-1.5">
+      {#each photo.custom_tags as tag (tag.id)}
+        {@const on = view.ctags.includes(tag.id)}
+        <button
+          class="rounded-full border px-2 py-0.5 text-xs {on ? 'border-sky-600 bg-sky-700 text-white' : 'border-neutral-600 text-neutral-300 hover:bg-neutral-700'}"
+          onclick={(e) => run(() => (e.altKey ? toggleExcludeCtag(tag.id) : toggleCtag(tag.id)))}
+        >
+          {tag.name}
+        </button>
+      {/each}
+    </div>
+  {/if}
 
   {#if photo?.tags?.length}
     <div class="my-1 border-t border-neutral-700"></div>

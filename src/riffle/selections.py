@@ -1,4 +1,4 @@
-"""Pick/reject flags and export history: the user-created data.
+"""Pick/reject flags, export history, and custom tags: the user-created data.
 
 Stored in their own SQLite file, outside ``data_dir``, keyed by file content
 (sha256). Deleting the derived data and re-indexing, or moving files, keeps them;
@@ -33,7 +33,26 @@ CREATE TABLE IF NOT EXISTS exported (
   source      TEXT,             -- last known location, for humans and recovery
   rel_path    TEXT
 );
+
+-- v3: tags taught by example photos (custom_tags.py).
+CREATE TABLE IF NOT EXISTS custom_tags (
+  id          INTEGER PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  strictness  TEXT NOT NULL DEFAULT 'normal' CHECK (strictness IN ('strict', 'normal', 'loose')),
+  created_at  REAL NOT NULL,
+  updated_at  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS custom_tag_examples (
+  tag_id      INTEGER NOT NULL REFERENCES custom_tags(id),
+  sha256      TEXT NOT NULL,
+  source      TEXT,             -- last known location, for humans and recovery
+  rel_path    TEXT,
+  added_at    REAL NOT NULL,
+  PRIMARY KEY (tag_id, sha256)
+);
 """
+
+STRICTNESS = ("strict", "normal", "loose")
 
 def flag_expr(alias: str = "p") -> str:
     """SQL for a photo's flag ('pick', 'reject' or NULL), for catalogue connections
@@ -59,7 +78,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
-    conn.execute("PRAGMA user_version = 2")
+    conn.execute("PRAGMA user_version = 3")
     conn.commit()
     return conn
 
@@ -196,5 +215,114 @@ def clear_exported(catalogue: sqlite3.Connection, path: str | Path, photo_ids: l
                 return conn.execute("DELETE FROM exported").rowcount
             shas = [(r["sha256"],) for r in _photos(catalogue, photo_ids)]
             return sum(conn.execute("DELETE FROM exported WHERE sha256 = ?", s).rowcount for s in shas)
+    finally:
+        conn.close()
+
+
+# ---- custom tags --------------------------------------------------------------
+
+
+class TagError(ValueError):
+    """A custom tag request that cannot be done (duplicate or empty name, unknown tag)."""
+
+
+def list_tags(path: str | Path) -> list[dict]:
+    """Every custom tag with its examples' content hashes, by name."""
+    conn = connect(path)
+    try:
+        tags = [dict(r) for r in conn.execute("SELECT * FROM custom_tags ORDER BY name COLLATE NOCASE")]
+        examples: dict[int, list[str]] = {}
+        for r in conn.execute("SELECT tag_id, sha256 FROM custom_tag_examples ORDER BY added_at, sha256"):
+            examples.setdefault(r["tag_id"], []).append(r["sha256"])
+        for t in tags:
+            t["examples"] = examples.get(t["id"], [])
+        return tags
+    finally:
+        conn.close()
+
+
+def _clean_name(name: str) -> str:
+    name = " ".join((name or "").split())
+    if not name:
+        raise TagError("the tag needs a name")
+    return name
+
+
+def _add_examples(conn: sqlite3.Connection, catalogue: sqlite3.Connection, tag_id: int, photo_ids: list[int], now: float) -> None:
+    conn.executemany(
+        """INSERT INTO custom_tag_examples (tag_id, sha256, source, rel_path, added_at) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (tag_id, sha256) DO UPDATE SET source = excluded.source, rel_path = excluded.rel_path""",
+        [(tag_id, r["sha256"], r["source"], r["rel_path"], now) for r in _photos(catalogue, photo_ids)],
+    )
+
+
+def create_tag(catalogue: sqlite3.Connection, path: str | Path, name: str, photo_ids: list[int], strictness: str = "normal") -> int:
+    """A new tag from example photos; returns its id."""
+    name = _clean_name(name)
+    if strictness not in STRICTNESS:
+        raise TagError(f"strictness must be one of {', '.join(STRICTNESS)}")
+    if not _photos(catalogue, photo_ids):
+        raise TagError("choose at least one photo as an example")
+    conn = connect(path)
+    try:
+        now = time.time()
+        with conn:
+            try:
+                tag_id = conn.execute(
+                    "INSERT INTO custom_tags (name, strictness, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                    (name, strictness, now, now),
+                ).lastrowid
+            except sqlite3.IntegrityError:
+                raise TagError(f'a tag named "{name}" already exists')
+            _add_examples(conn, catalogue, tag_id, photo_ids, now)
+        return tag_id
+    finally:
+        conn.close()
+
+
+def update_tag(
+    catalogue: sqlite3.Connection,
+    path: str | Path,
+    tag_id: int,
+    *,
+    name: str | None = None,
+    strictness: str | None = None,
+    add: list[int] | None = None,
+    remove: list[int] | None = None,
+) -> None:
+    """Rename, change strictness, add or remove example photos."""
+    if strictness is not None and strictness not in STRICTNESS:
+        raise TagError(f"strictness must be one of {', '.join(STRICTNESS)}")
+    conn = connect(path)
+    try:
+        now = time.time()
+        with conn:
+            if conn.execute("SELECT 1 FROM custom_tags WHERE id = ?", (tag_id,)).fetchone() is None:
+                raise TagError("no such tag")
+            if name is not None:
+                try:
+                    conn.execute("UPDATE custom_tags SET name = ? WHERE id = ?", (_clean_name(name), tag_id))
+                except sqlite3.IntegrityError:
+                    raise TagError(f'a tag named "{_clean_name(name)}" already exists')
+            if strictness is not None:
+                conn.execute("UPDATE custom_tags SET strictness = ? WHERE id = ?", (strictness, tag_id))
+            if add:
+                _add_examples(conn, catalogue, tag_id, add, now)
+            if remove:
+                conn.executemany(
+                    "DELETE FROM custom_tag_examples WHERE tag_id = ? AND sha256 = ?",
+                    [(tag_id, r["sha256"]) for r in _photos(catalogue, remove)],
+                )
+            conn.execute("UPDATE custom_tags SET updated_at = ? WHERE id = ?", (now, tag_id))
+    finally:
+        conn.close()
+
+
+def delete_tag(path: str | Path, tag_id: int) -> bool:
+    conn = connect(path)
+    try:
+        with conn:
+            conn.execute("DELETE FROM custom_tag_examples WHERE tag_id = ?", (tag_id,))
+            return conn.execute("DELETE FROM custom_tags WHERE id = ?", (tag_id,)).rowcount > 0
     finally:
         conn.close()

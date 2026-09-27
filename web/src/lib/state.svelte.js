@@ -17,6 +17,9 @@ export const view = $state({
   similar: null, // photo id
   tags: [], // tag ids, AND-combined: photos must have all of them
   excludeTags: [], // tag ids: photos must have none of them
+  ctags: [], // custom tag ids (taught by example photos): photos must be in all of them
+  excludeCtags: [], // custom tag ids: photos must be in none of them
+  tagDialog: null, // custom tag dialog: {mode: 'create', photoIds} | {mode: 'edit', tag} (not in the URL)
   filters: emptyFilters(),
   group: '', // '' | 'day' | 'month' | 'year' | 'place' | 'region' | 'country' (browsing only, not search)
   collapse: 'dupes', // 'dupes' | 'stacks': one tile per duplicate group or per stack
@@ -37,6 +40,8 @@ export function readUrl() {
   view.similar = p.has('similar') ? Number(p.get('similar')) : null;
   view.tags = (p.get('tags') ?? '').split(',').filter(Boolean).map(Number);
   view.excludeTags = (p.get('xtags') ?? '').split(',').filter(Boolean).map(Number);
+  view.ctags = (p.get('ctags') ?? '').split(',').filter(Boolean).map(Number);
+  view.excludeCtags = (p.get('xctags') ?? '').split(',').filter(Boolean).map(Number);
   view.photo = p.has('photo') ? Number(p.get('photo')) : null;
   view.raws = p.has('raws');
   view.group = GROUPS.includes(p.get('group')) ? p.get('group') : '';
@@ -55,6 +60,8 @@ export function urlFor(v) {
   if (v.similar) p.set('similar', v.similar);
   if (v.tags.length) p.set('tags', v.tags.join(','));
   if (v.excludeTags.length) p.set('xtags', v.excludeTags.join(','));
+  if (v.ctags.length) p.set('ctags', v.ctags.join(','));
+  if (v.excludeCtags.length) p.set('xctags', v.excludeCtags.join(','));
   for (const k of FILTER_ARRAYS) for (const x of v.filters[k]) p.append(k, x);
   for (const k of FILTER_SCALARS) if (v.filters[k] !== '') p.set(k, v.filters[k]);
   if (v.group) p.set('group', v.group);
@@ -170,9 +177,35 @@ export function toggleExcludeTag(id) {
   view.excludeTags = view.excludeTags.includes(id) ? view.excludeTags.filter((t) => t !== id) : [...view.excludeTags, id];
 }
 
+/** Toggle including a custom tag (replaces excluding it). */
+export function toggleCtag(id) {
+  view.excludeCtags = view.excludeCtags.filter((t) => t !== id);
+  view.ctags = view.ctags.includes(id) ? view.ctags.filter((t) => t !== id) : [...view.ctags, id];
+}
+
+/** Toggle excluding a custom tag (replaces including it). */
+export function toggleExcludeCtag(id) {
+  view.ctags = view.ctags.filter((t) => t !== id);
+  view.excludeCtags = view.excludeCtags.includes(id) ? view.excludeCtags.filter((t) => t !== id) : [...view.excludeCtags, id];
+}
+
+/** What a Curate draft is remembered by: tags, custom tags, and filters. (Custom tags
+ * are only added when used, so drafts saved before they existed keep their key.) */
+export function curateKey() {
+  const key = [view.tags, view.excludeTags, view.filters];
+  return view.ctags.length || view.excludeCtags.length ? [...key, view.ctags, view.excludeCtags] : key;
+}
+
 /** How many things narrow the view: search, each included/excluded tag, each filter. */
 export function activeCount() {
-  return (view.q || view.similar ? 1 : 0) + view.tags.length + view.excludeTags.length + activeFilterCount(view.filters);
+  return (
+    (view.q || view.similar ? 1 : 0) +
+    view.tags.length +
+    view.excludeTags.length +
+    view.ctags.length +
+    view.excludeCtags.length +
+    activeFilterCount(view.filters)
+  );
 }
 
 /** Back to the whole library: no search, no tags, no filters. */
@@ -180,12 +213,14 @@ export function clearAll() {
   clearSearch();
   view.tags = [];
   view.excludeTags = [];
+  view.ctags = [];
+  view.excludeCtags = [];
   clearFilters();
 }
 
 /** Any tag included or excluded. */
 export function tagFilterActive() {
-  return view.tags.length > 0 || view.excludeTags.length > 0;
+  return view.tags.length > 0 || view.excludeTags.length > 0 || view.ctags.length > 0 || view.excludeCtags.length > 0;
 }
 
 export function search(q) {

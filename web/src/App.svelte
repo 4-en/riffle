@@ -1,6 +1,6 @@
 <script>
   import { tick, untrack } from 'svelte';
-  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup, hasOverview } from './lib/state.svelte.js';
+  import { view, readUrl, urlFor, clearSearch, groupKey, toggleHideRejected, curateKey, DATE_GROUPS, LOCATION_GROUPS, isLocationGroup, hasOverview } from './lib/state.svelte.js';
   import { fetchResults, fetchTags, fetchFacets, fetchIndexStatus, fetchSources, fetchIds, fetchTaste } from './lib/api.js';
   import { culling, selection, cursor, flagOf, setFlag, undo, clearSelection } from './lib/culling.svelte.js';
   import { connection, connect } from './lib/connection.svelte.js';
@@ -18,6 +18,7 @@
   import ContextMenu from './components/ContextMenu.svelte';
   import Help from './components/Help.svelte';
   import Curate from './components/Curate.svelte';
+  import TagDialog from './components/TagDialog.svelte';
   // The map (d3 + country outlines) loads only when it is first shown.
   const loadMap = () => import('./components/MapView.svelte');
 
@@ -59,7 +60,7 @@
 
   // Tag counts and filter options are relative to the current filter.
   $effect(() => {
-    view.tags, view.excludeTags, JSON.stringify(view.filters);
+    view.tags, view.excludeTags, view.ctags, view.excludeCtags, JSON.stringify(view.filters);
     untrack(loadSidebar);
   });
 
@@ -165,7 +166,7 @@
 
   // Re-query whenever the search, filters or grouping change.
   $effect(() => {
-    view.q, view.similar, view.tags, view.excludeTags, JSON.stringify(view.filters), view.group, view.collapse, view.sort;
+    view.q, view.similar, view.tags, view.excludeTags, view.ctags, view.excludeCtags, JSON.stringify(view.filters), view.group, view.collapse, view.sort;
     untrack(reset);
   });
 
@@ -217,6 +218,19 @@
   $effect(() => {
     if (view.curate && view.similar) view.curate = false;
   });
+
+  /** A custom tag was created, edited, or deleted: refresh the sidebar, and the grid
+   * if the tag is filtering it (a deleted one leaves the filters). */
+  function customTagChanged({ id, deleted = false }) {
+    const inUse = view.ctags.includes(id) || view.excludeCtags.includes(id);
+    if (deleted) {
+      view.ctags = view.ctags.filter((t) => t !== id);
+      view.excludeCtags = view.excludeCtags.filter((t) => t !== id);
+    } else if (inUse) {
+      reset();
+    }
+    loadSidebar();
+  }
 
   // An overview needs a grouping and makes no sense for search results.
   $effect(() => {
@@ -355,6 +369,10 @@
       e.preventDefault();
       menuAt = null;
       return;
+    }
+    if (view.tagDialog) {
+      if (key === 'Escape') view.tagDialog = null;
+      return; // the dialog has the keyboard
     }
     if (key === 'Escape') {
       if (view.help) view.help = false;
@@ -498,7 +516,7 @@
 
 {#if view.curate}
   <!-- A new filter set (e.g. a tag clicked in the photo view) starts its own draft. -->
-  {#key JSON.stringify([view.tags, view.excludeTags, view.filters])}
+  {#key JSON.stringify(curateKey())}
     <Curate onorder={(ids) => (curateOrder = ids)} />
   {/key}
 {/if}
@@ -516,7 +534,14 @@
 
 {#if menuAt}
   {#key menuAt}
-    <ContextMenu at={menuAt} onflag={flagInGrid} ontimeline={showInTimeline} onclose={() => (menuAt = null)} />
+    <ContextMenu
+      at={menuAt}
+      onflag={flagInGrid}
+      ontimeline={showInTimeline}
+      onclose={() => (menuAt = null)}
+      customTags={tags?.custom ?? []}
+      ontagchange={customTagChanged}
+    />
   {/key}
 {/if}
 
@@ -528,6 +553,12 @@
 
 {#if view.help}
   <Help />
+{/if}
+
+{#if view.tagDialog}
+  {#key view.tagDialog}
+    <TagDialog dialog={view.tagDialog} onchange={customTagChanged} />
+  {/key}
 {/if}
 
 {#if view.exporting}

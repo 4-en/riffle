@@ -6,6 +6,7 @@ are OR-combined; different facets are AND-combined.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -93,6 +94,11 @@ class PhotoFilter:
     place: list[str] = field(default_factory=list)
     loc_source: list[str] = field(default_factory=list)
     folder: list[str] = field(default_factory=list)  # parent folder keys (FOLDER_KEY), not subfolders
+    ctags: list[int] = field(default_factory=list)  # custom tags (example photos): must be in all
+    exclude_ctags: list[int] = field(default_factory=list)  # ...and in none of these
+    # Their members, resolved by the server from the embeddings (custom_tags.py):
+    ctag_members: list[list[int]] = field(default_factory=list)  # one list per tag in ctags
+    ctag_excluded: list[int] = field(default_factory=list)  # union over exclude_ctags
     exposure: list[str] = field(default_factory=list)  # EXPOSURE keys, OR-combined
 
     def where(self, model_id: str, exclude: frozenset[str] = frozenset()) -> tuple[str, list]:
@@ -117,6 +123,15 @@ class PhotoFilter:
                     WHERE model_id = ? AND tag_id IN ({marks}))"""
             )
             params += [model_id, *self.exclude_tags]
+
+        if "tags" not in exclude:
+            # One JSON array per tag keeps the query within SQLite's parameter limit.
+            for ids in self.ctag_members:
+                clauses.append("p.id IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(ids))
+            if self.ctag_excluded:
+                clauses.append("p.id NOT IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(self.ctag_excluded))
 
         if "date" not in exclude:
             if self.date_from:
@@ -212,13 +227,17 @@ def photo_filter(
     loc_source: list[str] = Query([]),
     exposure: list[str] = Query([]),
     folder: list[str] = Query([]),
+    ctags: str | None = None,
+    exclude_ctags: str | None = None,
 ) -> PhotoFilter:
     """FastAPI dependency: the filter from query parameters."""
     try:
         tag_ids = sorted({int(t) for t in (tags or "").split(",") if t.strip()})
         excluded_ids = sorted({int(t) for t in (exclude_tags or "").split(",") if t.strip()} - set(tag_ids))
+        ctag_ids = sorted({int(t) for t in (ctags or "").split(",") if t.strip()})
+        excluded_ctag_ids = sorted({int(t) for t in (exclude_ctags or "").split(",") if t.strip()} - set(ctag_ids))
     except ValueError:
-        raise HTTPException(400, "tags and exclude_tags must be comma-separated tag ids")
+        raise HTTPException(400, "tags, exclude_tags, ctags and exclude_ctags must be comma-separated ids")
     for d in (date_from, date_to):
         if d and not _DATE.match(d):
             raise HTTPException(400, "dates must be YYYY-MM-DD")
@@ -258,6 +277,8 @@ def photo_filter(
         loc_source=list(dict.fromkeys(loc_source)),
         exposure=list(dict.fromkeys(exposure)),
         folder=list(dict.fromkeys(folder)),
+        ctags=ctag_ids,
+        exclude_ctags=excluded_ctag_ids,
     )
 
 

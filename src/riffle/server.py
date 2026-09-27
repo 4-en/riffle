@@ -97,6 +97,24 @@ class AlternativesIn(CurateIn):
     id: int
 
 
+class CustomTagIn(BaseModel):
+    name: str
+    photo_ids: list[int]
+    strictness: str = "normal"
+
+
+class CustomTagEdit(BaseModel):
+    name: str | None = None
+    strictness: str | None = None
+    add: list[int] = []
+    remove: list[int] = []
+
+
+class CustomTagPreview(BaseModel):
+    photo_ids: list[int]
+    strictness: str = "normal"
+
+
 class FlagOp(BaseModel):
     ids: list[int]
     flag: str | None  # "pick", "reject", or null to clear
@@ -282,6 +300,50 @@ def create_app(
         index.refresh()
         return index
 
+    # ---- custom tags (example photos; custom_tags.py) ------------------------------
+
+    ctag_cache: dict[int, tuple] = {}  # tag id -> (key, member ids)
+
+    def custom_tag_list(conn) -> list[dict]:
+        """Every custom tag with the ids of its examples that are in the library."""
+        tags = [dict(r) for r in conn.execute(
+            "SELECT id, name, strictness, updated_at FROM sel.custom_tags ORDER BY name COLLATE NOCASE"
+        )]
+        examples: dict[int, list[int]] = {}
+        for r in conn.execute(
+            """SELECT e.tag_id, p.id FROM sel.custom_tag_examples e
+               JOIN photos p ON p.sha256 = e.sha256 AND p.status = 'ok' ORDER BY e.added_at, p.id"""
+        ):
+            if r[1] not in examples.setdefault(r[0], []):
+                examples[r[0]].append(r[1])
+        for t in tags:
+            t["examples"] = examples.get(t["id"], [])
+        return tags
+
+    def custom_tag_members(conn, index: Index, tags: list[dict] | None = None) -> dict[int, list[int]]:
+        """Member photo ids per custom tag, cached until the tag or the embeddings change."""
+        from . import custom_tags
+
+        out = {}
+        for t in tags if tags is not None else custom_tag_list(conn):
+            key = (t["updated_at"], t["strictness"], tuple(t["examples"]), index.stamp, cfg.stacks.min_similarity)
+            hit = ctag_cache.get(t["id"])
+            if hit is None or hit[0] != key:
+                rows = custom_tags.example_rows(index.row, t["examples"])
+                limit = custom_tags.threshold(cfg.stacks.min_similarity, t["strictness"])
+                ids, _ = custom_tags.members(index.E, index.ids, rows, limit)
+                ctag_cache[t["id"]] = hit = (key, ids)
+            out[t["id"]] = hit[1]
+        return out
+
+    def resolved_filter(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)) -> PhotoFilter:
+        """The query-string filter with custom tags resolved to their members."""
+        if flt.ctags or flt.exclude_ctags:
+            members = custom_tag_members(conn, index)
+            flt.ctag_members = [members.get(t, []) for t in flt.ctags]
+            flt.ctag_excluded = sorted({i for t in flt.exclude_ctags for i in members.get(t, [])})
+        return flt
+
     # ---- helpers -------------------------------------------------------------
 
     def items_for(conn, ids: list[int], scores: dict[int, float] | None = None) -> list[dict]:
@@ -412,7 +474,7 @@ def create_app(
 
     @app.get("/api/photos")
     def list_photos(
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
         sort: str = "taken_at",
@@ -530,7 +592,7 @@ def create_app(
     @app.get("/api/groups")
     def list_groups(
         group: str,
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
         conn=Depends(get_conn),
@@ -542,7 +604,7 @@ def create_app(
         return {"group": group, "groups": group_summary(conn, cte, shown, params, group)}
 
     @app.get("/api/photos/{photo_id}")
-    def photo_detail(photo_id: int, conn=Depends(get_conn)):
+    def photo_detail(photo_id: int, conn=Depends(get_conn), index: Index = Depends(get_index)):
         r = conn.execute("SELECT * FROM photos WHERE id = ?", (photo_id,)).fetchone()
         if r is None:
             raise HTTPException(404, "photo not found")
@@ -561,6 +623,9 @@ def create_app(
                 (photo_id, model_id),
             )
         ]
+        ctags = custom_tag_list(conn)
+        members = custom_tag_members(conn, index, ctags)
+        photo["custom_tags"] = [{"id": t["id"], "name": t["name"]} for t in ctags if photo_id in members[t["id"]]]
         photo["raws"] = [
             {"path": str(Path(x["source"]) / x["rel_path"]), "size_bytes": x["size_bytes"]}
             for x in conn.execute(
@@ -613,7 +678,7 @@ def create_app(
     @app.get("/api/search/text")
     def search_text(
         q: str = Query(..., min_length=1),
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
         offset: int = Query(0, ge=0),
@@ -636,7 +701,7 @@ def create_app(
     @app.get("/api/search/similar/{photo_id}")
     def search_similar(
         photo_id: int,
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
         offset: int = Query(0, ge=0),
@@ -650,7 +715,7 @@ def create_app(
         return rank(conn, index, index.E[row], flt, photo_id, collapse_mode(collapse, dupes), offset, limit)
 
     @app.get("/api/tags")
-    def list_tags(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+    def list_tags(flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
         """Tags with photo counts within the current filter (tags and EXIF).
         Tags that no matching photo carries are omitted, except the selected ones."""
         selected = flt.tags
@@ -686,8 +751,25 @@ def create_app(
         exported = conn.execute(
             f"SELECT COUNT(*) FROM photos p WHERE p.status = 'ok' AND {EXPORTED_EXPR}"
         ).fetchone()[0]
+        ctags = custom_tag_list(conn)
+        members = custom_tag_members(conn, index, ctags)
+        custom = [
+            {
+                "id": t["id"],
+                "name": t["name"],
+                "strictness": t["strictness"],
+                "examples": t["examples"],
+                "excluded": t["id"] in flt.exclude_ctags,
+                "count": conn.execute(
+                    f"SELECT COUNT(*) FROM photos p WHERE {where} AND p.id IN (SELECT value FROM json_each(?))",
+                    [*params, json.dumps(members[t["id"]])],
+                ).fetchone()[0],
+            }
+            for t in ctags
+        ]
         return {
             "families": families,
+            "custom": custom,
             "photos": photos,
             "picks": picks,
             "rejects": rejects,
@@ -699,7 +781,7 @@ def create_app(
         }
 
     @app.get("/api/facets")
-    def list_facets(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+    def list_facets(flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn)):
         """EXIF filter options (date range, cameras, lenses, focal length, aperture,
         ISO, orientation, GPS, folder) within the other active filters."""
         out = facets(conn, flt, model_id)
@@ -728,7 +810,7 @@ def create_app(
         return {"previous": {str(k): v for k, v in previous.items()}}
 
     @app.post("/api/exported/reset", dependencies=[Depends(require_json)])
-    def reset_exported(body: ResetIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+    def reset_exported(body: ResetIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn)):
         """Forget the export history, of everything or of the photos within the filters."""
         if body.scope == "all":
             n = selections.clear_exported(conn, cfg.selections_path)
@@ -741,7 +823,7 @@ def create_app(
         return {"cleared": n}
 
     @app.post("/api/flags/reset", dependencies=[Depends(require_json)])
-    def reset_flags(body: ResetIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+    def reset_flags(body: ResetIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn)):
         """Unflag everything, or every photo within the filters. Returns the
         previous flags, like /api/flags, so the reset can be undone."""
         if body.scope == "all":
@@ -756,7 +838,7 @@ def create_app(
 
     @app.get("/api/ids")
     def list_ids(
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         dupes: str = "collapse",
         collapse: str | None = None,
         sort: str = "taken_at",
@@ -769,7 +851,7 @@ def create_app(
 
     @app.get("/api/stacks")
     def list_stacks(
-        flt: PhotoFilter = Depends(photo_filter),
+        flt: PhotoFilter = Depends(resolved_filter),
         unreviewed: bool = False,
         conn=Depends(get_conn),
     ):
@@ -910,12 +992,62 @@ def create_app(
 
         return [{"name": name, "color": css} for name, (_, css) in HUES.items()]
 
+    def tag_error(e: Exception) -> HTTPException:
+        text = str(e)
+        return HTTPException(404 if text == "no such tag" else 409 if "already exists" in text else 400, text)
+
+    @app.post("/api/custom-tags", dependencies=[Depends(require_json)])
+    def create_custom_tag(body: CustomTagIn, conn=Depends(get_conn)):
+        """A tag from example photos (stored with the flags, by content hash)."""
+        try:
+            tag_id = selections.create_tag(conn, cfg.selections_path, body.name, body.photo_ids, body.strictness)
+        except selections.TagError as e:
+            raise tag_error(e)
+        return {"id": tag_id}
+
+    @app.post("/api/custom-tags/preview", dependencies=[Depends(require_json)])
+    def preview_custom_tag(body: CustomTagPreview, conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """How many photos a tag with these examples would have at each strictness,
+        and the members closest to its edge (the least similar ones still in)."""
+        from . import custom_tags
+
+        rows = custom_tags.example_rows(index.row, body.photo_ids)
+        s = custom_tags.scores(index.E, rows)
+        counts, edge = {}, []
+        for level in selections.STRICTNESS:
+            limit = custom_tags.threshold(cfg.stacks.min_similarity, level)
+            ids, _ = custom_tags.members(index.E, index.ids, rows, limit)
+            counts[level] = len(ids)
+            if level == body.strictness and rows:
+                own = set(rows)
+                inside = [k for k in np.argsort(s) if s[k] >= limit and k not in own]
+                edge = [int(index.ids[k]) for k in inside[:8]]
+        return {"counts": counts, "edge": items_for(conn, edge), "examples": len(rows)}
+
+    @app.post("/api/custom-tags/{tag_id}", dependencies=[Depends(require_json)])
+    def edit_custom_tag(tag_id: int, body: CustomTagEdit, conn=Depends(get_conn)):
+        try:
+            selections.update_tag(
+                conn, cfg.selections_path, tag_id,
+                name=body.name, strictness=body.strictness, add=body.add, remove=body.remove,
+            )
+        except selections.TagError as e:
+            raise tag_error(e)
+        return {"id": tag_id}
+
+    @app.delete("/api/custom-tags/{tag_id}")
+    def delete_custom_tag(tag_id: int):
+        if not selections.delete_tag(cfg.selections_path, tag_id):
+            raise HTTPException(404, "no such tag")
+        ctag_cache.pop(tag_id, None)
+        return {"deleted": tag_id}
+
     @app.get("/api/styles")
     def list_styles():
         return [{"name": s.name, "label": s.label, "description": s.description} for s in styles_config()]
 
     @app.post("/api/curate", dependencies=[Depends(require_json)])
-    def curate_draft(body: CurateIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
+    def curate_draft(body: CurateIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
         """A draft selection from the photos within the filters (see curate.py)."""
         from . import curate
 
@@ -958,7 +1090,7 @@ def create_app(
         }
 
     @app.post("/api/curate/alternatives", dependencies=[Depends(require_json)])
-    def curate_alternatives(body: AlternativesIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
+    def curate_alternatives(body: AlternativesIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
         """Photos that could take one slot of the draft: its other frames, then similar good ones."""
         from . import curate
 
@@ -972,7 +1104,7 @@ def create_app(
     # ---- export ------------------------------------------------------------------
 
     @app.post("/api/export", dependencies=[Depends(require_json)])
-    def start_export(body: ExportIn, flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn)):
+    def start_export(body: ExportIn, flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn)):
         """Copy the picks (all, or those within the query-string filters) to a folder."""
         if body.content not in CONTENT:
             raise HTTPException(400, f"content must be one of {', '.join(CONTENT)}")

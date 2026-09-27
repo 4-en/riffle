@@ -15,7 +15,7 @@ It makes the library searchable by image content (CLIP embeddings, zero-shot tag
 ## 2. Principles
 
 1. **Originals are read-only.** Nothing is renamed, moved, edited, or written next to a source file.
-2. **Derived data is disposable.** Thumbnails, embeddings, tags, and positions can be deleted and rebuilt from the originals and the config. The only user-created data, pick/reject flags and export history, lives separately in `selections.sqlite3` (§6.2).
+2. **Derived data is disposable.** Thumbnails, embeddings, tags, and positions can be deleted and rebuilt from the originals and the config. The only user-created data (pick/reject flags, export history, your tags) lives separately in `selections.sqlite3` (§6.2).
 3. **Local only.** No network calls except downloading model weights once. The map uses bundled outlines, not a tile server.
 4. **No data gathering.** Everything comes from a pretrained CLIP model, a hand-written vocabulary, and the user's own flags. The taste model (§9) trains only on those flags, locally.
 5. **Few moving parts.** The standard library plus a few well-known packages; no frameworks where plain code does.
@@ -88,7 +88,7 @@ Per-user files follow platform conventions (`paths.py`; Linux shown, XDG variabl
   config.yaml            # sources, model, thresholds (created from src/riffle/defaults/)
   vocabulary.yaml        # tags and Curate styles
 ~/.local/share/riffle/
-  selections.sqlite3     # flags and export history: user data (§6.2)
+  selections.sqlite3     # flags, export history, your tags: user data (§6.2)
 ~/.cache/riffle/         # derived, safe to delete (config: data_dir)
   catalogue.sqlite3
   thumbs/                # 320 px long edge
@@ -155,6 +155,7 @@ src/riffle/
   selections.py          # flags and export history
   filters.py             # shared filters and facets
   query.py               # search syntax
+  custom_tags.py         # your tags: membership from example photos
   taste.py               # taste model
   curate.py              # Curate
   export.py, jobs.py     # export; background jobs
@@ -164,7 +165,7 @@ web/src/
   lib/                   # api.js, state.svelte.js (view state ↔ URL), culling.svelte.js
                          # (flags, undo, selection), connection.svelte.js, justify.js
   components/            # TopBar, ViewBar, Sidebar, Filters, Section, Grid, Detail,
-                         # ContextMenu, SelectionBar, Compare, Curate, ExportDialog,
+                         # ContextMenu, SelectionBar, Compare, Curate, TagDialog, ExportDialog,
                          # Library, FolderBrowser, Calendar, MapView, Help, UnmatchedRaws
 packaging/               # PyInstaller entry point (riffle_app.py) and riffle.spec
 .github/workflows/release.yml
@@ -243,6 +244,12 @@ CREATE TABLE exported (               -- v2
   sha256 TEXT PRIMARY KEY, first_at REAL, last_at REAL, times INTEGER,
   last_folder TEXT, source TEXT, rel_path TEXT
 );
+CREATE TABLE custom_tags (            -- v3: tags taught by example photos (§10)
+  id INTEGER PRIMARY KEY, name TEXT UNIQUE COLLATE NOCASE,
+  strictness TEXT,                    -- strict | normal | loose
+  created_at REAL, updated_at REAL
+);
+CREATE TABLE custom_tag_examples (tag_id, sha256, source, rel_path, added_at);
 ```
 
 - Keyed by content hash, so flags survive deleting the cache, re-indexing, moving, and renaming. Exact copies share a flag; editing a file drops it.
@@ -408,6 +415,14 @@ Text search encodes the query with the CLIP text encoder and ranks the filtered 
 
 A text search takes about 10 ms.
 
+**Your tags** (`custom_tags.py`; stored in selections v3, examples by content hash). A photo belongs when its similarity to its best-matching example reaches a fixed level per model: the stack threshold minus 0.05 (strict), 0.08 (normal), or 0.12 (loose). That is 0.87 / 0.84 / 0.80 for ViT-L-14.
+
+- **Best match, not the average**: varied examples each cover their own neighbourhood, and one example equals "find similar". The examples always belong.
+- **Tuned on the first library** with tags built from three seagull, fortress, and sheep photos. Members stayed on subject down to about 0.84; below 0.80 they became merely similar scenes (open sky, other waterfront buildings, plain shorelines). Sheep held a plateau of 61–67 photos between 0.85 and 0.75.
+- **Rejected: a threshold derived from how alike the examples are.** Near-identical examples (0.96) made it far too strict, and varied examples need no lower bar.
+- **Filtering**: members are computed from the in-memory embeddings (cached per tag version and embedding file) and passed to the shared filter as one JSON array per tag (`p.id IN (SELECT value FROM json_each(?))`), so every endpoint honours `ctags=` / `exclude_ctags=`.
+- **Speed** on the first library (a three-example gull tag: 44 / 57 / 68 photos at strict / normal / loose): sidebar counts 36 ms, a filtered listing 5 ms, the dialog preview 13 ms.
+
 **Vocabulary** (`vocabulary.yaml`, ~110 tags). Families are top-level keys; an entry is a name, or a name with alternative phrases (the name is always one of them). `styles:` holds Curate's style prompt pairs (§12).
 
 ```yaml
@@ -437,7 +452,9 @@ styles:
 | GET | `/api/photos/{id}` | Detail: metadata, tags, RAWs, duplicates, stack, location, flag |
 | GET | `/api/search/text?q=&<filters>` | Text search (§10) |
 | GET | `/api/search/similar/{id}?<filters>` | Similar photos |
-| GET | `/api/tags?<filters>` | Tags by family with counts within the filters; totals (photos, picks, rejects) |
+| GET | `/api/tags?<filters>` | Tags by family with counts within the filters; your tags (`custom`, with examples and counts); totals |
+| POST | `/api/custom-tags`, `/api/custom-tags/{id}`; DELETE `/api/custom-tags/{id}` | Create a tag from example photos; edit (name, strictness, add/remove examples); delete |
+| POST | `/api/custom-tags/preview` | Member counts per strictness and the edge photos, for the tag dialog |
 | GET | `/api/facets?<filters>` | Filter options with counts; each facet ignores its own filter |
 | GET | `/api/ids?<filters>` | Every id of the listing (select all) |
 | POST | `/api/flags` `{ops}` | Set flags atomically; returns previous flags (undo) |
@@ -467,7 +484,8 @@ styles:
 - repeated `orientation=`, `flag=` (`pick`, `reject`, `none`), `exposure=`;
 - `gps=`, `exported=`;
 - repeated `country=`, `region=`, `place=`, `loc_source=`;
-- repeated `folder=`: a photo's direct parent folder, without subfolders.
+- repeated `folder=`: a photo's direct parent folder, without subfolders;
+- `ctags=1,2` (your tags, AND), `exclude_ctags=`.
 
 Different filters combine with AND.
 
@@ -601,14 +619,13 @@ Roughly in order of value:
 2. Manual tag add/remove, stored with the flags.
 3. Finer location "spots" within a town: clustered visit positions (~200 m), labelled with the town, and "Home" / "Work" where the timeline marks them.
 4. Comparing models on the §14 queries: SigLIP SO400M, or a multilingual model. SigLIP needs `softmax_scale` and the stack threshold retuned.
-5. Image-prototype tags built from a few example photos, for concepts text describes badly.
-6. Per-camera clock correction. Location matching depends on it: a camera 10 minutes off places photos along the wrong stretch of a route.
-7. Curate styles and colour measures as grid sorts or filters.
-8. "More like my picks" search (the taste model's weight vector as a query).
-9. ONNX Runtime inference: smaller releases, and GPU support via DirectML (Windows) and CoreML (macOS).
-10. An embedding map (UMAP) for exploration.
-11. Captions and OCR through a local vision-language model.
-12. Flags as XMP sidecars in the export folder, for Lightroom and darktable.
+5. Per-camera clock correction. Location matching depends on it: a camera 10 minutes off places photos along the wrong stretch of a route.
+6. Curate styles and colour measures as grid sorts or filters.
+7. "More like my picks" search (the taste model's weight vector as a query).
+8. ONNX Runtime inference: smaller releases, and GPU support via DirectML (Windows) and CoreML (macOS).
+9. An embedding map (UMAP) for exploration.
+10. Captions and OCR through a local vision-language model.
+11. Flags as XMP sidecars in the export folder, for Lightroom and darktable.
 
 Location-history questions still open: how accurate is the history on photos that also have GPS (the first library has none), and how to handle several phones, or a missing phone for part of a trip.
 

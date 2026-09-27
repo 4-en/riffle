@@ -10,7 +10,13 @@ function query(params) {
 }
 
 /** The filter part of the view (tags + EXIF filters) as query parameters. */
-const filterParams = (view) => ({ tags: view.tags.join(','), exclude_tags: view.excludeTags.join(','), ...view.filters });
+const filterParams = (view) => ({
+  tags: view.tags.join(','),
+  exclude_tags: view.excludeTags.join(','),
+  ctags: view.ctags.join(','),
+  exclude_ctags: view.excludeCtags.join(','),
+  ...view.filters,
+});
 
 export async function get(path, params = {}) {
   const qs = query(params);
@@ -104,6 +110,15 @@ export function fetchAlternatives(view, body) {
   const qs = query(filterParams(view));
   return send('POST', qs ? `/api/curate/alternatives?${qs}` : '/api/curate/alternatives', body);
 }
+
+/** Custom tags (taught by example photos). */
+export const createCustomTag = (name, photoIds, strictness) =>
+  send('POST', '/api/custom-tags', { name, photo_ids: photoIds, strictness });
+export const editCustomTag = (id, changes) => send('POST', `/api/custom-tags/${id}`, changes);
+export const deleteCustomTag = (id) => send('DELETE', `/api/custom-tags/${id}`);
+/** {counts: {strict, normal, loose}, edge: items, examples} for these example photos. */
+export const previewCustomTag = (photoIds, strictness) =>
+  send('POST', '/api/custom-tags/preview', { photo_ids: photoIds, strictness });
 
 export const fetchSources = () => get('/api/sources');
 export const addSource = (path) => send('POST', '/api/sources', { path });
