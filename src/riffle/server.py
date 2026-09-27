@@ -343,7 +343,12 @@ def create_app(
         allowed = {r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)}
         allowed.discard(exclude)
         mask = np.array([int(p) in allowed for p in index.ids], dtype=bool)
-        scores = index.E @ query
+        if query.ndim == 2:  # text search: the best of its alternatives
+            from .query import score
+
+            scores = score(index.E, query)
+        else:
+            scores = index.E @ query
         scores[~mask] = -np.inf
         order = np.argsort(-scores)[: int(mask.sum())]
         ranked = [int(index.ids[i]) for i in order]
@@ -618,7 +623,11 @@ def create_app(
             if state["model"] == "loading":
                 raise HTTPException(503, "The AI model is still loading; search works once it is ready.")
             raise HTTPException(503, "text encoder not available")
-        query = encoder([q])[0]
+        from .query import query_vectors
+
+        query = query_vectors(q, encoder)  # "a | b" alternatives, "-term" excludes (query.py)
+        if query is None:
+            raise HTTPException(400, "the search has no words")
         return rank(conn, index, query, flt, None, collapse_mode(collapse, dupes), offset, limit)
 
     @app.get("/api/search/similar/{photo_id}")

@@ -62,7 +62,7 @@
           Optionally add your phone's <em>location history</em> there to place photos that have no GPS.
         </li>
         <li>
-          <strong class="text-neutral-100">Find what you want.</strong> Search by what is in the picture ("boats at sunset"), click
+          <strong class="text-neutral-100">Find what you want.</strong> Search by what is in the picture ("boats at sunset"; a minus leaves something out: "street -people"; | finds either: "beach | lake"), click
           tags and filters on the left (click a tag to include it, hover and click <kbd>−</kbd> to exclude it), or group by day or place (<em>Group</em>) and use the <em>Calendar</em> / <em>Map</em>
           overview to jump around. <em>Find similar</em> in the photo view shows related shots.
         </li>

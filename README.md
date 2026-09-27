@@ -12,7 +12,7 @@ A local tool for finding the best photos in a large archive and exporting them f
 - **Stacks:** bursts and near-identical shots are grouped automatically; compare them side by side with a sharpness hint, exposure clipping, and a suggested keeper
 - **Curate:** draft a small, varied selection (photo book, exhibition) from the current filters, steered with sliders for size, variety, spread over time and places, and styles such as moody or colourful; remove, lock, or swap photos, then mark them as picks or export them
 - **Export:** copy the picks to a new folder as images, images + RAWs, or RAWs only; originals are never touched
-- Text search ("red lanterns at night") and "find similar" from any photo
+- Text search ("red lanterns at night") and "find similar" from any photo; a minus leaves something out (`street -people`, `harbour -boats -"cruise ships"`), and `|` finds either of several things (`beach | lake -people`: each photo counts with its better match)
 - Subject, scene, and look tags from an editable vocabulary file, with alternative phrases per tag
 - Tag sidebar that narrows with your filter: only tags present in the current selection are shown, with counts. Click a tag to show only photos with it; hover and click **−** (or Alt+click) to hide photos with it instead
 - Duplicate grouping via perceptual hash
