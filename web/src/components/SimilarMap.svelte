@@ -18,7 +18,7 @@
   import { fetchSimilarMap } from '../lib/api.js';
   import { selection } from '../lib/culling.svelte.js';
   import { mapSelect, inside } from '../lib/mapselect.svelte.js';
-  import { buildGrid, representatives as maplod } from '../lib/maplod.js';
+  import { buildGrid, pointsToDraw } from '../lib/maplod.js';
   import MapTools from './MapTools.svelte';
   import SelectionBar from './SelectionBar.svelte';
 
@@ -100,12 +100,13 @@
     data;
     untrack(() => (grid = data ? buildGrid(data.points) : null));
   });
-  const representatives = (px) =>
-    maplod(grid, data.points, { k: transform.k, tx: transform.x, ty: transform.y, ...frame, width, height }, px, focus);
+  const lod = (px, all = 0, only = undefined) =>
+    pointsToDraw(grid, data.points, { k: transform.k, tx: transform.x, ty: transform.y, ...frame, width, height }, px, all, only);
 
   const images = new Map(); // id -> Image (loaded on demand; insertion order = least recently drawn first)
   let drawn = []; // [{id, key, x, y}] on screen, for hovering
-  let shown = $state(0); // how many photos are drawn (the rest wait for zooming in)
+  let shown = $state(0); // how many photos are drawn
+  let complete = $state(true); // every photo on screen is drawn (else: zoom in for more)
   let frameRequest = 0;
   function redraw() {
     cancelAnimationFrame(frameRequest);
@@ -123,21 +124,28 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
     const s = tileSize(transform.k);
-    // Thumbnails when they are large enough and few enough; else dots (one per few pixels).
-    let reps = s >= THUMB_FROM ? representatives(s + 2) : null;
-    const thumbs = reps !== null && reps.length <= MAX_THUMBS;
-    if (!thumbs) reps = representatives(Math.max(3, s * 0.7));
+    // Thumbnails when they are large enough and few enough: every photo on screen when at
+    // most MAX_THUMBS are (alike ones side by side), else one per tile. Otherwise dots.
+    let list = s >= THUMB_FROM ? lod(s + 2, MAX_THUMBS) : null;
+    const thumbs = list !== null && list.length <= MAX_THUMBS;
+    const dot = Math.max(3, s * 0.7);
+    if (!thumbs) list = lod(dot);
     const pts = data.points;
     drawn = [];
-    // With a cluster in focus, the others are drawn first, greyed out, and it goes on top.
+    // Hovering a cluster changes nothing about which photos are drawn: the others are
+    // drawn greyed out first and it goes on top; as dots, all its spots are added on top.
     for (const pass of focus === undefined ? [null] : [false, true]) {
-      for (const i of reps) {
-        const [id, x, y, key] = pts[i];
+      for (const [i, x, y] of list) {
+        const [id, , , key] = pts[i];
         if (pass !== null && (key === focus) !== pass) continue;
         drawPoint(ctx, s, id, x, y, key, pass === false, thumbs);
       }
     }
-    shown = reps.length;
+    if (focus !== undefined && !thumbs) {
+      for (const [i, x, y] of lod(dot, 0, focus)) drawPoint(ctx, s, pts[i][0], x, y, focus, false, false);
+    }
+    complete = list.complete;
+    shown = list.length;
     while (images.size > MAX_IMAGES) {
       const [oldest, img] = images.entries().next().value;
       img.onload = null;
@@ -203,7 +211,7 @@
   let zoomer;
   $effect(() => {
     zoomer = d3zoom()
-      .scaleExtent([0.5, 40])
+      .scaleExtent([0.5, 100]) // far enough to spread even a pile of near-identical photos
       .filter(picker.zoomFilter)
       .on('zoom', (e) => (transform = e.transform));
     select(canvas).call(zoomer);
@@ -290,7 +298,7 @@
       {#if data.other}
         · <button class="text-sky-400 hover:underline" onclick={() => onopen('similar', '')}>{data.other} in Other</button>
       {/if}
-      {#if shown && shown < data.points.length}
+      {#if !complete}
         · showing {shown.toLocaleString()}: zoom in for more
       {:else}
         · zoom in for thumbnails
