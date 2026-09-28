@@ -101,6 +101,7 @@ class CurateIn(BaseModel):
     look: dict[str, int | str | None] = {}  # colour and light: see curate.look_scores
     query: str = ""  # a text search that scores the candidates (query.py syntax)
     surprise: float = 0.0  # 0 = the same draft every time … 1 = less obvious photos get a chance
+    like_locked: float = 0.0  # -1 unlike the locked photos … 1 like them (0: no influence)
     seed: int = 0  # the random draw for surprise
 
 
@@ -1528,6 +1529,7 @@ def create_app(
             locked=body.locked,
             removed=body.removed,
             surprise=min(1.0, max(0.0, body.surprise)),
+            like_locked=min(1.0, max(-1.0, body.like_locked)),
             seed=body.seed,
         )
         where, params = flt.where(model_id)
@@ -1896,6 +1898,7 @@ def create_app(
             "items": items,
             "cover": d["cover"],
             "sections": d["sections"],
+            "orders": d["orders"],  # the same photos by date, best, flow, colour, light (ids)
             "candidates": len(pool.ids),
             "used": {
                 "taste": bool(taste_store.scores),

@@ -32,6 +32,8 @@ W_TASTE, W_CLIP, W_EXPOSURE = 0.45, 0.25, 0.10
 BONUS_PICK, BONUS_EXPORTED = 0.15, 0.05
 STYLE_STRENGTH = 0.6  # a style slider at full strength can outweigh the generic quality
 QUERY_STRENGTH = 1.0  # a search in Curate: its best matches clearly win, its worst rarely get in
+GREY_BELOW = 0.02  # a photo with less colour mass than this has no main hue (sorted with the greys)
+LIKE_LOCKED_STRENGTH = 0.7  # the "like the locked photos" slider at either end (a percentile of closeness to them)
 SURPRISE_SCALE = 1.0  # the surprise slider at 1: Gumbel noise of this many standard deviations of the candidates' quality
 TIME_SCALE = 3 * 3600  # seconds: photos within a few hours count as "close in time"
 PLACE_SCALE = 300.0  # metres
@@ -49,6 +51,7 @@ class Params:
     locked: list[int] = field(default_factory=list)
     removed: list[int] = field(default_factory=list)
     surprise: float = 0.0  # 0 = the same draft every time; up to 1 = more chance for less obvious photos
+    like_locked: float = 0.0  # -1 = unlike the locked photos, 0 = no influence, 1 = like them
     seed: int = 0  # which random draw (a new seed: another draft)
 
 
@@ -156,6 +159,8 @@ class Pool:
     style_pct: dict[str, np.ndarray]
     info: list[dict]  # per candidate: taken_at, place, day
     query_pct: np.ndarray | None = None  # rank of each candidate for the search (if any)
+    brightness: np.ndarray | None = None  # for ordering a draft (nan: not analysed)
+    hue: np.ndarray | None = None  # main hue in degrees (nan: too little colour to have one)
 
 
 def build_pool(
@@ -174,7 +179,7 @@ def build_pool(
 ) -> Pool | None:
     rows = conn.execute(
         f"""SELECT p.id, p.stack_id, p.dupe_group, p.taken_at, p.width, p.height,
-                   p.sharpness, p.clip_highlights, p.clip_shadows,
+                   p.sharpness, p.clip_highlights, p.clip_shadows, p.brightness, p.hues,
                    {FLAG_EXPR} AS flag, {EXPORTED_EXPR} AS exported,
                    l.lat, l.lon, l.source AS loc_source, l.accuracy_m,
                    l.country_code, l.region, l.place
@@ -253,7 +258,11 @@ def build_pool(
             "place": place_labels.get(key, "") if key else "",
             "place_key": key or "",
         })
-    return Pool(ids, members, E, t, lat, lon, loc_w, q, picked, landscape, style_pct, info, query_pct)
+    from .colors import dominant_hue
+
+    brightness = np.array([np.nan if r["brightness"] is None else r["brightness"] for r in reps])
+    hue = np.array([h if h is not None and mass >= GREY_BELOW else np.nan for h, mass in (dominant_hue(r["hues"]) for r in reps)])
+    return Pool(ids, members, E, t, lat, lon, loc_w, q, picked, landscape, style_pct, info, query_pct, brightness, hue)
 
 
 def redundancy_to(pool: Pool, j: int, p: Params) -> np.ndarray:
@@ -311,17 +320,102 @@ def select(pool: Pool, p: Params) -> list[int]:
     for j, member_ids in enumerate(pool.members):
         if locked & set(member_ids):
             take(j)
+    # Like (or unlike) the locked photos: closeness to the nearest of them (a varied set's
+    # average resembles none of them), as a percentile among the candidates.
+    lean = 0.0
+    if p.like_locked and chosen:
+        closest = (pool.E @ pool.E[chosen].T).max(axis=1)
+        lean = LIKE_LOCKED_STRENGTH * p.like_locked * (percentile(closest) - 0.5)
     while len(chosen) < n and available.any():
-        score = (1 - p.variety) * pool.q - p.variety * max_red + noise
+        score = (1 - p.variety) * pool.q - p.variety * max_red + noise + lean
         score[~available] = -np.inf
         take(int(np.argmax(score)))  # argmax takes the first of ties: deterministic
     return chosen
 
 
+ORDERS = ("date", "best", "flow", "colour", "light", "route", "zigzag")
+
+
+def _path(D: np.ndarray, longest: bool = False) -> list[int]:
+    """An open path through all points (indices into ``D``, a distance matrix) that is
+    as short (or as long) as it can find: greedy chains from every start, the best one
+    then improved by 2-opt (reversing a stretch while that helps). Drafts have at most
+    60 photos, so this takes milliseconds."""
+    n = len(D)
+    if n <= 2:
+        return list(range(n))
+    sign = -1.0 if longest else 1.0
+    best, best_len = None, np.inf
+    for start in range(n):
+        path, rest = [start], set(range(n)) - {start}
+        while rest:
+            last = path[-1]
+            nxt = min(rest, key=lambda j: (sign * D[last, j], j))
+            path.append(nxt)
+            rest.remove(nxt)
+        length = sign * sum(D[a, b] for a, b in zip(path, path[1:]))
+        if length < best_len:
+            best, best_len = path, length
+    path = best
+    improved = True
+    while improved:
+        improved = False
+        for i in range(1, n - 1):
+            for j in range(i + 1, n):
+                # Reverse path[i..j]: the edges (i-1, i) and (j, j+1) change.
+                a, b, c = path[i - 1], path[i], path[j]
+                before = D[a, b] + (D[c, path[j + 1]] if j + 1 < n else 0.0)
+                after = D[a, c] + (D[b, path[j + 1]] if j + 1 < n else 0.0)
+                if sign * (after - before) < -1e-9:
+                    path[i : j + 1] = path[i : j + 1][::-1]
+                    improved = True
+    return path
+
+
+def orders(pool: Pool, chosen: list[int]) -> dict[str, list[int]]:
+    """The chosen photos in each order (pool indices):
+    date: by capture time (undated last); best: by quality;
+    flow: each photo followed by its most similar remaining one, from the first by date;
+    colour: around the colour wheel from red, photos without much colour last (light to dark);
+    light: light to dark;
+    route: the shortest path through the photos' places; zigzag: the longest (both
+    with the photos without a position last, by date)."""
+    by_date = sorted(chosen, key=lambda j: (math.isnan(pool.t[j]), pool.t[j] if not math.isnan(pool.t[j]) else 0, int(pool.ids[j])))
+    best = sorted(chosen, key=lambda j: (-pool.q[j], int(pool.ids[j])))
+    flow = by_date[:1]
+    rest = set(by_date[1:])
+    while rest:
+        last = pool.E[flow[-1]]
+        nxt = max(rest, key=lambda j: (float(pool.E[j] @ last), -int(pool.ids[j])))
+        flow.append(nxt)
+        rest.remove(nxt)
+    bright = lambda j: -pool.brightness[j] if pool.brightness is not None and not math.isnan(pool.brightness[j]) else 0.0  # noqa: E731
+    light = sorted(chosen, key=lambda j: (bright(j), int(pool.ids[j])))
+    hue = pool.hue if pool.hue is not None else np.full(len(pool.ids), np.nan)
+    coloured = sorted((j for j in chosen if not math.isnan(hue[j])), key=lambda j: (hue[j], int(pool.ids[j])))
+    grey = [j for j in light if math.isnan(hue[j])]
+    # By place: the shortest route through the photos' positions, or the longest zigzag
+    # across the map; photos without a position follow by date.
+    placed = [j for j in by_date if pool.loc_w[j] > 0 and not math.isnan(pool.lat[j])]
+    unplaced = [j for j in by_date if j not in set(placed)]
+    route = zigzag = placed
+    if len(placed) > 2:
+        lat, lon = pool.lat[placed], pool.lon[placed]
+        D = haversine(lat[:, None], lon[:, None], lat[None, :], lon[None, :])
+        route = [placed[k] for k in _path(D)]
+        zigzag = [placed[k] for k in _path(D, longest=True)]
+    return {
+        "date": by_date, "best": best, "flow": flow, "colour": coloured + grey, "light": light,
+        "route": route + unplaced, "zigzag": zigzag + unplaced,
+    }
+
+
 def draft(pool: Pool, p: Params) -> dict:
-    """The selection in reading order (chronological), with cover and sections."""
+    """The selection in reading order (chronological), with cover and sections, and
+    its photos in every order (``orders``) for the page to switch between."""
     chosen = select(pool, p)
-    order = sorted(chosen, key=lambda j: (math.isnan(pool.t[j]), pool.t[j] if not math.isnan(pool.t[j]) else 0, int(pool.ids[j])))
+    all_orders = orders(pool, chosen)
+    order = all_orders["date"]
     cover_pool = [j for j in chosen if pool.landscape[j]] or chosen
     cover = max(cover_pool, key=lambda j: (pool.q[j], -int(pool.ids[j]))) if cover_pool else None
     items, sections, prev = [], [], None
@@ -331,7 +425,13 @@ def draft(pool: Pool, p: Params) -> dict:
             sections.append({"day": head[0], "place": head[1], "start": len(items)})
             prev = head
         items.append({"index": j, "id": int(pool.ids[j])})
-    return {"order": order, "items": items, "cover": int(pool.ids[cover]) if cover is not None else None, "sections": sections}
+    return {
+        "order": order,
+        "items": items,
+        "cover": int(pool.ids[cover]) if cover is not None else None,
+        "sections": sections,
+        "orders": {k: [int(pool.ids[j]) for j in v] for k, v in all_orders.items()},
+    }
 
 
 def reason(pool: Pool, j: int, p: Params, style_labels: dict[str, str]) -> str:

@@ -16,7 +16,7 @@
 
   const NO_LOOK = { brightness: 0, contrast: 0, colorfulness: 0, hue: '' };
   // surprise: 0 = the same draft every time; seed: which random draw (Shuffle picks a new one).
-  const DEFAULTS = { n: 12, variety: 0.4, time_spread: 0.5, place_spread: 0.5, include_rejects: false, look: NO_LOOK, query: '', surprise: 0, seed: 0 };
+  const DEFAULTS = { n: 12, variety: 0.4, time_spread: 0.5, place_spread: 0.5, include_rejects: false, look: NO_LOOK, query: '', surprise: 0, seed: 0, like_locked: 0 };
   const SIZES = [6, 12, 24, 48];
   // Colour and light: three-way choices (lean one way, or not at all).
   const LOOK_CHOICES = [
@@ -48,6 +48,10 @@
   let styles = $state(saved.styles ?? {}); // name -> -1..1
   let locked = $state(walk ?? saved.locked ?? []);
   let removed = $state(walk ? [] : (saved.removed ?? []));
+  // How the draft is laid out (the same photos; changing it asks the server for nothing):
+  // date, best, flow (alike together), colour, light, or manual (dragged; `manual` ids).
+  let order = $state(walk ? 'manual' : (saved.order ?? 'date'));
+  let manual = $state(walk ?? saved.manual ?? []);
 
   let styleList = $state([]);
   let hues = $state([]);
@@ -86,12 +90,19 @@
   // Regenerate (debounced) whenever a slider, lock or removal changes; remember the draft.
   let timer;
   let token = 0;
+  function persist() {
+    try {
+      localStorage.setItem(key, JSON.stringify({ settings, styles, locked, removed, order, manual }));
+    } catch {}
+  }
+  $effect(() => {
+    order, manual;
+    untrack(persist);
+  });
   $effect(() => {
     const request = JSON.stringify(body());
     untrack(() => {
-      try {
-        localStorage.setItem(key, JSON.stringify({ settings, styles, locked, removed }));
-      } catch {}
+      persist();
       clearTimeout(timer);
       const mine = ++token;
       loading = true;
@@ -101,7 +112,6 @@
           if (mine !== token) return;
           draft = d;
           error = '';
-          onorder(d.items.map((i) => i.id));
         } catch (e) {
           if (mine === token) error = e.message;
         } finally {
@@ -117,6 +127,8 @@
     styles = {};
     locked = [];
     removed = [];
+    order = 'date';
+    manual = [];
     alt = null;
   }
 
@@ -152,7 +164,54 @@
     alt = null;
   }
 
-  const items = $derived(draft?.items ?? []);
+  // The draft's photos in the chosen order. Manual: the dragged order for the photos still
+  // in the draft, then any new ones by date.
+  const byId = $derived(new Map((draft?.items ?? []).map((i) => [i.id, i])));
+  const items = $derived.by(() => {
+    const dated = draft?.orders?.date ?? (draft?.items ?? []).map((i) => i.id);
+    let ids = draft?.orders?.[order] ?? dated;
+    if (order === 'manual') {
+      const kept = manual.filter((id) => byId.has(id));
+      ids = [...kept, ...dated.filter((id) => !kept.includes(id))];
+    }
+    return ids.map((id) => byId.get(id)).filter(Boolean);
+  });
+  // The photo view steps through the draft in this order too.
+  $effect(() => {
+    const ids = items.map((i) => i.id);
+    untrack(() => onorder(ids));
+  });
+
+  const ORDERS = [
+    ['date', 'Date', 'By capture time'],
+    ['best', 'Best', 'The best photos first'],
+    ['flow', 'Alike', 'Each photo next to the one most like it, so the sequence flows'],
+    ['colour', 'Colour', 'Around the colour wheel from red; black-and-white and grey last'],
+    ['light', 'Light', 'Light to dark'],
+    ['route', 'Route', 'The shortest way through the places, like a trip that visits each once (photos without a place last)'],
+    ['zigzag', 'Zigzag', 'The longest way: from one side of the map to the other at every step (photos without a place last)'],
+    ['manual', 'Yours', 'The order you dragged the photos into'],
+  ];
+
+  // Drag a photo onto another to put it before or after it (then the order is yours).
+  let dragId = $state(null);
+  let dropAt = $state(null); // {id, after}
+  function dragOver(e, id) {
+    if (dragId == null) return;
+    e.preventDefault();
+    const r = e.currentTarget.getBoundingClientRect();
+    dropAt = { id, after: e.clientX > r.left + r.width / 2 };
+  }
+  function drop(e) {
+    e.preventDefault();
+    if (dragId != null && dropAt && dropAt.id !== dragId) {
+      const ids = items.map((i) => i.id).filter((i) => i !== dragId);
+      ids.splice(ids.indexOf(dropAt.id) + (dropAt.after ? 1 : 0), 0, dragId);
+      manual = ids;
+      order = 'manual';
+    }
+    dragId = dropAt = null;
+  }
   const toPick = $derived(items.filter((i) => flagOf(i) !== 'pick'));
 
   async function markPicks() {
@@ -261,6 +320,20 @@
           >
         {/if}
       </div>
+      <label
+        class="{sliderRow} {locked.length ? '' : 'opacity-50'}"
+        title={locked.length
+          ? 'Left: the rest of the draft unlike the locked photos. Right: like them (each compared with its closest locked photo). Middle: no influence.'
+          : 'Lock photos in the draft (Lock, on a photo when you hover it) to steer the rest towards or away from them.'}
+      >
+        <span class="flex justify-between">
+          <span>Like the locked photos</span>
+          <span class="tabular-nums text-neutral-400"
+            >{!locked.length ? 'lock some first' : settings.like_locked === 0 ? 'neutral' : `${settings.like_locked > 0 ? 'more' : 'less'} ${pct(Math.abs(settings.like_locked))}`}</span
+          >
+        </span>
+        <input type="range" min="-1" max="1" step="0.1" bind:value={settings.like_locked} disabled={!locked.length} class={range} />
+      </label>
       <label class={sliderRow} title="Prefer photos taken hours or days apart over several from the same moment.">
         <span class="flex justify-between"><span>Spread over time</span><span class="tabular-nums text-neutral-400">{pct(settings.time_spread)}</span></span>
         <input type="range" min="0" max="1" step="0.05" bind:value={settings.time_spread} class={range} />
@@ -383,17 +456,42 @@
         </p>
       {:else if draft}
         <div class="mx-auto max-w-6xl px-8 py-8">
+          <div class="mb-3 flex flex-wrap items-center gap-1 text-xs text-neutral-400" role="group" aria-label="Order">
+            <span class="mr-1">Order</span>
+            {#each ORDERS as [value, label, hint] (value)}
+              {#if (value !== 'manual' || manual.length) && ((value !== 'route' && value !== 'zigzag') || draft.used?.locations)}
+                <button
+                  class="rounded px-2 py-0.5 {order === value ? 'bg-sky-700 text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
+                  aria-pressed={order === value}
+                  title={hint}
+                  onclick={() => (order = value)}>{label}</button
+                >
+              {/if}
+            {/each}
+            <span class="ml-2 text-neutral-600">Drag photos to arrange them yourself; the export keeps the order.</span>
+          </div>
           <div bind:clientWidth={width}>
             {#each rows as row (row.start + '-' + row.end)}
               <div class="flex overflow-hidden" style="gap: {GAP}px; margin-bottom: {GAP}px; height: {row.height}px">
                 {#each row.items as it (it.id)}
                   {@const isLocked = locked.includes(it.id)}
                   <figure
-                    class="group relative shrink-0 overflow-hidden rounded-sm bg-neutral-900 bg-cover bg-center {alt?.id === it.id ? 'ring-2 ring-sky-500' : ''}"
+                    class="group relative shrink-0 cursor-grab overflow-hidden rounded-sm bg-neutral-900 bg-cover bg-center {alt?.id === it.id ? 'ring-2 ring-sky-500' : ''} {dragId === it.id ? 'opacity-40' : ''}"
                     style="width: {aspect(it) * row.height}px; background-image: url({it.thumb})"
+                    draggable="true"
+                    ondragstart={(e) => {
+                      dragId = it.id;
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    ondragover={(e) => dragOver(e, it.id)}
+                    ondrop={drop}
+                    ondragend={() => (dragId = dropAt = null)}
                   >
+                    {#if dropAt?.id === it.id && dragId !== it.id}
+                      <div class="pointer-events-none absolute inset-y-0 z-10 w-1 bg-sky-400 {dropAt.after ? 'right-0' : 'left-0'}"></div>
+                    {/if}
                     <button class="block h-full w-full" title="Open" onclick={() => (view.photo = it.id)}>
-                      <img src="/previews/{it.id}.jpg" alt="" loading="lazy" decoding="async" class="h-full w-full object-cover" onerror={(e) => (e.currentTarget.src = it.thumb)} />
+                      <img src="/previews/{it.id}.jpg" alt="" loading="lazy" decoding="async" draggable="false" class="h-full w-full object-cover" onerror={(e) => (e.currentTarget.src = it.thumb)} />
                     </button>
                     <div class="absolute left-1.5 top-1.5 flex gap-1 {isLocked ? '' : 'opacity-0 group-hover:opacity-100'}">
                       <button class="{action} {isLocked ? 'bg-sky-700 hover:bg-sky-600' : ''}" title={isLocked ? 'Unlock' : 'Keep this photo when the draft changes'} onclick={() => toggleLock(it.id)}>

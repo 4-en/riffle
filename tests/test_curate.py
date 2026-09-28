@@ -155,6 +155,79 @@ def test_locked_and_removed_are_for_the_draft_only(cfg):
     assert lib.conn.execute("SELECT COUNT(*) FROM sel.flags").fetchone()[0] == 0
 
 
+def test_orders(cfg):
+    lib = Lib(cfg)
+    a = lib.add(axis(0), taken="2024:05:01 10:00:00")
+    b = lib.add(axis(1), taken="2024:05:01 11:00:00")
+    c = lib.add(near(axis(0), 1, eps=0.1), taken="2024:05:01 12:00:00")
+    lib.conn.execute("UPDATE photos SET brightness = ? WHERE id = ?", (0.2, a))
+    lib.conn.execute("UPDATE photos SET brightness = ? WHERE id = ?", (0.9, b))
+    lib.conn.execute("UPDATE photos SET brightness = ? WHERE id = ?", (0.5, c))
+    red, blue = np.zeros(24, np.float32), np.zeros(24, np.float32)
+    red[0], blue[14] = 0.3, 0.3
+    lib.conn.execute("UPDATE photos SET hues = ? WHERE id = ?", (blue.tobytes(), a))
+    lib.conn.execute("UPDATE photos SET hues = ? WHERE id = ?", (red.tobytes(), b))  # c: no colour data
+    lib.conn.commit()
+    quality = {a: 0.2, b: 0.9, c: 0.5}
+    p = curate.Params(n=3, **FLAT)
+    pool = lib.pool(p, quality)
+    d = curate.draft(pool, p)
+    o = d["orders"]
+    assert o["date"] == [a, b, c] and [i["id"] for i in d["items"]] == [a, b, c]
+    assert o["best"][0] == b
+    assert o["flow"] == [a, c, b]  # a, then the photo most like it
+    assert o["light"] == [b, c, a]  # light to dark
+    assert o["colour"] == [b, a, c]  # red, blue, then the photo without colour data
+
+
+def test_shortest_and_longest_paths():
+    # Five points on a line (distances = gaps): the shortest path runs along it, the
+    # longest jumps from end to end.
+    x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+    D = np.abs(x[:, None] - x[None, :])
+    short = curate._path(D)
+    assert short in ([0, 1, 2, 3, 4], [4, 3, 2, 1, 0])
+    long = curate._path(D, longest=True)
+    length = lambda p: sum(D[a, b] for a, b in zip(p, p[1:]))  # noqa: E731
+    assert length(long) >= 10 and length(short) == 4  # e.g. 2 0 4 1 3 or 1 4 0 3 2: 10 or more
+    # A random cloud: 2-opt never does worse than the greedy start it began from.
+    rng = np.random.default_rng(0)
+    P = rng.random((30, 2))
+    D = np.hypot(*(P[:, None, :] - P[None, :, :]).transpose(2, 0, 1))
+    greedy = [0]
+    rest = set(range(1, 30))
+    while rest:
+        nxt = min(rest, key=lambda j: D[greedy[-1], j])
+        greedy.append(nxt)
+        rest.remove(nxt)
+    assert length(curate._path(D)) <= length(greedy) + 1e-9
+    assert sorted(curate._path(D)) == list(range(30))
+
+
+def test_route_and_zigzag_orders(cfg):
+    lib = Lib(cfg)
+    # Four places west to east (Stockholm-ish longitudes) and one photo without a position.
+    ids = [lib.add(taken=f"2024:05:01 1{k}:00:00", place=(59.33, 18.00 + 0.01 * k)) for k in (2, 0, 3, 1)]
+    nowhere = lib.add(taken="2024:05:01 09:00:00")
+    p = curate.Params(n=5, **FLAT)
+    o = curate.draft(lib.pool(p), p)["orders"]
+    west_to_east = [ids[1], ids[3], ids[0], ids[2]]
+    assert o["route"][:4] in (west_to_east, west_to_east[::-1]) and o["route"][-1] == nowhere
+    assert o["zigzag"][-1] == nowhere and o["zigzag"][:4] != o["route"][:4]
+
+
+def test_like_the_locked_photos(cfg):
+    lib = Lib(cfg)
+    anchor = lib.add(axis(0))
+    alike = [lib.add(near(axis(0), s, eps=0.6)) for s in range(4)]  # like the locked one, not copies
+    other = [lib.add(axis(k + 1)) for k in range(4)]
+    quality = {**{a: 0.5 for a in alike}, **{o: 0.5 for o in other}, anchor: 0.5}
+    pick = lambda w: set(lib.pick(quality, n=3, locked=[anchor], like_locked=w, **FLAT)) - {anchor}  # noqa: E731
+    assert pick(1.0) <= set(alike)
+    assert pick(-1.0) <= set(other)
+    assert lib.pick(quality, n=3, like_locked=1.0, **FLAT) == lib.pick(quality, n=3, **FLAT)  # nothing locked: no effect
+
+
 def test_locked_photos_stay_outside_the_filters(cfg):
     lib = Lib(cfg)
     a = lib.add(taken="2024:05:01 10:00:00")

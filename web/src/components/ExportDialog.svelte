@@ -79,7 +79,7 @@
         caption_text: captionText,
         underscores,
         with_text: withText,
-        numbered: kind === 'walk' && numbered,
+        numbered: (kind === 'walk' || kind === 'curate') && numbered,
         ...(draft ? { photo_ids: draft.ids } : {}),
       });
       while (status.running) {
@@ -125,12 +125,12 @@
           {kind === 'curate' ? 'photos of the Curate draft' : kind === 'walk' ? 'photos of your Discover walk' : `selected photo${draft.ids.length === 1 ? '' : 's'}`},
           whether they are picked or not.
         </p>
-        {#if kind === 'walk'}
+        {#if kind === 'walk' || kind === 'curate'}
           <label class="{radio} -mt-2">
             <input type="checkbox" bind:checked={numbered} disabled={running} class="mt-0.5" />
             <span>
-              Number the files in walk order
-              <span class="block text-xs text-neutral-500">01_IMG_1234.jpg, 02_…: the folder keeps the sequence you walked.</span>
+              Number the files in {kind === 'walk' ? 'walk' : 'draft'} order
+              <span class="block text-xs text-neutral-500">01_IMG_1234.jpg, 02_…: the folder keeps the order {kind === 'walk' ? 'you walked' : 'of the draft'}.</span>
             </span>
           </label>
         {/if}

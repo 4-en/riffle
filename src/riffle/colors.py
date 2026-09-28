@@ -56,6 +56,19 @@ def color_stats(im: Image.Image) -> tuple[float, float, float, bytes]:
     return brightness, contrast, colorfulness, hist.astype(np.float32).tobytes()
 
 
+def dominant_hue(hues: bytes | None) -> tuple[float | None, float]:
+    """(the photo's main hue in degrees, its colour mass): the chroma-weighted circular
+    mean of the histogram. None for a photo without colour data."""
+    if not hues:
+        return None, 0.0
+    hist = np.frombuffer(hues, dtype=np.float32)
+    if len(hist) != BINS or hist.sum() <= 0:
+        return None, 0.0
+    angles = np.radians(np.arange(BINS) * WIDTH)
+    x, y = (hist * np.cos(angles)).sum(), (hist * np.sin(angles)).sum()
+    return float(np.degrees(np.arctan2(y, x)) % 360), float(hist.sum())
+
+
 def hue_affinity(hues: bytes | None, degrees: float) -> float:
     """How much of the frame has (roughly) this hue: the chroma-weighted share
     within ±30° of it, the closest bins counting most (a triangular window)."""
