@@ -189,3 +189,26 @@ def test_profiles_and_their_folders(indexed, other_folder):
     with pytest.raises(profiles.ProfileError):
         profiles.with_folder([other_folder.parent], other_folder)
     assert profiles.with_folder([other_folder], other_folder.parent) == [other_folder.parent]
+
+
+def test_stacks_show_only_the_profiles_photos(client, indexed, conn, other_folder):
+    """A stack reaching into another profile's folder (stacks are built over every
+    photo) shows only this profile's photos, and is no stack here with one of them."""
+    c = client
+    switch_to_new(c, "Other")
+    c.post("/api/sources", json={"path": str(other_folder)})
+    wait_index(c)
+    mine = ids_in(conn, indexed.sources[0])
+    theirs = ids_in(conn, other_folder)
+    # One stack of a default-profile photo and both of Other's.
+    conn.execute("UPDATE photos SET stack_id = ? WHERE id IN (?, ?, ?)", (mine[0], mine[0], *theirs))
+    conn.commit()
+    stacks = c.get("/api/stacks", params={"dupes": "all"}).json()["stacks"]
+    assert [(s["id"], s["size"]) for s in stacks if s["id"] == mine[0]] == [(mine[0], 2)]
+    assert sorted(i["id"] for i in c.get(f"/api/stacks/{mine[0]}").json()["items"]) == theirs
+    detail = c.get(f"/api/photos/{theirs[0]}").json()
+    assert sorted(detail["stack"]) == theirs
+    assert {i["stack_count"] for i in c.get("/api/photos", params=ALL).json()["items"]} == {2}
+    # In the default profile the same stack holds one photo of its own: not a stack to review.
+    c.post("/api/profiles/default/activate", json={})
+    assert mine[0] not in [s["id"] for s in c.get("/api/stacks", params={"dupes": "all"}).json()["stacks"]]

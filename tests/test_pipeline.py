@@ -107,3 +107,23 @@ def test_label_similarity_is_max_over_phrases():
     labels = [Label("xy", ["x", "y"]), Label("z", ["z"])]
     sims = label_similarities(E, labels, ["{}"], encode)
     assert np.allclose(sims, [[0.8, 0.0], [0.0, 1.0]])
+
+
+def test_duplicates_need_clips_agreement(indexed, conn):
+    """Close perceptual hashes alone matched unrelated flat images in large libraries:
+    a pair is a duplicate only if CLIP also rates it as alike as a stack."""
+    from riffle.dupes import group_duplicates
+    from riffle.embed import load_embeddings, save_embeddings
+
+    a, b = photo(conn, "IMG_0002.jpg")["id"], photo(conn, "IMG_0002_edit.png")["id"]
+    assert photo(conn, "IMG_0002.jpg")["dupe_group"] == photo(conn, "IMG_0002_edit.png")["dupe_group"] is not None
+    E, ids = load_embeddings(indexed)
+    row = {int(i): k for k, i in enumerate(ids)}
+    unlike = E.copy()
+    unlike[row[b]] = -E[row[a]]  # the same hash, but nothing alike to CLIP
+    save_embeddings(indexed, unlike, ids)
+    group_duplicates(conn, indexed)
+    assert photo(conn, "IMG_0002.jpg")["dupe_group"] is None and photo(conn, "IMG_0002_edit.png")["dupe_group"] is None
+    save_embeddings(indexed, E, ids)
+    group_duplicates(conn, indexed)
+    assert photo(conn, "IMG_0002.jpg")["dupe_group"] == photo(conn, "IMG_0002_edit.png")["dupe_group"] is not None

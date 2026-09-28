@@ -455,6 +455,7 @@ def create_app(
         keeps using the current model until then."""
         from . import models
         from .embed import load_embeddings
+        from .dupes import group_duplicates
         from .stacks import compute_stacks
 
         known = models.find(name, pretrained)
@@ -475,6 +476,7 @@ def create_app(
                 if fitted is not None and abs(fitted - stack) > 1e-3:
                     stack = fitted
                     new.stacks = dataclasses.replace(new.stacks, min_similarity=stack)
+                    group_duplicates(conn, new)  # (they need CLIP's agreement at that similarity too)
                     compute_stacks(conn, new)
                 report(f"stacks: similarity {stack}" + (" (from the library's camera bursts)" if fitted is not None else " (kept: too few camera bursts to fit it)"))
             finally:
@@ -639,17 +641,20 @@ def create_app(
         if not ids:
             return []
         marks = ",".join("?" * len(ids))
+        # Stack and duplicate counts within the profile's library (its photos only).
+        lib_d, params_d = current_library().sql("d")
+        lib_s, params_s = current_library().sql("s")
         rows = conn.execute(
             f"""SELECT p.id, p.source, p.rel_path, p.width, p.height, p.size_bytes, p.taken_at, p.dupe_group,
                        p.stack_id, p.sharpness, p.clip_highlights, p.clip_shadows, {FLAG_EXPR} AS flag,
                        {EXPORTED_EXPR} AS exported,
                        EXISTS (SELECT 1 FROM raws r WHERE r.photo_id = p.id) AS has_raw,
                        (SELECT COUNT(*) FROM photos d
-                         WHERE d.dupe_group = p.dupe_group AND d.status = 'ok') AS dupe_count,
+                         WHERE d.dupe_group = p.dupe_group AND {lib_d}) AS dupe_count,
                        (SELECT COUNT(*) FROM photos s
-                         WHERE s.stack_id = p.stack_id AND s.status = 'ok') AS stack_count
+                         WHERE s.stack_id = p.stack_id AND {lib_s}) AS stack_count
                 FROM photos p WHERE p.id IN ({marks})""",
-            ids,
+            [*params_d, *params_s, *ids],
         )
         by_id = {r["id"]: r for r in rows}
         out = []
@@ -1432,6 +1437,7 @@ def create_app(
         r = conn.execute("SELECT * FROM photos WHERE id = ?", (photo_id,)).fetchone()
         if r is None:
             raise HTTPException(404, "photo not found")
+        lib, lib_params = current_library().sql("p")  # its duplicates and stack mates: the profile's only
         photo = dict(r)
         photo.pop("hues", None)  # binary (colors.py); only Curate uses it
         photo.pop("layout", None)  # binary (discover.layout_of); only Discover uses it
@@ -1472,8 +1478,8 @@ def create_app(
             ids = [
                 x[0]
                 for x in conn.execute(
-                    "SELECT id FROM photos WHERE dupe_group = ? AND status = 'ok' AND id != ? ORDER BY id",
-                    (r["dupe_group"], photo_id),
+                    f"SELECT p.id FROM photos p WHERE p.dupe_group = ? AND {lib} AND p.id != ? ORDER BY p.id",
+                    (r["dupe_group"], *lib_params, photo_id),
                 )
             ]
             photo["duplicates"] = items_for(conn, ids)
@@ -1502,9 +1508,9 @@ def create_app(
         photo["stack"] = [
             x[0]
             for x in conn.execute(
-                """SELECT id FROM photos WHERE stack_id = ? AND status = 'ok'
-                   ORDER BY taken_at IS NULL, taken_at, source, rel_path""",
-                (r["stack_id"],),
+                f"""SELECT p.id FROM photos p WHERE p.stack_id = ? AND {lib}
+                   ORDER BY p.taken_at IS NULL, p.taken_at, p.source, p.rel_path""",
+                (r["stack_id"], *lib_params),
             )
         ] if r["stack_id"] is not None else []
         return photo
@@ -1728,29 +1734,33 @@ def create_app(
         """Stacks with at least one photo matching the filters, in date order.
         ``unreviewed``: only stacks that still have an unflagged photo."""
         where, params = flt.where(mid())
-        having = f"HAVING SUM({flag_expr('s')} IS NULL) > 0" if unreviewed else ""
+        # Only the profile's photos of each stack (a stack can reach into another profile's
+        # folders), and only stacks with two or more of them.
+        lib_s, lib_params = current_library().sql("s")
+        having = "HAVING COUNT(*) > 1" + (f" AND SUM({flag_expr('s')} IS NULL) > 0" if unreviewed else "")
         rows = conn.execute(
             f"""SELECT s.stack_id, COUNT(*) AS size, MIN(s.taken_at) AS taken_at,
                        SUM({flag_expr('s')} IS NULL) AS unflagged,
                        SUM({flag_expr('s')} = 'pick') AS picked
                 FROM photos s
-                WHERE s.status = 'ok' AND s.stack_id IN (
+                WHERE {lib_s} AND s.stack_id IN (
                     SELECT p.stack_id FROM photos p WHERE {where} AND p.stack_id IS NOT NULL)
                 GROUP BY s.stack_id {having}
                 ORDER BY taken_at IS NULL, taken_at, s.stack_id""",
-            params,
+            [*lib_params, *params],
         ).fetchall()
         return {"stacks": [dict(r) | {"id": r["stack_id"]} for r in rows]}
 
     @app.get("/api/stacks/{stack_id}")
     def stack_detail(stack_id: int, conn=Depends(get_conn)):
-        """All photos of a stack (regardless of filters), in capture order."""
+        """The photos of a stack in the profile's library (regardless of filters), in capture order."""
+        lib, lib_params = current_library().sql("p")
         ids = [
             r[0]
             for r in conn.execute(
-                """SELECT id FROM photos WHERE stack_id = ? AND status = 'ok'
-                   ORDER BY taken_at IS NULL, taken_at, source, rel_path""",
-                (stack_id,),
+                f"""SELECT p.id FROM photos p WHERE p.stack_id = ? AND {lib}
+                   ORDER BY p.taken_at IS NULL, p.taken_at, p.source, p.rel_path""",
+                (stack_id, *lib_params),
             )
         ]
         if not ids:

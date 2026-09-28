@@ -337,6 +337,8 @@ Known limitations:
 One pass over each preview (`dupes.compute_phashes`) computes whatever is missing. Adding a measure doesn't redo the others. It runs in a thread pool (up to 8 threads; decoding and most of the measuring release the GIL): 18.7 s for all 2,132 photos of the first library, 8.8 ms per photo. It used to take about 190 s, 69 % of it in clipping (below).
 
 - **pHash**: all pairs are compared by Hamming distance (NumPy, in chunks), and pairs within `phash_max_distance` are merged into groups (union–find). The grid shows one tile per group. pHash misses reframed bursts; stacks catch them.
+  - *CLIP must agree* (29 Sep 2026): a pair counts only if its CLIP similarity reaches `stacks.min_similarity` (fitted to the model). With 95,000 images, 64-bit hashes matched unrelated flat, low-detail images (fish crops, illustrations): 29 % of the grouped pairs were less than 0.9 alike, groups chained up to 48 images, and 41 groups spanned folders, so stacks (which merge the duplicate groups) mixed an anime profile's images with a fish dataset. With CLIP's agreement: 1,976 → 1,456 groups, 11 spanning folders (copies of one image in both anime folders).
+  - Stacks are built over every photo, so the stack review, a stack's photos, the photo view's duplicates and stack, and the counts on tiles show only the profile's photos; a stack with a single photo in the profile is none there.
 - **Sharpness** (`quality.py`): Laplacian variance per 50 px tile of an 800 px greyscale copy; the score is the mean of the sharpest 5 % of tiles.
   - Downsampling first keeps sensor noise from counting as detail.
   - Scoring the in-focus region keeps shallow depth of field from scoring low, which the whole-frame variance did on the first library.
