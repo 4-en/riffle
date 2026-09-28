@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 FLAGS = ("pick", "reject")
-VERSION = 6  # PRAGMA user_version: the tables in SCHEMA are created when missing
+VERSION = 7  # PRAGMA user_version: the tables in SCHEMA are created when missing
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS flags (
@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS custom_tag_examples (
   tag_id      INTEGER NOT NULL REFERENCES custom_tags(id),
   sha256      TEXT NOT NULL,
   source      TEXT,             -- last known location, for humans and recovery
+  rel_path    TEXT,
+  added_at    REAL NOT NULL,
+  PRIMARY KEY (tag_id, sha256)
+);
+
+-- v7: photos marked as not belonging to a custom tag (custom_tags.py): a photo
+-- closer to one of these than to every example is left out.
+CREATE TABLE IF NOT EXISTS custom_tag_negatives (
+  tag_id      INTEGER NOT NULL REFERENCES custom_tags(id),
+  sha256      TEXT NOT NULL,
+  source      TEXT,
   rel_path    TEXT,
   added_at    REAL NOT NULL,
   PRIMARY KEY (tag_id, sha256)
@@ -272,15 +283,17 @@ class TagError(ValueError):
 
 
 def list_tags(path: str | Path) -> list[dict]:
-    """Every custom tag with its examples' content hashes, by name."""
+    """Every custom tag with its examples' and negatives' content hashes, by name."""
     conn = connect(path)
     try:
         tags = [dict(r) for r in conn.execute("SELECT * FROM custom_tags ORDER BY name COLLATE NOCASE")]
-        examples: dict[int, list[str]] = {}
-        for r in conn.execute("SELECT tag_id, sha256 FROM custom_tag_examples ORDER BY added_at, sha256"):
-            examples.setdefault(r["tag_id"], []).append(r["sha256"])
+        found: dict[str, dict[int, list[str]]] = {"examples": {}, "negatives": {}}
+        for key, table in (("examples", "custom_tag_examples"), ("negatives", "custom_tag_negatives")):
+            for r in conn.execute(f"SELECT tag_id, sha256 FROM {table} ORDER BY added_at, sha256"):
+                found[key].setdefault(r["tag_id"], []).append(r["sha256"])
         for t in tags:
-            t["examples"] = examples.get(t["id"], [])
+            t["examples"] = found["examples"].get(t["id"], [])
+            t["negatives"] = found["negatives"].get(t["id"], [])
         return tags
     finally:
         conn.close()
@@ -293,16 +306,26 @@ def _clean_name(name: str) -> str:
     return name
 
 
-def _add_examples(conn: sqlite3.Connection, catalogue: sqlite3.Connection, tag_id: int, photo_ids: list[int], now: float) -> None:
+def _add_examples(
+    conn: sqlite3.Connection, catalogue: sqlite3.Connection, tag_id: int, photo_ids: list[int], now: float, table: str = "custom_tag_examples"
+) -> None:
+    """Add photos as examples (or, with the negatives table, as negatives); a photo is
+    only ever one of the two, so it leaves the other list."""
+    rows = _photos(catalogue, photo_ids)
+    other = "custom_tag_negatives" if table == "custom_tag_examples" else "custom_tag_examples"
+    conn.executemany(f"DELETE FROM {other} WHERE tag_id = ? AND sha256 = ?", [(tag_id, r["sha256"]) for r in rows])
     conn.executemany(
-        """INSERT INTO custom_tag_examples (tag_id, sha256, source, rel_path, added_at) VALUES (?, ?, ?, ?, ?)
+        f"""INSERT INTO {table} (tag_id, sha256, source, rel_path, added_at) VALUES (?, ?, ?, ?, ?)
            ON CONFLICT (tag_id, sha256) DO UPDATE SET source = excluded.source, rel_path = excluded.rel_path""",
-        [(tag_id, r["sha256"], r["source"], r["rel_path"], now) for r in _photos(catalogue, photo_ids)],
+        [(tag_id, r["sha256"], r["source"], r["rel_path"], now) for r in rows],
     )
 
 
-def create_tag(catalogue: sqlite3.Connection, path: str | Path, name: str, photo_ids: list[int], strictness: str = "normal") -> int:
-    """A new tag from example photos; returns its id."""
+def create_tag(
+    catalogue: sqlite3.Connection, path: str | Path, name: str, photo_ids: list[int], strictness: str = "normal",
+    negatives: list[int] | None = None,
+) -> int:
+    """A new tag from example photos (and photos that do not belong); returns its id."""
     name = _clean_name(name)
     if strictness not in STRICTNESS:
         raise TagError(f"strictness must be one of {', '.join(STRICTNESS)}")
@@ -319,7 +342,9 @@ def create_tag(catalogue: sqlite3.Connection, path: str | Path, name: str, photo
                 ).lastrowid
             except sqlite3.IntegrityError:
                 raise TagError(f'a tag named "{name}" already exists')
-            _add_examples(conn, catalogue, tag_id, photo_ids, now)
+            if negatives:
+                _add_examples(conn, catalogue, tag_id, negatives, now, "custom_tag_negatives")
+            _add_examples(conn, catalogue, tag_id, photo_ids, now)  # (an example wins over a negative)
         return tag_id
     finally:
         conn.close()
@@ -334,8 +359,10 @@ def update_tag(
     strictness: str | None = None,
     add: list[int] | None = None,
     remove: list[int] | None = None,
+    add_negatives: list[int] | None = None,
+    remove_negatives: list[int] | None = None,
 ) -> None:
-    """Rename, change strictness, add or remove example photos."""
+    """Rename, change strictness, add or remove example photos and negatives."""
     if strictness is not None and strictness not in STRICTNESS:
         raise TagError(f"strictness must be one of {', '.join(STRICTNESS)}")
     conn = connect(path)
@@ -353,11 +380,14 @@ def update_tag(
                 conn.execute("UPDATE custom_tags SET strictness = ? WHERE id = ?", (strictness, tag_id))
             if add:
                 _add_examples(conn, catalogue, tag_id, add, now)
-            if remove:
-                conn.executemany(
-                    "DELETE FROM custom_tag_examples WHERE tag_id = ? AND sha256 = ?",
-                    [(tag_id, r["sha256"]) for r in _photos(catalogue, remove)],
-                )
+            if add_negatives:
+                _add_examples(conn, catalogue, tag_id, add_negatives, now, "custom_tag_negatives")
+            for table, ids in (("custom_tag_examples", remove), ("custom_tag_negatives", remove_negatives)):
+                if ids:
+                    conn.executemany(
+                        f"DELETE FROM {table} WHERE tag_id = ? AND sha256 = ?",
+                        [(tag_id, r["sha256"]) for r in _photos(catalogue, ids)],
+                    )
             conn.execute("UPDATE custom_tags SET updated_at = ? WHERE id = ?", (now, tag_id))
     finally:
         conn.close()
@@ -368,6 +398,7 @@ def delete_tag(path: str | Path, tag_id: int) -> bool:
     try:
         with conn:
             conn.execute("DELETE FROM custom_tag_examples WHERE tag_id = ?", (tag_id,))
+            conn.execute("DELETE FROM custom_tag_negatives WHERE tag_id = ?", (tag_id,))
             return conn.execute("DELETE FROM custom_tags WHERE id = ?", (tag_id,)).rowcount > 0
     finally:
         conn.close()

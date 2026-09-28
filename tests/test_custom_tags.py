@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle import selections
+from riffle import custom_tags, selections
 from riffle.embed import load_embeddings, save_embeddings
 from riffle.server import create_app
 from conftest import FakeClip, fake_index, photo
@@ -77,6 +77,40 @@ def test_best_match_among_several_examples(client, conn):
     ex, near, loose, far = ids(conn, "IMG_0001.jpg", "IMG_0002.jpg", "IMG_0002_edit.png", "IMG_0003.png")
     tag = create(client, "Both", [ex, far])  # two unrelated examples: each covers its own neighbours
     assert listed(client, ctags=tag) == sorted([ex, near, far])
+
+
+def test_negatives_carve_out_their_surroundings():
+    e, near_neg, other_way, neg = at(1.0, 1), at(0.86, 2), at(0.86, 3), at(0.8, 2)
+    E = np.stack([e, near_neg, other_way, neg])
+    E /= np.linalg.norm(E, axis=1, keepdims=True)
+    keep, _ = custom_tags.belongs(E, [0], 0.84)
+    assert keep.tolist() == [True, True, True, False]  # without negatives: as before
+    keep, _ = custom_tags.belongs(E, [0], 0.84, [3])
+    # Row 1 is more like the negative than like the example; row 2 lies the other way.
+    assert keep.tolist() == [True, False, True, False]
+    assert custom_tags.belongs(E, [0], 0.84, [0])[0][0]  # an example always belongs
+
+
+def test_negatives_in_the_api(client, conn):
+    ex, near, loose, far = ids(conn, "IMG_0001.jpg", "IMG_0002.jpg", "IMG_0002_edit.png", "IMG_0003.png")
+    preview = client.post("/api/custom-tags/preview", json={"photo_ids": [ex], "strictness": "normal", "negatives": [near]}).json()
+    assert preview["counts"]["normal"] == 1 and preview["left_out"] == 1 and preview["edge"] == []
+    assert preview["counts"]["loose"] == 1  # the loose one is its stack mate (the edit): a negative covers its stack
+
+    tag = client.post("/api/custom-tags", json={"name": "Lanterns", "photo_ids": [ex], "negatives": [near]}).json()["id"]
+    assert listed(client, ctags=tag) == [ex]
+    assert client.get("/api/tags").json()["custom"][0]["negatives"] == [near]
+    client.post(f"/api/custom-tags/{tag}", json={"remove_negatives": [near]})
+    assert listed(client, ctags=tag) == sorted([ex, near])
+    client.post(f"/api/custom-tags/{tag}", json={"add_negatives": [near]})
+    client.post(f"/api/custom-tags/{tag}", json={"add": [near]})  # an example now: no longer a negative
+    t = client.get("/api/tags").json()["custom"][0]
+    assert sorted(t["examples"]) == sorted([ex, near]) and t["negatives"] == []
+
+    # A negative that is (almost) one of the examples contradicts it.
+    assert client.post("/api/custom-tags", json={"name": "Odd", "photo_ids": [far], "negatives": [far]}).status_code == 400
+    assert client.post(f"/api/custom-tags/{tag}", json={"add_negatives": [ex]}).status_code == 400
+    assert client.delete(f"/api/custom-tags/{tag}").status_code == 200
 
 
 def test_editing_and_errors(client, conn):
@@ -150,3 +184,4 @@ def test_selections_migrate_from_v2(tmp_path):
     assert conn.execute("PRAGMA user_version").fetchone()[0] >= 3
     assert conn.execute("SELECT flag FROM flags").fetchone()[0] == "pick"
     assert conn.execute("SELECT COUNT(*) FROM custom_tags").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM custom_tag_negatives").fetchone()[0] == 0  # v7

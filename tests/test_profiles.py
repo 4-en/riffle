@@ -55,15 +55,17 @@ def test_switching_swaps_flags_tags_and_exports(indexed, app, conn):
 
 
 def test_copying_chosen_parts(indexed, app, conn):
-    a = ids(conn, "IMG_0001.jpg")[0]
+    a, far = ids(conn, "IMG_0001.jpg", "IMG_0003.png")
     with TestClient(app) as c:
         c.post("/api/flags", json={"ops": [{"ids": [a], "flag": "pick"}]})
         tag = c.post("/api/custom-tags", json={"name": "Mine", "photo_ids": [a]}).json()["id"]
+        # (stored directly: the fake embeddings make every photo a near-copy, which the API refuses)
+        selections.update_tag(conn, profiles.path_for(indexed, "default"), tag, add_negatives=[far])
         slug = c.post("/api/profiles", json={"name": "Tags only", "copy_from": "default", "parts": ["tags"]}).json()["slug"]
         c.post(f"/api/profiles/{slug}/activate", json={})
         assert flags(c)["pick"] == 0  # flags not copied
         custom = c.get("/api/tags").json()["custom"]
-        assert [(t["id"], t["name"], t["examples"]) for t in custom] == [(tag, "Mine", [a])]
+        assert [(t["id"], t["name"], t["examples"], t["negatives"]) for t in custom] == [(tag, "Mine", [a], [far])]
         assert a in [i["id"] for i in c.get("/api/photos", params={"ctags": tag, "dupes": "all"}).json()["items"]]
         everything = c.post("/api/profiles", json={"name": "All", "copy_from": "default"}).json()["slug"]
         assert [p for p in c.get("/api/profiles").json()["profiles"] if p["slug"] == everything][0]["picks"] == 1

@@ -1,7 +1,9 @@
 <script>
   // Create or edit a custom tag: a name, example photos, and how strict it is. The
   // counts and the "edge" strip (members just inside the threshold) update as the
-  // examples or the strictness change, so you see what the tag will contain.
+  // examples or the strictness change, so you see what the tag will contain. Clicking
+  // an edge photo marks it as not belonging: photos more like it than like any example
+  // leave the tag, and the next edge photos show (custom_tags.py).
   import { untrack } from 'svelte';
   import { view } from '../lib/state.svelte.js';
   import { createCustomTag, editCustomTag, deleteCustomTag, previewCustomTag } from '../lib/api.js';
@@ -14,6 +16,7 @@
   let name = $state(editing ? start.tag.name : '');
   let strictness = $state(editing ? start.tag.strictness : 'normal');
   let examples = $state(editing ? [...start.tag.examples] : [...start.photoIds]);
+  let negatives = $state(editing ? [...(start.tag.negatives ?? [])] : []);
   let preview = $state(null);
   let error = $state('');
   let saving = $state(false);
@@ -29,12 +32,13 @@
   $effect(() => {
     const ids = [...examples];
     const level = strictness;
+    const nots = [...negatives];
     const mine = ++token;
     if (!ids.length) {
       preview = null;
       return;
     }
-    previewCustomTag(ids, level)
+    previewCustomTag(ids, level, nots)
       .then((p) => {
         if (mine === token) preview = p;
       })
@@ -50,15 +54,19 @@
       if (editing) {
         const before = new Set(start.tag.examples);
         const now = new Set(examples);
+        const negBefore = new Set(start.tag.negatives ?? []);
+        const negNow = new Set(negatives);
         await editCustomTag(start.tag.id, {
           name,
           strictness,
           add: examples.filter((id) => !before.has(id)),
           remove: start.tag.examples.filter((id) => !now.has(id)),
+          add_negatives: negatives.filter((id) => !negBefore.has(id)),
+          remove_negatives: [...negBefore].filter((id) => !negNow.has(id)),
         });
         onchange({ id: start.tag.id });
       } else {
-        const { id } = await createCustomTag(name, examples, strictness);
+        const { id } = await createCustomTag(name, examples, strictness, negatives);
         onchange({ id });
       }
       close();
@@ -156,10 +164,44 @@
 
       {#if preview?.edge?.length}
         <section>
-          <h3 class="mb-1.5 text-xs text-neutral-400">At the edge <span class="text-neutral-500">· the least similar photos still in the tag</span></h3>
-          <div class="flex gap-1.5 overflow-x-auto">
+          <h3 class="mb-1.5 text-xs text-neutral-400">
+            At the edge <span class="text-neutral-500">· the least similar photos still in the tag. Click the ones that don't belong.</span>
+          </h3>
+          <div class="flex flex-wrap gap-1.5">
             {#each preview.edge as it (it.id)}
-              <img src={it.thumb} alt="" class="h-16 w-auto shrink-0 rounded-sm" />
+              <button
+                type="button"
+                class="group relative shrink-0 overflow-hidden rounded-sm"
+                title="Doesn't belong: leave it and photos more like it than like the examples out"
+                onclick={() => (negatives = [...negatives, it.id])}
+              >
+                <img src={it.thumb} alt="" class="h-20 w-auto" />
+                <span class="absolute inset-0 hidden items-center justify-center bg-red-950/60 text-lg text-red-200 group-hover:flex">✕</span>
+              </button>
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      {#if negatives.length}
+        <section>
+          <h3 class="mb-1.5 text-xs text-neutral-400">
+            Not in the tag ({negatives.length})
+            <span class="text-neutral-500"
+              >· {preview?.left_out ? `leaves out ${preview.left_out} photo${preview.left_out === 1 ? '' : 's'} like these` : 'photos more like these than like the examples are left out'}</span
+            >
+          </h3>
+          <div class="flex flex-wrap gap-1.5">
+            {#each negatives as id (id)}
+              <div class="group relative">
+                <img src="/thumbs/{id}.jpg" alt="" class="h-12 w-auto rounded-sm opacity-60" />
+                <button
+                  type="button"
+                  class="absolute right-0.5 top-0.5 hidden rounded bg-black/70 px-1 text-[11px] text-white hover:bg-black group-hover:block"
+                  title="It belongs after all"
+                  onclick={() => (negatives = negatives.filter((x) => x !== id))}>↺</button
+                >
+              </div>
             {/each}
           </div>
         </section>

@@ -143,6 +143,7 @@ The walk is the result: **Replay** plays it as a slideshow, **Pick walk** flags 
 Tags taught by example: select one or more photos, right-click → **Learn a tag from N photos…** (or **Learn tag…** in the selection bar), and name it. A photo gets the tag when it is close enough to any one of the examples, so varied examples (the same dog on a beach, in snow, indoors) each count. With a single example, the tag holds that photo's closest matches, like "find similar".
 
 - **Strict · Normal · Loose** sets how close is close enough. The dialog shows the photo count for each, and the photos at the edge of the tag.
+- **Click an edge photo that doesn't belong** to mark it: it leaves the tag, together with the photos that are more like it than like any example (and its stack), and the next edge photos show. A few rounds sharpen a tag that spills over into look-alikes. **↺** on a marked photo takes it back.
 - **Your tags** in the sidebar work like the other tags: click to include, Alt+click or **−** to exclude, **✎** to rename, change strictness, remove examples, or delete.
 - To add examples, select photos, right-click, and pick the tag under **Add to a tag**.
 - Tags are stored with your flags in `selections.sqlite3`, by file content, so they survive re-indexing, moved files, and model changes.
