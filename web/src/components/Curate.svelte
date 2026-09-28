@@ -444,7 +444,8 @@
         {/each}
         {#if draft?.used?.colors_missing}
           <p class="text-[11px] text-amber-300/80">
-            The colours of {draft.used.colors_missing} photos are not analysed yet: run <em>Index now</em> in the Library (it is quick).
+            The colours of {draft.used.colors_missing} photos are not analysed yet:
+            <button class="text-sky-400 hover:underline" onclick={() => (view.settings = 'indexing')}>Index now</button> (it is quick).
           </p>
         {/if}
       </section>
@@ -493,7 +494,9 @@
 
       <div class="space-y-1 border-t border-neutral-800 pt-3 text-[11px] text-neutral-500">
         {#if draft && !draft.used?.taste}
-          <p class="pb-1">Tip: calibrate your taste in the Library for drafts closer to what you would pick.</p>
+          <p class="pb-1">
+            Tip: <button class="text-sky-400 hover:underline" onclick={() => (view.settings = 'taste')}>calibrate your taste</button> for drafts closer to what you would pick.
+          </p>
         {/if}
         {#if locked.length}<p>{locked.length} locked</p>{/if}
         {#if removed.length}<p>{removed.length} removed from this draft</p>{/if}

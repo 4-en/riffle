@@ -139,7 +139,7 @@
   });
 
   function onkeydown(e) {
-    if (view.photo != null || view.exporting || e.target instanceof HTMLInputElement) return;
+    if (view.photo != null || view.exporting || view.settings || e.target instanceof HTMLInputElement) return;
     if (replay != null) {
       e.preventDefault();
       if (e.key === 'Escape') replay = null; else if (e.key === 'ArrowRight') replay = Math.min(trail.length - 1, replay + 1);

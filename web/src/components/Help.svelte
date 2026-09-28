@@ -11,6 +11,7 @@
       ['O', 'Calendar or map overview (with a grouping)'],
       ['Ctrl+Z', 'Undo the last flag change'],
       ['Esc', 'Close the current view / clear the selection'],
+      ['Ctrl+,', 'Settings (1–7 switch pages)'],
     ]],
     ['Curate', [
       ['Esc', 'Close the draft'],
@@ -64,9 +65,9 @@
 
       <ol class="list-decimal space-y-3 pl-5 marker:text-neutral-500">
         <li>
-          <strong class="text-neutral-100">Add your photos.</strong> Open <em>Library</em> (top right), browse to a photo folder and
-          add it. Indexing runs in the background: thumbnails, search, tags, duplicates, and stacks of similar shots.
-          Optionally add your phone's <em>location history</em> there to place photos that have no GPS.
+          <strong class="text-neutral-100">Add your photos.</strong> Open <em>Settings</em> (top right) → <em>Photo folders</em>, browse to a
+          photo folder and add it. Indexing runs in the background: thumbnails, search, tags, duplicates, and stacks of similar shots.
+          Optionally add your phone's location history under <em>Locations</em> to place photos that have no GPS.
         </li>
         <li>
           <strong class="text-neutral-100">Find what you want.</strong> Search by what is in the picture ("boats at sunset"; a minus leaves something out: "street -people"; | finds either: "beach | lake"), click
@@ -110,7 +111,7 @@
         Your picks and rejects, tags, and captions are saved in <span class="font-mono">selections.sqlite3</span> in your user data folder
         (<span class="font-mono">~/.local/share/riffle</span> on Linux): back it up. The derived data (thumbnails,
         embeddings, tags) is in your cache folder (<span class="font-mono">~/.cache/riffle</span>) and can be deleted;
-        indexing rebuilds it. Settings: <span class="font-mono">~/.config/riffle</span>. The Library shows the exact
+        indexing rebuilds it. Settings: <span class="font-mono">~/.config/riffle</span>. <em>Settings → Files</em> shows the exact
         places, and so does <span class="font-mono">riffle paths</span>.
       </div>
 

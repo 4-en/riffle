@@ -103,7 +103,7 @@ macOS uses `~/Library/Application Support/riffle` and `~/Library/Caches/riffle`.
 The config is looked up in this order: `--config`, `$RIFFLE_CONFIG`, `./config.yaml`, then the user config (created on first run). In the standalone app, the first-run config defaults to the faster model (§13). `data_dir`, `selections`, and `vocabulary` override the default locations. Relative paths resolve against the config file's folder.
 
 ```yaml
-sources: [/Volumes/Photos/China]        # written by the UI's Library; comments elsewhere are kept
+sources: [/Volumes/Photos/China]        # written by Settings → Photo folders; comments elsewhere are kept
 exclude: ["**/.Trashes/**"]
 image_extensions: [.jpg, .jpeg, .png, .tif, .tiff, .heic]
 raw_extensions: [.cr2, .cr3, .nef, .arw, .raf, .dng, .orf, .rw2]
@@ -166,7 +166,7 @@ web/src/
                          # (flags, undo, selection), connection.svelte.js, justify.js
   components/            # TopBar, ViewBar, Sidebar, Filters, Section, Grid, Detail,
                          # ContextMenu, SelectionBar, Compare, Curate, TagDialog, ExportDialog,
-                         # Library, FolderBrowser, Calendar, MapView, Help, UnmatchedRaws
+                         # Settings (+ settings/ pages), FolderBrowser, Calendar, MapView, Help, UnmatchedRaws
 packaging/               # PyInstaller entry point (riffle_app.py) and riffle.spec
 .github/workflows/release.yml
 ```
@@ -403,7 +403,7 @@ On the first library, every photo had an EXIF offset. 587 of 743 were placed fro
 
 ## 9. Taste model
 
-`taste.py`, trained on the user's flags on request (**Library → Your taste → Calibrate**, ~1.1 s including cross-validation).
+`taste.py`, trained on the user's flags on request (**Settings → Your taste → Calibrate**, ~1.1 s including cross-validation).
 
 - **Unit: scenes, not photos.** One sample per stack or single photo (mean embedding). A keeper scene contains a pick or an export; a rejected scene contains only rejects; unreviewed scenes are skipped.
   - Per photo it didn't work: AUC 0.74 against 0.73 for the untrained CLIP quality score. It didn't transfer between libraries, and it was worse than sharpness at choosing a frame within a stack.
@@ -414,12 +414,12 @@ On the first library, every photo had an EXIF offset. 587 of 743 were placed fro
   - the top 20 % of scenes hold 68 % of keeper scenes, the top 30 % hold 77 %;
   - trained on one library, it ranks the other at AUC 0.78 / 0.66;
   - nearest neighbours to the picks reached only 0.68.
-- **Offered only** with ≥ 20 keeper scenes, ≥ 50 rejected scenes, and cross-validated AUC ≥ 0.65; otherwise the Library explains why not.
+- **Offered only** with ≥ 20 keeper scenes, ≥ 50 rejected scenes, and cross-validated AUC ≥ 0.65; otherwise Settings → Your taste explains why not.
 - **Sort order only**: the bottom 30 % still held 3 of the 60 keeper scenes, so "likely rejects" never flags anything.
 - **Stacks on by default for these sorts**, since scenes are scored as a whole. In-sample, with Stacks the top fifth of tiles held 55 of 60 picks; without, 38 of 53.
 - **Not used for frames within a stack**: that stays with sharpness and the suggested keeper.
 - **Storage and training**: saved as `<model_id>.taste.npz` (derived) and loaded at startup (~7 ms); new photos are scored without retraining. An earlier version retrained after every flag change; an explicit button proved more predictable.
-- **API**: `GET /api/taste` reports status, the figures, and `changed_since` (flags changed since calibrating; the Library suggests recalibrating from 25).
+- **API**: `GET /api/taste` reports status, the figures, and `changed_since` (flags changed since calibrating; Settings suggests recalibrating from 25, with an amber dot in its nav).
 
 ## 10. Search and vocabulary
 
@@ -530,7 +530,7 @@ Mutating endpoints accept only JSON bodies, so other sites can't trigger them wi
 
 A single page without a router. View state lives in a Svelte store mirrored into the URL (search, tags, filters, grouping, sort, open photo), so views can be bookmarked.
 
-- **Top bar**: search; a "similar to" chip; the workflow (**Review stacks**, **Curate**, **Export**); then **Library** (with indexing progress) and **?** (help).
+- **Top bar**: search; a "similar to" chip; the workflow (**Review stacks**, **Curate**, **Export**); then **Settings** (a gear; indexing progress while it runs) and **?** (help).
 - **Toolbar above the grid**: result count; **Group** with a **Grid | Calendar/Map** switch (or **Broad · Medium · Fine** for Similar); **Sort**; thumbnail size **S · M · L** (minimum tile width 112 / 168 / 260 px, remembered per browser; Large may load the 1600 px preview via `srcset`, since a 320 px thumbnail cropped square looks soft at that size); **Stacks**; and, when grouped, the group count with **Jump to…** at the right end.
 - **Similar grouping** (`clusters.py`; `group=similar&level=`): hierarchical clustering (average linkage, cosine; cuts 0.45 / 0.35 / 0.25) of the photos the listing shows, so filters shape the themes. Above 6,000 photos a fixed sample is clustered and the rest assigned to the nearest centre. Clusters under 5 photos go to Other. Keys rank clusters by size; the photo → key map is a JSON object looked up per row in SQL (13 ms; a join against a JSON list took 470 ms). Cached per listing, level, and embedding file. Names (`clusters.names`): the kind of image when most members are not photographs; else the most distinctive phrase of a naming vocabulary (`defaults/cluster_names.yaml`: 483 things and 40 settings, i.e. light, style, sky, texture; not tags), i.e. the highest similarity to the cluster centre minus the library's mean similarity to that phrase. A thing within 0.035 behind a setting is named first ("birds in flight · a blue sky"); a second phrase within 0.01 joins; clusters that would share a name get their next phrase added. Without the model: the members' most common subject tag. The vocabulary's text vectors are cached per model (`<model_id>.names.npz`).
 - **Size cap** (`clusters.MAX_SHARE`: 25 / 12 / 6 % of the view for broad / medium / fine, at least 25 photos): a larger cluster is clustered again with the cut lowered by 0.8× (down to 0.12); what its parts leave over stays one group. CLIP keeps kinds of image close whatever they show: all 259 illustrations of the first library were one medium cluster, even with only illustrations in view. Capped, they split into 20 groups by subject (99 % grouped): figurines, swimwear, friends, armour, animal ears, a beach… Centring the view's embeddings instead (removing what all share) left 75 % unclustered at the same cuts.
@@ -563,7 +563,7 @@ A single page without a router. View state lives in a Svelte store mirrored into
   - Groups appear in date order, or trip order for places (by each group's first photo), or path order for folders.
 - **Overviews**: a year calendar (days with a cover and count), or a map with one cluster per place, region, or country. Clicking opens the group in the grid. The map draws bundled Natural Earth outlines (`world-atlas` 50m, loaded lazily) with d3-geo and d3-zoom; street-level detail was left out deliberately.
 - **Photo view**: preview, metadata, tags, location with source and accuracy, taste score, and flag buttons. Actions: Stack, Find similar, Show day, Show place, Copy path.
-- **Library**: photo folders, folder browser, **Index now** with progress, location history, profiles, taste model, and flag / export-history resets.
+- **Settings** (`Settings.svelte`, one component per page in `components/settings/`; 28 Sep 2026, replacing the Library dialog, which had grown into one long page of unrelated sections): a nav on the left, one page at a time. Pages: Photo folders (the folder browser behind *Add a folder…*, open on first run), Indexing (Index now, progress, log), Locations (location history), Profiles, Your taste, Flags & exports (the resets), Files (config, flags, derived data paths). While indexing runs, a status strip sits under the header and the nav marks Indexing. `view.settings` holds the page, so other views open one directly: first run → Photo folders, *Manage profiles…* → Profiles, Curate's notes → Indexing / Your taste. `Ctrl+,` opens it (the last page, remembered per browser), `1`–`7` switch pages.
 - **Profiles**: a switcher in the top bar once there are two or more, and "Profile: <name>" at the top of the sidebar outside the default profile.
 - **Help**: the workflow in steps and all shortcuts.
 
@@ -909,7 +909,7 @@ Distinctive animals should work; look-alikes (two black labradors) will be confu
   - a page of unnamed clusters to name, merge, or split;
   - face chips in the photo view;
   - optionally, a Curate term that spreads a draft over people.
-- **Privacy:** face vectors are biometric data. Everything stays local, the step is opt-in in the Library, and a "forget all face data" action deletes the vectors and names.
+- **Privacy:** face vectors are biometric data. Everything stays local, the step is opt-in in Settings, and a "forget all face data" action deletes the vectors and names.
 - **Cost:** roughly 10–30 ms per photo on a CPU for detection and embedding (a couple of minutes per 2,000 photos), far less on a GPU. Adds ONNX Runtime (or OpenCV), which §4 currently avoids.
 
 **First step when picked up:** a feasibility check on the first library. How many usable faces are there (size, angle), and do the clusters make sense? That shows whether trip photos contain enough repeat individuals to be worth it.

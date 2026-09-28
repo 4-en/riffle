@@ -1,6 +1,6 @@
 <script>
   // The active profile in the top bar, with a menu to switch (and to manage them in
-  // the Library). Only shown once there is more than one profile.
+  // Settings → Profiles). Only shown once there is more than one profile.
   import { view } from '../lib/state.svelte.js';
   import { activateProfile } from '../lib/api.js';
   import { reloadForProfile } from '../lib/connection.svelte.js';
@@ -66,7 +66,7 @@
           role="menuitem"
           onclick={() => {
             open = false;
-            view.library = true;
+            view.settings = 'profiles';
           }}>Manage profiles…</button
         >
       </div>

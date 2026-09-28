@@ -62,7 +62,7 @@ venv/bin/riffle paths      # show where config, flags, and derived data live
 
 `riffle` uses port 8000, or a free port if that is taken. Running it again while it runs opens another tab. It stops by itself 30 seconds after the last tab is closed; it never stops in its first minute or during indexing or export. `riffle serve` runs until stopped. Global options: `--config PATH`, `-v` for debug logging.
 
-Open **Library** (top right) to add photo folders and run indexing. It opens by itself on first start. Folders are saved to `sources` in `config.yaml`.
+Open **Settings** (top right, or Ctrl+,) → **Photo folders** to add folders; **Indexing** runs and follows the index. Settings opens by itself on first start. Folders are saved to `sources` in `config.yaml`.
 
 The folder browser can list any directory the server can read, so keep the server bound to `127.0.0.1` (the default).
 
@@ -78,7 +78,7 @@ A typical pass:
 3. Go through the rest in the grid or the loupe with `P` (pick), `X` (reject), `U` (unflag). The loupe advances automatically.
 4. Check the selection with **Flag → Picked**, then **Export**. Choose the destination, the files (images, images + RAWs, RAWs only), and the layout (flat or keeping the source folders). To export some photos without flagging them, select them and click **Export…** in the selection bar (or right-click → **Export N photos…**).
 
-Undo any flag change with Ctrl+Z. **Unflag all** in the compare view resets a stack; **Library → Flags** unflags everything or the current filters.
+Undo any flag change with Ctrl+Z. **Unflag all** in the compare view resets a stack; **Settings → Flags & exports** unflags everything or the current filters.
 
 Exports never overwrite anything:
 
@@ -87,7 +87,7 @@ Exports never overwrite anything:
 - Each export writes `export-manifest.csv`.
 - The destination can't be inside a photo folder.
 
-Exported photos get a ↗ badge and can be filtered. **Only photos not exported before** in the export dialog skips them. **Library → Forget export history** clears that record; the exported files stay.
+Exported photos get a ↗ badge and can be filtered. **Only photos not exported before** in the export dialog skips them. **Settings → Flags & exports → Forget export history** clears that record; the exported files stay.
 
 With a location history configured, exports add the position to photos without GPS (on by default):
 
@@ -98,11 +98,11 @@ Stacks link photos at most `stacks.max_gap_seconds` apart that are at least `sta
 
 ## Taste model
 
-**Library → Your taste → Calibrate** trains a small model on your flags; it takes a second or two. It needs at least 20 scenes with a pick (or an export) and 50 fully rejected scenes, and it must clearly beat chance on photos it wasn't trained on.
+**Settings → Your taste → Calibrate** trains a small model on your flags; it takes a second or two. It needs at least 20 scenes with a pick (or an export) and 50 fully rejected scenes, and it must clearly beat chance on photos it wasn't trained on.
 
 Once calibrated, **Sort → Likely keepers first** shows promising photos first, and **Likely rejects first** helps clear out misses. It rates scenes (a burst counts once), so this sort also turns on Stacks. Picking the best frame within a burst is left to sharpness and the suggested keeper.
 
-The Library shows how well it works for you and how many flags changed since the last calibration. The model is stored in the cache folder and never flags anything by itself.
+That page shows how well it works for you and how many flags changed since the last calibration. The model is stored in the cache folder and never flags anything by itself.
 
 ## Curate
 
@@ -169,7 +169,7 @@ Select photos and click **Caption…** in the selection bar (or right-click → 
 
 A profile is a separate set of your own data: picks and rejects, export history, your tags, and the taste model. Use one per project, e.g. a photo book next to your general culling. The photos, their index, and the settings are shared.
 
-- **Library → Profiles** lists them with their counts. A new profile starts empty, or copies any of flags, export history, and your tags from the current one (e.g. keep your tags but start the picks from scratch).
+- **Settings → Profiles** lists them with their counts. A new profile starts empty, or copies any of flags, export history, and your tags from the current one (e.g. keep your tags but start the picks from scratch).
 - Once there is more than one, the top bar shows the active profile with a menu to switch; other open tabs follow.
 - Switching waits until indexing or an export has finished; an export records its history in the profile it started in.
 - Each profile is one SQLite file. The default is `selections.sqlite3`; the others are in `profiles/` next to it. Deleting one moves its file to `profiles/deleted/`.
@@ -190,7 +190,7 @@ With **Names** on (the switch at the right end of the search box, on by default)
 
 ## Location
 
-Camera files rarely have GPS, but your phone usually knew where you were. Add a location history under **Library → Location history**:
+Camera files rarely have GPS, but your phone usually knew where you were. Add a location history under **Settings → Locations**:
 
 - **Google Timeline** (current format): on Android, *Settings → Location → Timeline → Export Timeline data*, then copy `Timeline.json` to this computer.
 - **Google Takeout** `Records.json` (older format), or **GPX** from a tracking app.
@@ -246,7 +246,7 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 
 | Where | Keys |
 |---|---|
-| Anywhere | `?` help · `/` search · `O` calendar / map · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
+| Anywhere | `?` help · `Ctrl+,` settings (`1`–`7` switch pages) · `/` search · `O` calendar / map · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
 | Grid | click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag · `C` compare selection · `S` stacks · `H` hide rejected · `R` review stacks · right-click for a menu |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag and advance |
 | Compare | click or `1`–`9` keep · `A` keep suggested · `Enter` pick kept, reject rest (with nothing kept, press twice to reject all) · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag focused · arrows focus · `Z` zoom · `N` / `B` next / back (review) |

@@ -60,7 +60,7 @@ export const view = $state({
   help: false, // how-to guide open (not in the URL)
   photo: null, // open detail photo id
   raws: false, // unmatched RAWs list open
-  library: false, // folders / indexing dialog open (not mirrored to the URL)
+  settings: null, // Settings open at a page ('folders', 'indexing', 'taste'…; 'last': the last one) (not in the URL)
 });
 
 export function readUrl() {

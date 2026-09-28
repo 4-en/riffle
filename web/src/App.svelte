@@ -11,7 +11,7 @@
   import Grid from './components/Grid.svelte';
   import Detail from './components/Detail.svelte';
   import UnmatchedRaws from './components/UnmatchedRaws.svelte';
-  import Library from './components/Library.svelte';
+  import Settings from './components/Settings.svelte';
   import SelectionBar from './components/SelectionBar.svelte';
   import Compare from './components/Compare.svelte';
   import ExportDialog from './components/ExportDialog.svelte';
@@ -36,7 +36,7 @@
   let grid = $state(); // bound inside an {#if}
 
   let facets = $state(null);
-  // Profiles (for the top bar switcher and the Library); refreshed on renames and switches.
+  // Profiles (for the top bar switcher and Settings); refreshed on renames and switches.
   let profiles = $state([]);
   function loadProfiles() {
     fetchProfiles()
@@ -119,10 +119,10 @@
   }
   pollIndex();
 
-  // First run: open the library so there is an obvious way to add photos.
+  // First run: open Settings at the photo folders, so there is an obvious way to add photos.
   fetchSources()
     .then((s) => {
-      if (!s.sources.length) view.library = true;
+      if (!s.sources.length) view.settings = 'folders';
     })
     .catch(() => {});
 
@@ -363,6 +363,11 @@
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
     if (view.compare) return; // the compare view handles its own keys
+    if (mod && e.key === ',') {
+      e.preventDefault(); // Ctrl+, : Settings, from anywhere else
+      view.settings = view.settings ? null : 'last';
+      return;
+    }
     if (menuAt) {
       // The menu's shortcuts work while it is open; other keys are ignored.
       const id = menuAt.id;
@@ -381,7 +386,7 @@
     if (key === 'Escape') {
       if (view.help) view.help = false;
       else if (view.exporting) view.exporting = false;
-      else if (view.library) view.library = false;
+      else if (view.settings) view.settings = null;
       else if (view.raws) view.raws = false;
       else if (view.photo != null) view.photo = null;
       else if (view.discover) {
@@ -393,7 +398,7 @@
       else clearSelection();
       return;
     }
-    if (typing || view.exporting || view.library || view.raws || view.help) return;
+    if (typing || view.exporting || view.settings || view.raws || view.help) return;
     if (view.captioning && view.photo == null) return; // the Captions & tags view has the keyboard
     if (view.discover && view.photo == null) return; // so does Discover
     if (key === '?') {
@@ -492,8 +497,8 @@
             {:else}
               <p>No photos in the library yet.</p>
               <button class="text-xs text-sky-400 hover:underline" onclick={() => (view.help = true)}>How does this work?</button>
-              <button class="rounded bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600" onclick={() => (view.library = true)}>
-                Add a photo folder
+              <button class="rounded bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600" onclick={() => (view.settings = 'folders')}>
+                Add photo folders…
               </button>
             {/if}
           </div>
@@ -594,8 +599,8 @@
   <UnmatchedRaws />
 {/if}
 
-{#if view.library}
-  <Library
+{#if view.settings}
+  <Settings
     status={indexStatus}
     onchange={() => pollIndex(true)}
     {tags}
