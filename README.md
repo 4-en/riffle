@@ -102,7 +102,7 @@ Stacks link photos at most `stacks.max_gap_seconds` apart that are at least `sta
 
 Once calibrated, **Sort → Likely keepers first** shows promising photos first, and **Likely rejects first** helps clear out misses. It rates scenes (a burst counts once), so this sort also turns on Stacks. Picking the best frame within a burst is left to sharpness and the suggested keeper.
 
-That page shows how well it works for you and how many flags changed since the last calibration. The model is stored in the cache folder and never flags anything by itself.
+Once calibrated, it keeps itself up to date: when Riffle starts (and when you switch profiles), it recalibrates if flags changed since, and keeps the previous model if the new one would not pass the check. That page shows how well it works for you and how many flags changed since the last calibration. The model is stored in the cache folder and never flags anything by itself.
 
 ## Curate
 

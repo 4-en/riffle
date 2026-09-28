@@ -415,7 +415,7 @@ On the first library, every photo had an EXIF offset. 587 of 743 were placed fro
 
 ## 9. Taste model
 
-`taste.py`, trained on the user's flags on request (**Settings → Your taste → Calibrate**, ~1.1 s including cross-validation).
+`taste.py`, trained on the user's flags, first on request (**Settings → Your taste → Calibrate**, ~1.1 s including cross-validation), then by itself at startup and on a profile switch when flags or exports changed since (29 Sep 2026: it is that cheap); a recalibration that fails the check keeps the previous model (`TasteStore.recalibrate_if_stale`). Removing a flag deletes its row, so it does not count as a change until the next one.
 
 - **Unit: scenes, not photos.** One sample per stack or single photo (mean embedding). A keeper scene contains a pick or an export; a rejected scene contains only rejects; unreviewed scenes are skipped.
   - Per photo it didn't work: AUC 0.74 against 0.73 for the untrained CLIP quality score. It didn't transfer between libraries, and it was worse than sharpness at choosing a frame within a stack.
@@ -969,6 +969,6 @@ Location-history questions still open: how accurate is the history on photos tha
 4. Default model: `ViT-L-14-quickgelu` / `dfn2b` since 26 Sep 2026 (about 81 % ImageNet zero-shot), replacing `ViT-B-16` / `laion2b_s34b_b88k` (70 %). Alternatives: `ViT-B-16` / `dfn2b` (76 %, the standalone default) and `ViT-H-14-quickgelu` / `dfn5b` (83 %). The 1,146-photo library embeds in under a minute on the RTX 3090.
 5. Flags: one global pick/reject per photo, in a separate database keyed by content hash.
 6. Location history: referenced in place (not copied), placed at place / region / country level, with route-interpolated positions used but marked.
-7. Taste model: calibrated on request, not retrained in the background.
+7. Taste model: first calibrated on request; after that recalibrated at startup and on a profile switch when flags changed (replaced only by a model that passes the check). Not retrained while the app runs.
 8. Standalone builds: zipped folders, not single files; CPU inference with the faster model.
 9. Discover (§14.7) is kept as a feature, next to Curate: tried on a branch, judged a good fit after walking it.

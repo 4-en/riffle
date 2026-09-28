@@ -258,9 +258,12 @@ def require_json(request: Request) -> None:
 
 
 class TasteStore:
-    """The taste model (taste.py): trained only when the user calibrates it, saved
-    next to the embeddings, loaded at startup. Scores for the indexed photos are
-    recomputed (cheaply, without retraining) when the embeddings change."""
+    """The taste model (taste.py): first trained when the user calibrates it, saved
+    next to the embeddings, loaded at startup. From then on it is recalibrated by
+    itself at startup and on a profile switch when flags changed since (a second or
+    two), keeping the previous model if the new one does not pass its check. Scores for
+    the indexed photos are recomputed (cheaply, without retraining) when the
+    embeddings change."""
 
     def __init__(self, cfg: Config, selections_path, profile: str = "default"):
         self.cfg = cfg
@@ -302,6 +305,40 @@ class TasteStore:
             self.model, self.scored_stamp = model, None
             self._refresh_scores(index)
         return model
+
+    def changed_since(self, conn) -> int | None:
+        """Flags and exports changed since the model was calibrated (None: not calibrated).
+        ``conn`` has this profile's selections attached as ``sel``."""
+        if self.model is None:
+            return None
+        since = self.model.calibrated_at or 0
+        changed = conn.execute("SELECT COUNT(*) FROM sel.flags WHERE updated_at > ?", (since,)).fetchone()[0]
+        return changed + conn.execute("SELECT COUNT(*) FROM sel.exported WHERE last_at > ?", (since,)).fetchone()[0]
+
+    def recalibrate_if_stale(self, index: Index) -> bool:
+        """Recalibrate a model the user calibrated before when flags changed since; the
+        new one replaces it only if it passes its check (else the old one stays, and
+        Settings still says it is worth recalibrating). Returns whether it replaced it."""
+        from . import taste
+
+        if self.model is None or not index.E.size:
+            return False
+        conn = db.connect_readonly(self.cfg.db_path, self.selections_path)
+        try:
+            if not self.changed_since(conn):
+                return False
+            model = taste.train(conn, index.E, index.ids)
+        finally:
+            conn.close()
+        if not model.enabled:
+            log.info("taste model not recalibrated: %s", model.reason)
+            return False
+        model.save(self.path)
+        with self.lock:
+            self.model, self.scored_stamp = model, None
+            self._refresh_scores(index)
+        log.info("taste model recalibrated")
+        return True
 
     def current(self, index: Index):
         with self.lock:
@@ -394,6 +431,7 @@ def create_app(
         if state["encoder"] is None:
             threading.Thread(target=load_encoder, name="riffle-model", daemon=True).start()
         threading.Thread(target=warm_caches, name="riffle-warm", daemon=True).start()
+        threading.Thread(target=recalibrate_taste, name="riffle-taste", daemon=True).start()
         watchdog = asyncio.create_task(watch_clients()) if auto_exit else None
         yield
         if watchdog:
@@ -435,6 +473,14 @@ def create_app(
             except Exception:  # noqa: BLE001 - warming is an optimisation; first use computes it anyway
                 log.exception("warming the caches failed")
                 warmed = index.stamp
+
+    def recalibrate_taste() -> None:
+        """In the background: bring a calibrated taste model up to date with the flags
+        (TasteStore.recalibrate_if_stale; cheap, so it needs no button press)."""
+        try:
+            taste_store.recalibrate_if_stale(get_index())
+        except Exception:  # noqa: BLE001 - an optimisation; the Settings button still works
+            log.exception("recalibrating the taste model failed")
 
     def load_encoder() -> None:
         try:
@@ -2223,6 +2269,7 @@ def create_app(
         state["profile_version"] += 1
         ctag_cache.clear()
         taste_store.use(path, slug)
+        threading.Thread(target=recalibrate_taste, name="riffle-taste", daemon=True).start()
         return {"active": slug}
 
     @app.post("/api/profiles/{slug}", dependencies=[Depends(require_json)])
@@ -2434,10 +2481,7 @@ def create_app(
         """The model's status plus how many flags / exports changed since calibrating."""
         if model is None:
             return {"enabled": False, "calibrated": False, "reason": "Not calibrated yet.", "changed_since": None}
-        since = model.calibrated_at or 0
-        changed = conn.execute("SELECT COUNT(*) FROM sel.flags WHERE updated_at > ?", (since,)).fetchone()[0]
-        changed += conn.execute("SELECT COUNT(*) FROM sel.exported WHERE last_at > ?", (since,)).fetchone()[0]
-        return model.summary() | {"calibrated": True, "changed_since": changed}
+        return model.summary() | {"calibrated": True, "changed_since": taste_store.changed_since(conn)}
 
     @app.get("/api/taste")
     def taste_status(conn=Depends(get_conn), index: Index = Depends(get_index)):
