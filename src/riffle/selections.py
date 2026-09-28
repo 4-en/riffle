@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 FLAGS = ("pick", "reject")
-VERSION = 7  # PRAGMA user_version: the tables in SCHEMA are created when missing
+VERSION = 8  # PRAGMA user_version: the tables in SCHEMA are created when missing
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS flags (
@@ -62,6 +62,18 @@ CREATE TABLE IF NOT EXISTS custom_tag_negatives (
   rel_path    TEXT,
   added_at    REAL NOT NULL,
   PRIMARY KEY (tag_id, sha256)
+);
+
+-- v8: this profile's photo folders (profiles.folders; the default profile keeps
+-- them in config.yaml). profile_settings 'folders' = '1' once the list was set, so
+-- a profile from before v8 starts with the config's folders instead of none.
+CREATE TABLE IF NOT EXISTS folders (
+  path        TEXT PRIMARY KEY,
+  added_at    REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS profile_settings (
+  key         TEXT PRIMARY KEY,
+  value       TEXT
 );
 
 -- v4: this file's profile name (profiles.py); empty in the default profile.

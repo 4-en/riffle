@@ -164,7 +164,10 @@ export const deleteProfile = (slug) => send('DELETE', `/api/profiles/${slug}`);
 
 export const fetchSources = () => get('/api/sources');
 export const addSource = (path) => send('POST', '/api/sources', { path });
-export const removeSource = (path) => send('DELETE', '/api/sources', { path });
+/** forget: the folder was deleted or moved: off every profile, its photos' data dropped. */
+export const removeSource = (path, forget = false) => send('DELETE', '/api/sources', { path, forget });
+/** Delete the indexed data of photos in no profile's folders (or whose files are gone). */
+export const cleanUp = () => send('POST', '/api/cleanup', {});
 export const browse = (path, files = null) => get('/api/fs', { path, files });
 export const fetchIndexStatus = () => get('/api/index');
 export const startIndex = () => send('POST', '/api/index');

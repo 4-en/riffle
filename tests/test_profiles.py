@@ -41,6 +41,9 @@ def test_switching_swaps_flags_tags_and_exports(indexed, app, conn):
         slug = c.post("/api/profiles", json={"name": "Photo book"}).json()["slug"]
         assert slug == "photo-book"
         assert c.post(f"/api/profiles/{slug}/activate", json={}).json()["active"] == slug
+        assert c.get("/api/tags").json()["photos"] == 0  # an empty profile: no folders yet
+        added = c.post("/api/sources", json={"path": str(indexed.sources[0])}).json()
+        assert added["indexing"] is False  # indexed already (the default profile has it): instant
         assert flags(c)["pick"] == 0 and c.get("/api/tags").json()["custom"] == []  # empty profile
         c.post("/api/flags", json={"ops": [{"ids": [b], "flag": "reject"}]})
         assert flags(c)["reject"] == 1
@@ -61,7 +64,7 @@ def test_copying_chosen_parts(indexed, app, conn):
         tag = c.post("/api/custom-tags", json={"name": "Mine", "photo_ids": [a]}).json()["id"]
         # (stored directly: the fake embeddings make every photo a near-copy, which the API refuses)
         selections.update_tag(conn, profiles.path_for(indexed, "default"), tag, add_negatives=[far])
-        slug = c.post("/api/profiles", json={"name": "Tags only", "copy_from": "default", "parts": ["tags"]}).json()["slug"]
+        slug = c.post("/api/profiles", json={"name": "Tags only", "copy_from": "default", "parts": ["tags", "folders"]}).json()["slug"]
         c.post(f"/api/profiles/{slug}/activate", json={})
         assert flags(c)["pick"] == 0  # flags not copied
         custom = c.get("/api/tags").json()["custom"]

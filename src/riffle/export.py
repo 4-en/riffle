@@ -80,11 +80,12 @@ class ExportError(ValueError):
     pass
 
 
-def check_destination(cfg: Config, folder: Path) -> None:
-    """Refuse destinations that would be indexed (sources) or are derived data."""
+def check_destination(cfg: Config, folder: Path, roots: list[Path] | None = None) -> None:
+    """Refuse destinations that would be indexed (``roots``: every profile's folders,
+    profiles.indexed_roots; default the config's) or are derived data."""
     if not folder.is_absolute():
         raise ExportError("use an absolute destination path")
-    for s in cfg.sources:
+    for s in cfg.sources if roots is None else roots:
         if folder == s or folder.is_relative_to(s):
             raise ExportError(f"the destination is inside the photo folder {s}; its copies would be indexed again")
     if folder == cfg.data_dir or folder.is_relative_to(cfg.data_dir):
@@ -95,13 +96,15 @@ def check_destination(cfg: Config, folder: Path) -> None:
 
 def plan_files(
     conn: sqlite3.Connection, photo_ids: list[int], content: str, raw_fallback: bool
-) -> tuple[list[_File], int]:
-    """Files to copy, grouped by photo in the given order, and the number of
-    photos that have no RAW (and were skipped or fell back to the image)."""
+) -> tuple[list[_File], int, list[int]]:
+    """Files to copy, grouped by photo in the given order; the number of photos that
+    have no RAW (and were skipped or fell back to the image); and the photos with a
+    file that cannot be reached (deleted since indexing, or on an offline drive)."""
     if content not in CONTENT:
         raise ExportError(f"content must be one of {', '.join(CONTENT)}")
     files: list[_File] = []
     without_raw = 0
+    unreachable: list[int] = []
     for pid in photo_ids:
         p = conn.execute("SELECT source, rel_path FROM photos WHERE id = ?", (pid,)).fetchone()
         if p is None:
@@ -126,9 +129,11 @@ def plan_files(
             try:
                 size = src.stat().st_size
             except OSError:
-                continue  # file vanished since indexing
+                if pid not in unreachable:
+                    unreachable.append(pid)
+                continue
             files.append(_File(pid, kind, src, size, rel_dir))
-    return files, without_raw
+    return files, without_raw, unreachable
 
 
 def timeline_locations(conn: sqlite3.Connection, ids: list[int]) -> dict[int, tuple]:
@@ -288,7 +293,7 @@ def run_export(
     sel = selections_path or cfg.selections_path
     conn = db.connect(cfg.db_path)
     try:
-        files, without_raw = plan_files(conn, photo_ids, content, raw_fallback)
+        files, without_raw, unreachable = plan_files(conn, photo_ids, content, raw_fallback)
         texts: dict[int, tuple[str, list[str]]] = {}
         if captions:
             found = selections.captions_for(conn, sel, photo_ids)
@@ -385,6 +390,7 @@ def run_export(
         "skipped": sum(f.status == "skipped" for f in files),
         "bytes": needed,
         "without_raw": without_raw if content != "images" else 0,
+        "unreachable": len(unreachable),  # not (fully) copied: a file could not be read
         "geotagged": len({f.photo_id for f in files if f.location}),
         "sidecars": sum(f.kind == "sidecar" for f in files),
         "captioned": len({f.photo_id for f in files if f.caption}),
@@ -396,6 +402,8 @@ def run_export(
         f"exported {summary['photos']} photos: {summary['copied']} files copied, "
         f"{summary['skipped']} already there"
         + (f", {summary['without_raw']} without RAW" if summary["without_raw"] else "")
+        + (f"; {summary['unreachable']} not copied: their files cannot be reached (deleted, or on a drive that is not connected)"
+           if summary["unreachable"] else "")
         + (f", location added to {summary['geotagged']}" if summary["geotagged"] else "")
         + (f", captions and tags for {summary['captioned']}" if summary["captioned"] else "")
     )

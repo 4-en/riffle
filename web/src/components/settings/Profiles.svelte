@@ -8,7 +8,7 @@
 
   let newName = $state('');
   let copyCurrent = $state(false);
-  let copyParts = $state({ flags: true, exported: true, tags: true, captions: true });
+  let copyParts = $state({ folders: true, flags: true, exported: true, tags: true, captions: true });
   let renaming = $state(null); // {slug, name}
   let confirmDelete = $state(null); // slug
   let error = $state('');
@@ -59,8 +59,9 @@
 
 <h3 class="text-base font-semibold text-neutral-100">Profiles</h3>
 <p class="mb-3 mt-1 text-xs text-neutral-400">
-  Each profile has its own picks and rejects, export history, your tags, captions, and taste model: one per project, for example.
-  The photos, their index, and the settings are shared. With more than one, a switcher appears in the top bar.
+  Each profile has its own photo folders, picks and rejects, export history, your tags, captions, and taste model: one per
+  project, or one for photographs and one for illustrations. Folders are indexed once and shared, so adding another profile's
+  folder is instant. With more than one profile, a switcher appears in the top bar.
 </p>
 
 <ul class="divide-y divide-neutral-800 rounded border border-neutral-800">
@@ -76,7 +77,7 @@
         <button class="text-neutral-400 hover:underline" onclick={() => (renaming = null)}>Cancel</button>
       {:else}
         <span class="min-w-0 flex-1 truncate {p.active ? 'font-medium text-sky-300' : 'text-neutral-200'}">{p.name}{p.active ? ' · active' : ''}</span>
-        <span class="tabular-nums text-neutral-500">{p.picks} picks · {p.rejects} rejects · {p.tags} tags</span>
+        <span class="tabular-nums text-neutral-500">{p.folders} folder{p.folders === 1 ? '' : 's'} · {p.picks} picks · {p.rejects} rejects · {p.tags} tags</span>
         {#if !p.active}
           <button class="text-sky-400 hover:underline" onclick={() => switchTo(p.slug)}>Switch</button>
         {/if}
@@ -104,9 +105,10 @@
     >
   </div>
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-neutral-400">
-    <label class="flex items-center gap-1"><input type="radio" bind:group={copyCurrent} value={false} /> Start empty</label>
+    <label class="flex items-center gap-1" title="No folders yet: you add them in Photo folders"><input type="radio" bind:group={copyCurrent} value={false} /> Start empty</label>
     <label class="flex items-center gap-1"><input type="radio" bind:group={copyCurrent} value={true} /> Copy from {activeProfile?.name ?? 'the current profile'}:</label>
     {#if copyCurrent}
+      <label class="flex items-center gap-1"><input type="checkbox" bind:checked={copyParts.folders} /> photo folders</label>
       <label class="flex items-center gap-1"><input type="checkbox" bind:checked={copyParts.flags} /> flags</label>
       <label class="flex items-center gap-1"><input type="checkbox" bind:checked={copyParts.exported} /> export history</label>
       <label class="flex items-center gap-1"><input type="checkbox" bind:checked={copyParts.tags} /> your tags</label>

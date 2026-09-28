@@ -62,7 +62,7 @@ venv/bin/riffle paths      # show where config, flags, and derived data live
 
 `riffle` uses port 8000, or a free port if that is taken. Running it again while it runs opens another tab. It stops by itself 30 seconds after the last tab is closed; it never stops in its first minute or during indexing or export. `riffle serve` runs until stopped. Global options: `--config PATH`, `-v` for debug logging.
 
-Open **Settings** (top right, or Ctrl+,) → **Photo folders** to add folders; **Indexing** runs and follows the index. Settings opens by itself on first start. Folders are saved to `sources` in `config.yaml`.
+Open **Settings** (top right, or Ctrl+,) → **Photo folders** to add folders; **Indexing** runs and follows the index. Settings opens by itself on first start. The default profile's folders are saved to `sources` in `config.yaml`; each other profile keeps its own list (see [Profiles](#profiles)).
 
 The folder browser can list any directory the server can read, so keep the server bound to `127.0.0.1` (the default).
 
@@ -168,9 +168,12 @@ Select photos and click **Caption…** in the selection bar (or right-click → 
 
 ## Profiles
 
-A profile is a separate set of your own data: picks and rejects, export history, your tags, and the taste model. Use one per project, e.g. a photo book next to your general culling. The photos, their index, and the settings are shared.
+A profile is a separate set of your own data: its photo folders, picks and rejects, export history, your tags, captions, and the taste model. Use one per project, e.g. a photo book next to your general culling, or one for photographs and one for illustrations. Settings are shared.
 
-- **Settings → Profiles** lists them with their counts. A new profile starts empty, or copies any of flags, export history, and your tags from the current one (e.g. keep your tags but start the picks from scratch).
+- **Folders per profile.** A profile shows only its own folders, and everything that looks at "the library" follows: the grid, search, tag counts, Similar and its map, Discover, Curate's uniqueness, and the taste model. Indexing covers every profile's folders once and they share the index, so adding a folder another profile already has (**Settings → Photo folders → From your other profiles**) is instant.
+- **External drives and network folders:** a folder that cannot be reached (unplugged, not mounted, or an empty mount point) is shown as *offline*. Its photos stay as they are, with their thumbnails, previews and AI data, until it is back; opening or exporting an original then says it cannot be reached. If you deleted or moved the folder instead, **Forget…** next to it in Settings → Photo folders removes it from every profile and drops its photos' data (add the new place as a folder: moved photos are recognised by content and keep their flags and tags).
+- **Removing a folder** from a profile only hides it there. A folder no profile shows keeps its thumbnails and AI data, so adding it back is instant; **Settings → Files → Clean up** deletes that data.
+- **Settings → Profiles** lists them with their counts. A new profile starts empty (no folders yet), or copies any of its photo folders, flags, export history, your tags, and captions from the current one (e.g. keep your tags but start the picks from scratch).
 - Once there is more than one, the top bar shows the active profile with a menu to switch; other open tabs follow.
 - Switching waits until indexing or an export has finished; an export records its history in the profile it started in.
 - Each profile is one SQLite file. The default is `selections.sqlite3`; the others are in `profiles/` next to it. Deleting one moves its file to `profiles/deleted/`.
@@ -262,7 +265,7 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 |---|---|---|
 | `config.yaml`, `vocabulary.yaml` | `~/.config/riffle/` | Created on first run from `src/riffle/defaults/` |
 | `selections.sqlite3` (flags, export history, your tags) | `~/.local/share/riffle/` | Your data: back it up. Other profiles: `profiles/*.sqlite3` next to it |
-| Catalogue, thumbnails, previews, embeddings | `~/.cache/riffle/` | Derived; safe to delete, `riffle index` rebuilds it |
+| Catalogue, thumbnails, previews, embeddings | `~/.cache/riffle/` | Derived; safe to delete, `riffle index` rebuilds it (every profile's folders) |
 | `riffle.log` (downloadable builds only) | `~/.cache/riffle/` | The previous run's log is `riffle.log.1` |
 | CLIP model weights | `~/.cache/huggingface/` | Downloaded once |
 

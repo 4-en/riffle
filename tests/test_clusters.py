@@ -216,7 +216,7 @@ def test_similar_map_api(indexed, conn, monkeypatch):
         m = c.get("/api/similar/map", params={"dupes": "all"}).json()
         assert len(m["points"]) == 4 and all(0 <= x <= 1 and 0 <= y <= 1 for _, x, y, _ in m["points"])
         assert sorted(g["count"] for g in m["groups"]) == [2, 2] and all(g["label"] for g in m["groups"])
-        assert (indexed.embeddings_dir / f"{indexed.model.model_id}.map.npz").exists()  # cached
+        assert list(indexed.embeddings_dir.glob(f"{indexed.model.model_id}.map.*.npz"))  # cached (per profile library)
         where = {pid: (x, y) for pid, x, y, _ in m["points"]}
         narrowed = c.get("/api/similar/map", params={"dupes": "all", "orientation": "portrait"}).json()
         assert 0 < len(narrowed["points"]) < 4

@@ -273,6 +273,12 @@ CREATE TABLE photo_text (             -- v6: text read from the photo (OCR)
   - New profiles start empty or copy chosen tables (flags, exported, custom tags, captions and fixed tags) with `ATTACH` + `INSERT … SELECT`.
   - Switching is refused while indexing or an export runs, and an export records history in the file it started with.
   - Deleted profiles move to `profiles/deleted/`. Curate drafts are keyed per profile.
+- **Folders per profile** (28 Sep 2026; selections v8 `folders` and `profile_settings`): the default profile's folders are `sources` in config.yaml (so `riffle index` and existing setups are unchanged); other profiles keep theirs in their file (a file from before v8 gets the config's folders once, so upgrading changes nothing). New profiles start with none, or copy them (`PARTS["folders"]`).
+  - **The scope** (`library.py`): `Library(folders, roots).sql()` is `status = 'ok'` and `source IN (…)` for folders that are indexed roots, or a path-prefix match (`substr`, not `LIKE`) for a folder inside another profile's. `PhotoFilter.where` starts from it (`resolved_filter` sets `flt.library`), and so do the totals, Discover's tag rarity, and the location counts.
+  - **The embeddings**: `get_index()` returns a `ScopedIndex`, the base index limited to the library's ids, rebuilt when the embeddings, the profile's folders or the catalogue (an index run) change. Everything comparing photos uses it, so clusters, the map (`<model>.map.<library key>.npz`), Discover, uniqueness, your tags and taste are per library. Caches keyed by the id set split per profile by themselves.
+  - **Adding** a folder is instant when it lies within an indexed root; otherwise it starts indexing. Removing starts indexing only when no profile has the folder any more (its photos become `hidden`).
+  - First library, a "Photos" profile with the three photo folders (1,926 of 13,468 images): 83 Similar groups by photographic subject (meadows, the archipelago, birds in flight, old town streets, sheep, ferries…) instead of a mix with 11,000 illustrations; 10–90 ms per request, 2 ms per switch; the 13,468-photo default's first Similar grouping after a switch 1.5 s (its naming, as before).
+  - `tests/test_library_scope.py` checks each endpoint family with two profiles on different folders.
 - Keyed by content hash, so flags survive deleting the cache, re-indexing, moving, and renaming. Exact copies share a flag; editing a file drops it.
 - Unflagged photos have no row. Export history is independent of the flag.
 - Catalogue connections `ATTACH` this file as `sel`, so filters and listings join flags in SQL (`selections.flag_expr`).
@@ -284,12 +290,16 @@ CREATE TABLE photo_text (             -- v6: text read from the photo (OCR)
 
 ### 7.1 Scan
 
-1. Walk the sources, skipping excludes, `._*` files, and the cache folder.
+1. Walk every profile's folders (`profiles.indexed_roots`: nested ones within the outermost, so a file is catalogued once), skipping excludes, `._*` files, and the cache folder.
 2. Record path, size, mtime, and SHA-256.
 3. Read EXIF with Pillow: capture time and offset, make/model, lens, GPS, orientation, focal length (and its 35 mm equivalent), aperture, exposure time, ISO.
 4. Record unreadable files as `status = error` and continue.
 
 When extraction gains fields (`META_VERSION`), unchanged files are re-read header-only; nothing else is recomputed. Capture times are stored as written by the camera.
+
+A folder that cannot be reached is *offline* (28 Sep 2026): missing, or empty although photos are catalogued in it (an unmounted drive's mount point). Its photos are left as they were (visible, with all derived data) and the run reports it ("offline: … photos kept as they were"); they still take part in move detection, so a folder moved elsewhere and added from its new place keeps its ids. Before, an unplugged drive made its photos `missing` and dropped their embeddings. Settings → Photo folders shows it as offline, the photo view says the original is not reachable, and an export reports the photos it could not copy (`unreachable`). **Forget…** (`DELETE /api/sources` with `forget`, `scan.forget_folder`) is for a folder that was deleted or moved: it leaves every profile and its photos become `missing`.
+
+A photo no longer found in a reachable folder becomes `missing` when its folder was walked (the file is gone) or `hidden` when no profile has its folder any more. Hidden photos keep their thumbnails, previews and embeddings; found again with the same size and modification time (a folder added back), they are `ok` at once, without reading the file. Settings → Files → Clean up (`index.remove_missing`) deletes both kinds.
 
 ### 7.2 RAW matching
 
@@ -301,7 +311,7 @@ EXIF orientation applied, converted to 8-bit sRGB (using the embedded ICC profil
 
 ### 7.4 Embeddings
 
-Previews are embedded in batches, L2-normalised, and written as `<model_id>.npy` with an aligned id array. Incremental runs embed new or changed photos only (tracked in `embedded`) and rewrite both files, which takes well under a second at this size.
+Previews are embedded in batches, L2-normalised, and written as `<model_id>.npy` with an aligned id array. Incremental runs embed new or changed photos only (tracked in `embedded`) and rewrite both files, which takes well under a second at this size. Vectors of `hidden` photos are kept (re-embedding the 11,000-image illustration folder of the first library would take a long GPU run); those of deleted files and cleaned-up photos go.
 
 ### 7.5 Tags
 

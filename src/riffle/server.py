@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import db
-from .config import Config, load_config, set_location_history, set_sources
+from .config import Config, load_config, set_location_history
 from .embed import embedding_paths, load_embeddings
 from .filters import (
     FILENAME_EXPR,
@@ -42,6 +42,7 @@ from .filters import (
     photo_filter,
 )
 from . import captioning, selections
+from .library import Library
 from .export import CAPTION_TEXT, CAPTIONS, CONTENT, STRUCTURE, ExportError, check_destination, run_export
 from .jobs import BackgroundJob, index_job
 from .selections import EXPORTED_EXPR, FLAG_EXPR, flag_expr
@@ -85,8 +86,35 @@ class Index:
             self.row = {int(pid): i for i, pid in enumerate(ids)}
 
 
+class ScopedIndex:
+    """The embedding index limited to one library's photos (library.py), with the
+    same interface as Index: ``E``, ``ids``, ``row``, ``stamp``. Everything that
+    compares photos (search, similar, clusters, the map, Discover, uniqueness, your
+    tags, taste) sees only the profile's own photos through it. ``scope`` names the
+    library, for caches kept on disk."""
+
+    def __init__(self, base: Index, ids: list[int], scope: str, version: float | None):
+        rows = [base.row[i] for i in ids if i in base.row]
+        self.cfg, self.lock = base.cfg, base.lock
+        self.E = base.E[rows] if len(rows) else np.zeros((0, base.E.shape[1] if base.E.ndim == 2 else 0), np.float32)
+        self.ids = base.ids[rows] if len(rows) else np.zeros((0,), np.int64)
+        self.row = {int(pid): k for k, pid in enumerate(self.ids)}
+        self.scope = scope
+        # Integers only (some caches store it with numpy): the files', the library's, the last index run's.
+        self.stamp = (*(base.stamp or (0, 0)), int(scope, 16) % (1 << 62), int((version or 0) * 1000))
+
+    def refresh(self) -> None:
+        pass  # get_index() builds a new view when anything changes
+
+
 class FolderIn(BaseModel):
     path: str
+
+
+class FolderRemove(FolderIn):
+    # False: hide it in this profile (its data kept). True: its photos are gone (deleted, or
+    # moved and added from the new place): off every profile, and their data dropped.
+    forget: bool = False
 
 
 class CurateIn(BaseModel):
@@ -320,6 +348,15 @@ def create_app(
     def sel_path():
         return state["selections"]
 
+    # The active profile's library: its folders, within every profile's indexed roots
+    # (library.py). Reloaded when the profile or anyone's folders change.
+    def load_library() -> Library:
+        state["library"] = Library(tuple(profiles.folders(cfg, state["profile"])), tuple(profiles.indexed_roots(cfg)))
+        return state["library"]
+
+    def current_library() -> Library:
+        return state.get("library") or load_library()
+
     taste_store = TasteStore(cfg, sel_path(), state["profile"])
     export_job = BackgroundJob(cfg, run_export)
     caption_job = BackgroundJob(cfg, captioning.run_captioning)
@@ -353,17 +390,16 @@ def create_app(
             time.sleep(3)
             if state["model"] == "loading" or job.running:
                 continue
-            index = state.get("index")
-            if index is None:
+            if state.get("index") is None:
                 continue
             try:
-                index.refresh()
+                index = get_index()  # the active profile's library
                 if index.stamp == warmed or len(index.ids) < WARM_ABOVE:
                     continue
                 conn = db.connect_readonly(cfg.db_path, sel_path())
                 try:
                     for level in clusters.LEVELS:  # the default grid: collapse duplicates, no filters
-                        list_photos(flt=PhotoFilter(), dupes="collapse", collapse="dupes", sort="taken_at",
+                        list_photos(flt=PhotoFilter(library=current_library()), dupes="collapse", collapse="dupes", sort="taken_at",
                                     group="similar", level=level, offset=0, limit=1, conn=conn, index=index)
                     discover_pool(conn, index)
                     uniqueness_scores(conn, index)
@@ -424,10 +460,24 @@ def create_app(
         finally:
             conn.close()
 
-    def get_index() -> Index:
+    scoped_state: dict = {"key": None, "view": None, "lock": threading.Lock()}
+
+    def get_index() -> ScopedIndex:
+        """The embeddings of the active profile's photos (a view, rebuilt when the
+        embeddings, the profile's folders, or the catalogue change)."""
         index: Index = state["index"]
         index.refresh()
-        return index
+        library = current_library()
+        key = (index.stamp, library.key, job.finished_at)
+        with scoped_state["lock"]:
+            if scoped_state["key"] != key:
+                conn = db.connect_readonly(cfg.db_path)
+                try:
+                    ids = library.ids(conn)
+                finally:
+                    conn.close()
+                scoped_state["view"], scoped_state["key"] = ScopedIndex(index, ids, library.key, job.finished_at), key
+            return scoped_state["view"]
 
     # ---- custom tags (example photos; custom_tags.py) ------------------------------
 
@@ -484,7 +534,9 @@ def create_app(
         return out
 
     def resolved_filter(flt: PhotoFilter = Depends(photo_filter), conn=Depends(get_conn), index: Index = Depends(get_index)) -> PhotoFilter:
-        """The query-string filter with custom tags resolved to their members."""
+        """The query-string filter within the profile's library, with custom tags
+        resolved to their members."""
+        flt.library = current_library()
         if flt.ctags or flt.exclude_ctags:
             members = custom_tag_members(conn, index)
             flt.ctag_members = [members.get(t, []) for t in flt.ctags]
@@ -705,7 +757,7 @@ def create_app(
         """ "/photos/Sweden/" + "day 1/" -> "Sweden / day 1" (the source folder's name, then the subfolders)."""
         if not key:
             return "Unknown folder"
-        for s in sorted(cfg.sources, key=lambda p: -len(str(p))):
+        for s in sorted({*current_library().folders, *current_library().roots}, key=lambda p: -len(str(p))):
             prefix = f"{s}/"
             if key.startswith(prefix):
                 rest = key[len(prefix):].strip("/")
@@ -789,7 +841,8 @@ def create_app(
         with map_state["lock"]:
             if map_state["stamp"] == index.stamp:
                 return map_state["xy"]
-            path = cfg.embeddings_dir / f"{model_id}.map.npz"
+            # One file per profile library (switching back and forth keeps both).
+            path = cfg.embeddings_dir / f"{model_id}.map.{getattr(index, 'scope', 'all')}.npz"
             stamp = np.array(index.stamp or (0, 0), dtype=np.int64)
             xy = None
             try:
@@ -1004,8 +1057,9 @@ def create_app(
         fixed tags before learned tags."""
         n = len(pool.ids)
         per: dict[int, dict[str, list[str]]] = {}
+        lib, lib_params = current_library().sql("p")
         for pid, tag in conn.execute(
-            "SELECT p.id, t.tag FROM sel.fixed_tags t JOIN photos p ON p.sha256 = t.sha256 WHERE p.status = 'ok'"
+            f"SELECT p.id, t.tag FROM sel.fixed_tags t JOIN photos p ON p.sha256 = t.sha256 WHERE {lib}", lib_params
         ):
             per.setdefault(pid, {}).setdefault("fixed", []).append(tag)
         ctags = custom_tag_list(conn)
@@ -1291,6 +1345,7 @@ def create_app(
         photo["path"] = str(Path(r["source"]) / r["rel_path"])
         photo["thumb"] = f"/thumbs/{photo_id}.jpg"
         photo["preview"] = f"/previews/{photo_id}.jpg"
+        photo["offline"] = not Path(photo["path"]).exists()  # its drive unplugged, say: shown from the cache
         photo["tags"] = [
             dict(t)
             for t in conn.execute(
@@ -1441,16 +1496,18 @@ def create_app(
                 )
         for items in families.values():
             items.sort(key=lambda t: -t["count"])
-        photos = conn.execute("SELECT COUNT(*) FROM photos WHERE status = 'ok'").fetchone()[0]
+        # Totals over the profile's library (not the filters).
+        lib, lib_params = current_library().sql("p")
+        photos = conn.execute(f"SELECT COUNT(*) FROM photos p WHERE {lib}", lib_params).fetchone()[0]
         unmatched = conn.execute("SELECT COUNT(*) FROM raws WHERE photo_id IS NULL").fetchone()[0]
         flag_counts = dict(
             conn.execute(
-                f"SELECT {FLAG_EXPR}, COUNT(*) FROM photos p WHERE p.status = 'ok' GROUP BY 1"
+                f"SELECT {FLAG_EXPR}, COUNT(*) FROM photos p WHERE {lib} GROUP BY 1", lib_params
             ).fetchall()
         )
         picks, rejects = flag_counts.get("pick", 0), flag_counts.get("reject", 0)
         exported = conn.execute(
-            f"SELECT COUNT(*) FROM photos p WHERE p.status = 'ok' AND {EXPORTED_EXPR}"
+            f"SELECT COUNT(*) FROM photos p WHERE {lib} AND {EXPORTED_EXPR}", lib_params
         ).fetchone()[0]
         ctags = custom_tag_list(conn)
         members = custom_tag_members(conn, index, ctags)
@@ -1504,7 +1561,7 @@ def create_app(
         ISO, orientation, GPS, folder) within the other active filters."""
         out = facets(conn, flt, model_id)
         # Folders labelled like the folder groups, by photo folder in the Library's order.
-        order = {f"{src}/": k for k, src in enumerate(cfg.sources)}
+        order = {f"{src}/": k for k, src in enumerate(current_library().folders)}
 
         def rank(key: str) -> tuple:
             source = max((s for s in order if key.startswith(s)), key=len, default=None)
@@ -2023,6 +2080,7 @@ def create_app(
             slug = profiles.create(cfg, body.name, body.copy_from, set(body.parts) if body.parts is not None else None)
         except profiles.ProfileError as e:
             raise profile_error(e)
+        load_library()  # (the indexed roots)
         return {"slug": slug}
 
     @app.post("/api/profiles/{slug}/activate", dependencies=[Depends(require_json)])
@@ -2036,6 +2094,7 @@ def create_app(
             raise profile_error(e)
         selections.ensure(path)
         state["profile"], state["selections"] = slug, path
+        load_library()
         state["profile_version"] += 1
         ctag_cache.clear()
         taste_store.use(path, slug)
@@ -2056,6 +2115,7 @@ def create_app(
             moved = profiles.delete(cfg, slug)
         except profiles.ProfileError as e:
             raise profile_error(e)
+        load_library()  # its folders may no longer be indexed by anyone (the next index run marks them)
         return {"deleted": slug, "moved_to": str(moved)}
 
     @app.get("/api/styles")
@@ -2139,10 +2199,10 @@ def create_app(
             raise HTTPException(400, "use an absolute destination path")
         folder = (folder / name if name else folder).resolve()
         try:
-            check_destination(cfg, folder)
+            check_destination(cfg, folder, profiles.indexed_roots(cfg))
         except ExportError as e:
             raise HTTPException(400, str(e))
-        scope = flt if body.scope == "filtered" else PhotoFilter()
+        scope = flt if body.scope == "filtered" else PhotoFilter(library=current_library())
         where, params = scope.where(model_id)
         if body.photo_ids is not None:
             wanted = list(dict.fromkeys(body.photo_ids))
@@ -2282,19 +2342,47 @@ def create_app(
             **model_status(),
         }
 
+    def folder_counts(conn, paths, roots) -> dict[Path, int]:
+        """Photos per folder (as a profile would see it)."""
+        out = {}
+        for f in paths:
+            where, params = Library((f,), tuple(roots)).sql("p")
+            out[f] = conn.execute(f"SELECT COUNT(*) FROM photos p WHERE {where}", params).fetchone()[0]
+        return out
+
+    def folder_online(path: Path) -> bool:
+        """Reachable and not empty (an unmounted drive's mount point is an empty folder)."""
+        try:
+            with os.scandir(path) as it:
+                return next(it, None) is not None
+        except OSError:
+            return False
+
+    def folder_entry(f: Path, photos: int) -> dict:
+        online = folder_online(f)
+        # Offline: unreachable, with photos catalogued in it (kept as they were until it is back).
+        return {"path": str(f), "exists": online or f.is_dir(), "photos": photos, "offline": bool(photos) and not online}
+
+    def folders_editable() -> bool:
+        """The default profile's folders are the config file's ``sources``."""
+        return state["profile"] != profiles.DEFAULT or cfg.path is not None
+
     @app.get("/api/sources")
     def list_sources(conn=Depends(get_conn)):
-        counts = dict(
-            conn.execute(
-                "SELECT source, COUNT(*) FROM photos WHERE status = 'ok' GROUP BY source"
-            ).fetchall()
-        )
+        """This profile's folders; the other profiles' folders it could add at once
+        (already indexed); and how many photos are in no profile's folders any more."""
+        library = current_library()
+        everyone = profiles.all_folders(cfg)
+        names = {p["slug"]: p["name"] for p in profiles.list_profiles(cfg)}
+        mine = list(library.folders)
+        others = [f for f in everyone if f not in mine and not any(f == m or f.is_relative_to(m) for m in mine)]
+        counts = folder_counts(conn, mine + others, library.roots)
         return {
-            "sources": [
-                {"path": str(s), "exists": s.is_dir(), "photos": counts.get(str(s), 0)}
-                for s in cfg.sources
-            ],
-            "editable": cfg.path is not None,
+            "sources": [folder_entry(f, counts[f]) for f in mine],
+            "others": [folder_entry(f, counts[f]) | {"profiles": [names.get(s, s) for s in everyone[f]]} for f in others],
+            # Clean up would remove these: in no profile's folders, or their files are gone.
+            "missing": conn.execute("SELECT COUNT(*) FROM photos WHERE status IN ('missing', 'hidden')").fetchone()[0],
+            "editable": folders_editable(),
             "config": str(cfg.path) if cfg.path else None,
             "selections": str(sel_path()),
             "data_dir": str(cfg.data_dir),
@@ -2302,32 +2390,75 @@ def create_app(
 
     @app.post("/api/sources", dependencies=[Depends(require_json)])
     def add_source(body: FolderIn):
-        if cfg.path is None:
+        """Add a folder to the active profile. Instant when it is indexed already (another
+        profile has it, or a folder around it); otherwise indexing starts."""
+        if not folders_editable():
             raise HTTPException(409, "config was not loaded from a file")
         path = folder_path(body.path)
         if not path.is_dir():
             raise HTTPException(400, f"not a folder: {path}")
         if path == cfg.data_dir or path.is_relative_to(cfg.data_dir):
             raise HTTPException(400, "that is Riffle's own data folder")
-        for s in cfg.sources:
-            if path == s or path.is_relative_to(s):
-                raise HTTPException(409, f"already included in {s}")
-        # A parent of existing sources replaces them; their photos keep their ids (moves by hash).
-        sources = [s for s in cfg.sources if not s.is_relative_to(path)] + [path]
-        set_sources(cfg, sources)
-        job.start()
-        return {"ok": True, "path": str(path)}
+        library = current_library()
+        try:
+            new = profiles.with_folder(list(library.folders), path)
+        except profiles.ProfileError as e:
+            raise HTTPException(409, str(e))
+        indexed = any(path == r or path.is_relative_to(r) for r in library.roots)
+        profiles.set_folders(cfg, state["profile"], new)
+        load_library()
+        if not indexed:
+            job.start()
+        return {"ok": True, "path": str(path), "indexing": not indexed}
 
     @app.delete("/api/sources", dependencies=[Depends(require_json)])
-    def remove_source(body: FolderIn):
-        if cfg.path is None:
+    def remove_source(body: FolderRemove):
+        """Remove a folder from the active profile. Its indexed data stays: other profiles
+        may show it, and added again it is back at once. With ``forget`` (the folder was
+        deleted or moved), it leaves every profile and its photos' data is dropped."""
+        if not folders_editable():
             raise HTTPException(409, "config was not loaded from a file")
         path = folder_path(body.path)
-        if path not in cfg.sources:
-            raise HTTPException(404, "not a configured folder")
-        set_sources(cfg, [s for s in cfg.sources if s != path])
-        job.start()  # marks its photos missing
+        library = current_library()
+        if path not in library.folders:
+            raise HTTPException(404, "not a folder of this profile")
+        if body.forget:
+            if job.running:
+                raise HTTPException(409, "wait until indexing has finished")
+            for slug, folders in ((s, profiles.folders(cfg, s)) for s in profiles.slugs(cfg)):
+                if path in folders and (slug != profiles.DEFAULT or cfg.path is not None):
+                    profiles.set_folders(cfg, slug, [f for f in folders if f != path])
+            from .scan import forget_folder
+
+            conn = db.connect(cfg.db_path)
+            try:
+                gone = forget_folder(conn, path)
+            finally:
+                conn.close()
+            load_library()
+            job.start()  # drops their embeddings
+            return {"ok": True, "forgotten": gone}
+        profiles.set_folders(cfg, state["profile"], [f for f in library.folders if f != path])
+        after = load_library()
+        if not any(path == r or path.is_relative_to(r) for r in after.roots):
+            job.start()  # no profile shows it now: its photos become 'hidden' (their data is kept)
         return {"ok": True}
+
+    @app.post("/api/cleanup", dependencies=[Depends(require_json)])
+    def cleanup():
+        """Delete the indexed data of photos that are in no profile's folders."""
+        if job.running:
+            raise HTTPException(409, "wait until indexing has finished")
+        from .index import remove_missing
+
+        conn = db.connect(cfg.db_path)
+        try:
+            removed = remove_missing(conn, cfg)
+        finally:
+            conn.close()
+        if removed:
+            job.start()  # drops their embeddings
+        return {"removed": removed}
 
     # ---- location history ------------------------------------------------------
 
@@ -2346,8 +2477,11 @@ def create_app(
                 except (HistoryError, OSError) as e:
                     entry["error"] = str(e)
             files.append(entry)
-        placed = dict(conn.execute("SELECT source, COUNT(*) FROM photo_locations GROUP BY source").fetchall())
-        photos = conn.execute("SELECT COUNT(*) FROM photos WHERE status = 'ok'").fetchone()[0]
+        lib, lib_params = current_library().sql("p")
+        placed = dict(conn.execute(
+            f"SELECT l.source, COUNT(*) FROM photo_locations l JOIN photos p ON p.id = l.photo_id WHERE {lib} GROUP BY l.source", lib_params
+        ).fetchall())
+        photos = conn.execute(f"SELECT COUNT(*) FROM photos p WHERE {lib}", lib_params).fetchone()[0]
         return {"files": files, "placed": placed, "photos": photos, "editable": cfg.path is not None}
 
     @app.post("/api/location-history", dependencies=[Depends(require_json)])
@@ -2405,14 +2539,17 @@ def create_app(
                         listed.append({"name": e.name, "path": str(Path(e.path)), "size": e.stat().st_size})
             except OSError:
                 continue
-        within = next((str(s) for s in cfg.sources if p == s or p.is_relative_to(s)), None)
+        library = current_library()
+        within = next((str(s) for s in library.folders if p == s or p.is_relative_to(s)), None)
+        indexed = next((str(s) for s in library.roots if p == s or p.is_relative_to(s)), None)
         return {
             "path": str(p),
             "parent": str(p.parent) if p.parent != p else None,
             "dirs": dirs,
             "images": images,
             "files": listed,
-            "source": within,
+            "source": within,  # in this profile (this folder, or one around it)
+            "indexed": indexed,  # indexed for some profile: adding it is instant
         }
 
     @app.get("/api/index")

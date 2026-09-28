@@ -27,8 +27,8 @@ def make_library(cfg, n_scenes=120, keeper_share=0.3, signal=True, seed=0):
         members = []
         for k in range(size):
             cur = conn.execute(
-                "INSERT INTO photos (rel_path, source, sha256, status) VALUES (?, 'src', ?, 'ok')",
-                (f"lib{seed}/s{s}_{k}.jpg", f"sha{seed}_{s}_{k}"),
+                "INSERT INTO photos (rel_path, source, sha256, status) VALUES (?, ?, ?, 'ok')",
+                (f"lib{seed}/s{s}_{k}.jpg", str(cfg.sources[0]), f"sha{seed}_{s}_{k}"),  # in the library's folder
             )
             members.append(cur.lastrowid)
             v = base + 0.05 * rng.normal(size=DIM)

@@ -192,7 +192,7 @@
         {:else if page === 'flags'}
           <Flags {tags} {facets} {onchange} {onerror} />
         {:else if page === 'files'}
-          <Files {sources} />
+          <Files {sources} {busy} {act} />
         {/if}
       </div>
     </div>

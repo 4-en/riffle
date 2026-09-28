@@ -1,11 +1,16 @@
-"""Profiles: switchable sets of personal data (flags, export history, custom tags).
+"""Profiles: switchable sets of personal data (flags, export history, custom tags)
+and their own photo folders.
 
 A profile is one selections database (selections.py). The default profile is the
 usual file (``cfg.selections_path``); others live next to it in ``profiles/``,
 each naming itself in its ``profile`` table. The active one is remembered per
-machine in ``active_profile`` beside them (absent: the default). Everything else
-(catalogue, embeddings, settings) is shared, so profiles suit separate projects on
-one library.
+machine in ``active_profile`` beside them (absent: the default).
+
+Each profile shows only its own folders (``folders``): the default profile's are
+``sources`` in config.yaml, the others' are in their file. Indexing covers every
+profile's folders (``indexed_roots``) into one shared catalogue with one set of
+thumbnails and embeddings, so a folder another profile already has is added
+instantly. Settings and the location history are shared too.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ import time
 from pathlib import Path
 
 from . import selections
-from .config import Config
+from .config import Config, set_sources
 
 DEFAULT = "default"
 PARTS = {
@@ -24,6 +29,7 @@ PARTS = {
     "exported": ["exported"],
     "tags": ["custom_tags", "custom_tag_examples", "custom_tag_negatives"],
     "captions": ["captions", "fixed_tags", "photo_text"],
+    "folders": [],  # not a table copy: see create()
 }
 
 
@@ -84,19 +90,28 @@ def _counts(path: Path) -> dict:
             "rejects": q("SELECT COUNT(*) FROM flags WHERE flag = 'reject'"),
             "exported": q("SELECT COUNT(*) FROM exported"),
             "tags": q("SELECT COUNT(*) FROM custom_tags"),
+            "folders": q("SELECT COUNT(*) FROM folders"),
         }
     finally:
         conn.close()
 
 
+def slugs(cfg: Config) -> list[str]:
+    """Every profile's slug, the default first."""
+    others = sorted(p.stem for p in profiles_dir(cfg).glob("*.sqlite3")) if profiles_dir(cfg).is_dir() else []
+    return [DEFAULT, *others]
+
+
 def list_profiles(cfg: Config) -> list[dict]:
     """The default profile first, then the others by name."""
     active = active_slug(cfg)
-    slugs = [p.stem for p in profiles_dir(cfg).glob("*.sqlite3")] if profiles_dir(cfg).is_dir() else []
     out = []
-    for slug in [DEFAULT, *slugs]:
+    for slug in slugs(cfg):
         path = path_for(cfg, slug)
-        out.append({"slug": slug, "name": _name(path, slug), "path": str(path), "active": slug == active, **_counts(path)})
+        counts = _counts(path)
+        if slug == DEFAULT:
+            counts["folders"] = len(cfg.sources)
+        out.append({"slug": slug, "name": _name(path, slug), "path": str(path), "active": slug == active, **counts})
     return [out[0], *sorted(out[1:], key=lambda p: p["name"].casefold())]
 
 
@@ -135,6 +150,10 @@ def create(cfg: Config, name: str, copy_from: str | None = None, parts: set[str]
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = selections.connect(path)
     try:
+        # Its folders: none (added later in Settings), or the copied profile's.
+        start = folders(cfg, copy_from) if copy_from is not None and "folders" in parts else []
+        with conn:
+            _write_folders(conn, start)
         if copy_from is not None and parts:
             selections.ensure(path_for(cfg, copy_from))  # an older file gains the newer tables first
             conn.execute("ATTACH DATABASE ? AS src", (str(path_for(cfg, copy_from)),))
@@ -189,3 +208,75 @@ def switch(cfg: Config, slug: str) -> Path:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(slug + "\n", encoding="utf-8")
     return path_for(cfg, slug)
+
+
+# ---- photo folders ----------------------------------------------------------------
+
+
+def _write_folders(conn: sqlite3.Connection, paths: list[Path]) -> None:
+    now = time.time()
+    conn.execute("DELETE FROM folders")
+    conn.executemany("INSERT OR IGNORE INTO folders (path, added_at) VALUES (?, ?)", [(str(p), now + k * 1e-6) for k, p in enumerate(paths)])
+    conn.execute("INSERT OR REPLACE INTO profile_settings (key, value) VALUES ('folders', '1')")
+
+
+def folders(cfg: Config, slug: str) -> list[Path]:
+    """A profile's photo folders, in the order they were added. A profile from before
+    folders were per profile shows the config's folders (what it showed then)."""
+    if slug == DEFAULT:
+        return list(cfg.sources)
+    conn = selections.connect(path_for(cfg, slug))
+    try:
+        if conn.execute("SELECT 1 FROM profile_settings WHERE key = 'folders'").fetchone() is None:
+            with conn:
+                _write_folders(conn, list(cfg.sources))
+        return [Path(r[0]) for r in conn.execute("SELECT path FROM folders ORDER BY added_at, path")]
+    finally:
+        conn.close()
+
+
+def set_folders(cfg: Config, slug: str, paths: list[Path]) -> None:
+    """Replace a profile's folders (the default profile's: ``sources`` in config.yaml)."""
+    if slug == DEFAULT:
+        set_sources(cfg, paths)
+        return
+    conn = selections.connect(path_for(cfg, slug))
+    try:
+        with conn:
+            _write_folders(conn, paths)
+    finally:
+        conn.close()
+
+
+def with_folder(current: list[Path], path: Path) -> list[Path]:
+    """``current`` with ``path`` added: a folder inside one already there is refused
+    (ProfileError); folders inside the new one are replaced by it (their photos keep
+    their ids, moved by content hash)."""
+    for s in current:
+        if path == s or path.is_relative_to(s):
+            raise ProfileError(f"already included in {s}")
+    return [s for s in current if not s.is_relative_to(path)] + [path]
+
+
+def outermost(paths) -> list[Path]:
+    """These folders without the ones inside another of them (sorted)."""
+    out: list[Path] = []
+    for p in sorted(set(paths), key=lambda p: (len(p.parts), str(p))):
+        if not any(p == q or p.is_relative_to(q) for q in out):
+            out.append(p)
+    return sorted(out, key=str)
+
+
+def all_folders(cfg: Config) -> dict[Path, list[str]]:
+    """Every profile's folders: {folder: [slugs that have it]}."""
+    out: dict[Path, list[str]] = {}
+    for slug in slugs(cfg):
+        for p in folders(cfg, slug):
+            out.setdefault(p, []).append(slug)
+    return out
+
+
+def indexed_roots(cfg: Config) -> list[Path]:
+    """The folders indexing walks: every profile's, nested ones within the outermost
+    (so each file is catalogued once, under one root)."""
+    return outermost(all_folders(cfg))
