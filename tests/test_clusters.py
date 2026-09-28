@@ -281,3 +281,19 @@ def test_fixed_tags_name_a_cluster_in_the_api(indexed, conn, monkeypatch):
         c.post("/api/captions", json={"items": [{"id": i, "tags": ["Midsummer"]} for i in pair]})
         after = c.get("/api/groups", params={"group": "similar", "dupes": "all"}).json()["groups"]  # not the cached names
         assert "Midsummer" in [g["label"] for g in after]
+
+
+def test_clusters_are_cached_on_disk(indexed, conn, monkeypatch):
+    monkeypatch.setattr(clusters, "MIN_SIZE", 2)
+    vectors = {"IMG_0001.jpg": at(0, 0.05), "IMG_0003.png": at(0, 0.10), "IMG_0002.jpg": at(4, 0.05), "IMG_0002_edit.png": at(4, 0.10)}
+    E, ids = load_embeddings(indexed)
+    by_id = {photo(conn, n)["id"]: v for n, v in vectors.items()}
+    save_embeddings(indexed, np.stack([by_id[int(i)] for i in ids]), ids)
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:
+        first = c.get("/api/groups", params={"group": "similar", "dupes": "all"}).json()["groups"]
+    assert list((indexed.embeddings_dir / "clusters").glob("*.npy"))
+    # A restart (a new app, nothing in memory) reads them instead of clustering again.
+    monkeypatch.setattr(clusters, "cluster", lambda *a, **k: (_ for _ in ()).throw(AssertionError("clustered again")))
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:
+        again = c.get("/api/groups", params={"group": "similar", "dupes": "all"}).json()["groups"]
+    assert [(g["key"], g["count"]) for g in again] == [(g["key"], g["count"]) for g in first]

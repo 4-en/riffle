@@ -10,12 +10,13 @@
   import { untrack } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import { view } from '../lib/state.svelte.js';
-  import { fetchDiscover } from '../lib/api.js';
+  import { fetchDiscover, fetchDiscoverStart } from '../lib/api.js';
   import { selection, setFlag, undo } from '../lib/culling.svelte.js';
 
   const newSeed = () => Math.floor(Math.random() * 2 ** 31);
+  // Opened on a photo, or (from the top bar) without one: then a start is picked first.
   const start = untrack(() => view.discover.id);
-  let trail = $state([{ id: start, lens: null, seed: newSeed() }]); // the walk; the last one is the centre
+  let trail = $state(start != null ? [{ id: start, lens: null, seed: newSeed() }] : []); // the walk; the last one is the centre
   let prefs = $state({}); // lens -> times chosen
   let drift = $state({}); // phrase -> weight (from the server)
   let scoped = $state(false); // only photos within the current filters
@@ -27,10 +28,11 @@
   let height = $state(800);
   let token = 0;
 
-  const centre = $derived(trail.at(-1).id);
+  const centre = $derived(trail.at(-1)?.id ?? null);
   const previous = $derived(trail.length > 1 ? trail.at(-2) : null);
 
   async function load(cameFrom = null) {
+    if (centre == null) return;
     const mine = ++token;
     loading = true;
     try {
@@ -55,7 +57,14 @@
       if (mine === token) loading = false;
     }
   }
-  load();
+  if (start != null) load();
+  else
+    fetchDiscoverStart(view)
+      .then(({ id }) => {
+        trail = [{ id, lens: null, seed: newSeed() }];
+        load();
+      })
+      .catch((e) => (error = e.message));
 
   /** Step to a photo of a branch; the trail remembers how you got there (for Replay). */
   function go(photo, branch) {
@@ -373,6 +382,7 @@
   }
   $effect(() => {
     const id = backdrop;
+    if (id == null) return;
     findGlows(id).then((g) => {
       if (backdrop === id) glows = g;
     });
@@ -442,6 +452,7 @@
 
   <div class="relative min-h-0 flex-1 overflow-hidden bg-neutral-950" bind:clientWidth={width} bind:clientHeight={height}>
     {#key backdrop}
+      {#if backdrop != null}
       <div class="pointer-events-none absolute inset-0 overflow-hidden" transition:fade={{ duration: 1500 }}>
         <div
           class="backdrop absolute -inset-16 bg-cover bg-center"
@@ -457,6 +468,7 @@
           ></div>
         {/each}
       </div>
+    {/if}
     {/key}
     {#if data}
       {#key `${centre}:${trail.at(-1).seed}`}
@@ -561,7 +573,11 @@
         </svg>
       {/key}
     {:else if !error}
-      <p class="p-6 text-sm text-neutral-500">Finding paths… (the first time takes a few seconds)</p>
+      <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-neutral-400">
+        <div class="h-8 w-8 animate-spin rounded-full border-2 border-neutral-700 border-t-sky-400"></div>
+        <p>{centre == null ? 'Finding a photo to start from…' : 'Finding paths…'}</p>
+        <p class="text-xs text-neutral-600">The first time after a start can take a few seconds with a large library.</p>
+      </div>
     {/if}
 
     <!-- The trail -->

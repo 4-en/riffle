@@ -19,25 +19,29 @@ log = logging.getLogger(__name__)
 
 
 def compute_phashes(conn: sqlite3.Connection, cfg: Config, progress=None) -> int:
-    """pHash (for duplicates), sharpness and exposure clipping (for culling), and
-    colour and light (for Curate) of each preview that lacks them. Only what is
-    missing is computed, so adding a measure does not redo the others."""
+    """pHash (for duplicates), sharpness and exposure clipping (for culling), colour
+    and light (for Curate), and the layout fingerprint (for Discover) of each preview
+    that lacks them. Only what is missing is computed, so adding a measure does not
+    redo the others."""
+    from .discover import layout_of
+
     rows = conn.execute(
         """SELECT id, phash IS NULL OR sharpness IS NULL OR clip_highlights IS NULL AS basic,
-                  brightness IS NULL AS color
+                  brightness IS NULL AS color, layout IS NULL AS lay
            FROM photos WHERE status = 'ok'
-           AND (phash IS NULL OR sharpness IS NULL OR clip_highlights IS NULL OR brightness IS NULL)
+           AND (phash IS NULL OR sharpness IS NULL OR clip_highlights IS NULL OR brightness IS NULL OR layout IS NULL)
            ORDER BY id"""
     ).fetchall()
     def measure(r):
         """The missing measures of one preview (None if it has no preview)."""
         path = cfg.previews_dir / f"{r['id']}.jpg"
         if not path.exists():
-            return r, None, None
+            return r, None, None, None
         with Image.open(path) as im:
             basic = (str(imagehash.phash(im)), sharpness(im), *clipping(im)) if r["basic"] else None
             color = color_stats(im) if r["color"] else None
-        return r, basic, color
+            lay = layout_of(im).astype(np.float32).tobytes() if r["lay"] else None
+        return r, basic, color, lay
 
     # Threads: decoding and most of the measuring release the GIL (4 threads ran
     # about 3x faster than one on the first library; more added little).
@@ -46,8 +50,8 @@ def compute_phashes(conn: sqlite3.Connection, cfg: Config, progress=None) -> int
         results = pool.map(measure, rows)
         if progress and rows:
             results = progress(results, total=len(rows), desc="phash")
-        for r, basic, color in results:
-            if basic is None and color is None:
+        for r, basic, color, lay in results:
+            if basic is None and color is None and lay is None:
                 continue
             if basic:
                 conn.execute(
@@ -59,6 +63,8 @@ def compute_phashes(conn: sqlite3.Connection, cfg: Config, progress=None) -> int
                     "UPDATE photos SET brightness = ?, contrast = ?, colorfulness = ?, hues = ? WHERE id = ?",
                     (*color, r["id"]),
                 )
+            if lay:
+                conn.execute("UPDATE photos SET layout = ? WHERE id = ?", (lay, r["id"]))
             n += 1
     conn.commit()
     return n

@@ -672,6 +672,15 @@ A short qualitative note:
 - Timing: full index and search latency.
 - Is a multilingual CLIP model worth adding for Chinese queries and signage?
 
+### Large libraries: first use of Similar and Discover (28 Sep 2026)
+
+With 12,000 photos (the user added 10k for testing) the first Similar grouping or Discover after a start took seconds. Measured on synthetic data of that size: clustering 4.5 s per level (the sampled path: average linkage on 6,000); Discover's library axes 5.8 s (they need the fine clustering); phrase profiles and named axes 0.2 s together; the layout fingerprints one thumbnail read per photo, all of them again whenever the embeddings changed.
+- **Fingerprints in indexing:** computed with the colours in `dupes.compute_phashes` (the preview is open anyway) and stored per photo (catalogue v8, `layout`), so new photos only add their own; photos indexed before fall back to the thumbnails (cached on disk).
+- **Clusters on disk:** `cached_cluster` keys `clusters.cluster` by the exact set of photos, the level, and the clustering settings (so tweaking them recomputes), in `<embeddings>/clusters/` (the 24 newest kept). Discover's axes reuse the fine clustering. After a restart, the first request reads them.
+- **Warming:** a background thread, whenever the embeddings change (at start, after an indexing run) and the library has 1,000 photos or more, builds the unfiltered library's clusters at every level and Discover's lens data, after the AI model has loaded.
+- **Indicators:** Discover opens at once (the start photo is picked inside it, "Finding a photo to start from…" with a spinner); the grid says "Grouping the photos by similarity…" while that runs.
+- On the first library (2,340 photos) a restart took the first Similar requests from 0.6–1.1 s to 0.1–0.8 s and the Discover start from 1.1 to 0.6 s; the rest is naming the clusters, not cached. At 12,000 the clustering (4.5 s per level) is the part now read from disk.
+
 ### 14.1 Experiment: penultimate-layer features for similarity (27 Sep 2026)
 
 Question: would image features from deeper inside CLIP serve "find similar" and your tags (§10) better than the final, text-aligned embedding? Compared on the first library (2,132 photos, ViT-L-14 DFN-2B, previews), each variant also mean-centred:

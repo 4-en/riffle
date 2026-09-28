@@ -326,10 +326,46 @@ def create_app(
         state["index"] = Index(cfg)
         if state["encoder"] is None:
             threading.Thread(target=load_encoder, name="riffle-model", daemon=True).start()
+        threading.Thread(target=warm_caches, name="riffle-warm", daemon=True).start()
         watchdog = asyncio.create_task(watch_clients()) if auto_exit else None
         yield
         if watchdog:
             watchdog.cancel()
+
+    WARM_ABOVE = 1000  # photos: below this, first use is quick enough without warming
+
+    def warm_caches() -> None:
+        """In the background: whenever the library's embeddings change (at start, after
+        an indexing run), build what the Similar grouping and Discover need first
+        (the unfiltered library's clusters at every level, Discover's lens data), so
+        the first click does not wait. Waits for the AI model (the names need it)."""
+        from . import clusters
+
+        warmed = None
+        while not state.get("stopping"):
+            time.sleep(3)
+            if state["model"] == "loading" or job.running:
+                continue
+            index = state.get("index")
+            if index is None:
+                continue
+            try:
+                index.refresh()
+                if index.stamp == warmed or len(index.ids) < WARM_ABOVE:
+                    continue
+                conn = db.connect_readonly(cfg.db_path, sel_path())
+                try:
+                    for level in clusters.LEVELS:  # the default grid: collapse duplicates, no filters
+                        list_photos(flt=PhotoFilter(), dupes="collapse", collapse="dupes", sort="taken_at",
+                                    group="similar", level=level, offset=0, limit=1, conn=conn, index=index)
+                    discover_pool(conn, index)
+                finally:
+                    conn.close()
+                warmed = index.stamp
+                log.info("warmed the Similar grouping and Discover for %d photos", len(index.ids))
+            except Exception:  # noqa: BLE001 - warming is an optimisation; first use computes it anyway
+                log.exception("warming the caches failed")
+                warmed = index.stamp
 
     def load_encoder() -> None:
         try:
@@ -752,16 +788,64 @@ def create_app(
     layout_state: dict = {"stamp": None, "matrix": None, "lock": threading.Lock()}
 
     def layout_matrix(index: Index) -> tuple[np.ndarray, dict[int, int]]:
-        """Layout fingerprints of all embedded photos (rows as ``index.row``), cached
-        on disk and in memory until the embeddings change (Discover's shape echo)."""
+        """Layout fingerprints of all embedded photos (rows as ``index.row``): from the
+        catalogue (indexing computes them with the colours); photos indexed before that
+        get theirs from the thumbnails, cached on disk until the embeddings change."""
         from . import discover
 
         with layout_state["lock"]:
             if layout_state["stamp"] != index.stamp:
-                path = cfg.embeddings_dir / f"{model_id}.layout.npz"
-                layout_state["matrix"] = discover.load_layouts(path, cfg.thumbs_dir, index.ids, index.stamp)
-                layout_state["stamp"] = index.stamp
+                conn = db.connect_readonly(cfg.db_path)
+                try:
+                    stored = {r[0]: r[1] for r in conn.execute("SELECT id, layout FROM photos WHERE layout IS NOT NULL")}
+                finally:
+                    conn.close()
+                L = np.zeros((len(index.ids), discover.GRID * discover.GRID), np.float32)
+                missing = []
+                for k, pid in enumerate(index.ids.tolist()):
+                    blob = stored.get(pid)
+                    if blob is not None and len(blob) == L.shape[1] * 4:
+                        L[k] = np.frombuffer(blob, dtype=np.float32)
+                    else:
+                        missing.append(k)
+                if missing:
+                    path = cfg.embeddings_dir / f"{model_id}.layout.npz"
+                    L[missing] = discover.load_layouts(path, cfg.thumbs_dir, index.ids[missing], index.stamp)
+                layout_state["matrix"], layout_state["stamp"] = L, index.stamp
             return layout_state["matrix"], index.row
+
+    cluster_files: dict = {"lock": threading.Lock()}
+
+    def cached_cluster(ids: np.ndarray, E: np.ndarray, level: str) -> np.ndarray:
+        """clusters.cluster, cached on disk by the exact set of photos, the level, and
+        the clustering settings: a restart (or the same view again) does not redo it
+        (about 4.5 s at 12,000 photos)."""
+        import hashlib
+
+        from . import clusters
+
+        settings = repr((clusters.LEVELS, clusters.MIN_SIZE, clusters.MAX_SHARE, clusters.MIN_CAP,
+                         clusters.SPLIT_STEP, clusters.MIN_CUT, clusters.MAX_DIRECT))
+        key = hashlib.sha1(np.asarray(ids, dtype=np.int64).tobytes() + level.encode() + settings.encode()).hexdigest()[:20]
+        folder = cfg.embeddings_dir / "clusters"
+        path = folder / f"{model_id}.{key}.npy"
+        try:
+            labels = np.load(path)
+            if len(labels) == len(ids):
+                return labels
+        except (OSError, ValueError):
+            pass
+        labels = clusters.cluster(E, level) if len(ids) else np.zeros(0, int)
+        with cluster_files["lock"]:
+            folder.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp.npy")
+            np.save(tmp, labels)
+            os.replace(tmp, path)
+            # Keep the 24 most recent (views come and go with the filters).
+            files = sorted(folder.glob(f"{model_id}.*.npy"), key=lambda f: f.stat().st_mtime, reverse=True)
+            for old in files[24:]:
+                old.unlink(missing_ok=True)
+        return labels
 
     def discover_pool(conn, index: Index):
         """The lens data for the whole library, cached until the embeddings (or the
@@ -820,7 +904,7 @@ def create_app(
 
                 # A day for photos without a date: their own id (they never make a "series").
                 days = [d or f"#{i}" for d, i in zip(pool.day, ids.tolist())]
-                pool.pca = discover.library_axes(E, clusters.cluster(E, "fine"), days)
+                pool.pca = discover.library_axes(E, cached_cluster(ids, E, "fine"), days)
             L, rows_ = layout_matrix(index)
             pool.layout = L[[rows_[i] for i in ids.tolist()]]
             # The stable parts of quality (as in Curate); flags and taste are read per request.
@@ -1075,7 +1159,7 @@ def create_app(
             ids = [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY p.id", params)]
             ids = [i for i in ids if i in index.row]
             rows = [index.row[i] for i in ids]
-            labels = clusters.cluster(index.E[rows], level) if rows else np.zeros(0, int)
+            labels = cached_cluster(np.array(ids, dtype=np.int64), index.E[rows], level) if rows else np.zeros(0, int)
             members: dict[int, list[int]] = {}
             for pid, lab in zip(ids, labels):
                 if lab >= 0:
@@ -1137,6 +1221,7 @@ def create_app(
             raise HTTPException(404, "photo not found")
         photo = dict(r)
         photo.pop("hues", None)  # binary (colors.py); only Curate uses it
+        photo.pop("layout", None)  # binary (discover.layout_of); only Discover uses it
         photo["path"] = str(Path(r["source"]) / r["rel_path"])
         photo["thumb"] = f"/thumbs/{photo_id}.jpg"
         photo["preview"] = f"/previews/{photo_id}.jpg"

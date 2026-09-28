@@ -39,6 +39,9 @@ def test_indexing_stores_them(indexed, conn):
     row = photo(conn, "IMG_0003.png")
     assert row["brightness"] is not None and row["contrast"] is not None and row["colorfulness"] is not None
     assert len(row["hues"]) == 24 * 4  # float32 per bin
+    # …and the layout fingerprint for Discover, the same way.
+    lay = conn.execute("SELECT layout FROM photos WHERE status = 'ok' AND layout IS NOT NULL").fetchone()
+    assert lay is not None and len(lay[0]) == 12 * 12 * 4
 
 
 def test_curate_leans_towards_a_look(indexed, conn):

@@ -343,7 +343,14 @@
   {/each}
 
   <div class="absolute inset-x-0 py-4 text-center text-xs text-neutral-500" style="top: {height}px">
-    {#if !listing.loaded && listing.loading}Loading…{:else if listing.loaded && !listing.visibleTotal}No photos{/if}
+    {#if !listing.loaded && listing.loading}
+      {#if view.group === 'similar'}
+        <span class="inline-flex items-center gap-2 text-sm text-neutral-400">
+          <span class="h-4 w-4 animate-spin rounded-full border-2 border-neutral-700 border-t-sky-400"></span>
+          Grouping the photos by similarity… (the first time with a large library can take a few seconds)
+        </span>
+      {:else}Loading…{/if}
+    {:else if listing.loaded && !listing.visibleTotal}No photos{/if}
   </div>
 
   {#if marquee}
