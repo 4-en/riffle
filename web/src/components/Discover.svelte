@@ -166,6 +166,21 @@
   }
 
   const TRAIL_H = 96;
+  // The photo under the pointer, shown larger: {lens, id}. Cleared a moment after the
+  // pointer leaves (so moving between a photo and its label does not flicker).
+  let focus = $state(null);
+  let unfocusTimer;
+  const EXPANDED_MAX = 270;
+  const EXPANDED = $derived(Math.max(MAIN * 1.6, Math.min(EXPANDED_MAX, Math.min(width, height - TRAIL_H) * 0.42)));
+  function hoverPhoto(lens, id) {
+    clearTimeout(unfocusTimer);
+    focus = { lens, id };
+    backdrop = id;
+  }
+  function leavePhoto() {
+    clearTimeout(unfocusTimer);
+    unfocusTimer = setTimeout(() => (focus = null), 120);
+  }
   const MAIN = 104; // a branch's first photo (diameter)
   const SMALL = 50; // its others
   const BEND = 0.14; // how much the edges curve
@@ -223,7 +238,8 @@
       const reach = Math.max(inner, 1.06 - 0.5 * alike + (rand() - 0.5) * 0.08);
       const x = cx + rx * reach * Math.cos(angle);
       const y = cy + ry * reach * Math.sin(angle);
-      const big = MAIN * ((prefs[b.lens] ?? 0) >= 2 ? 1.15 : 1);
+      const hoverMain = focus?.lens === b.lens && focus.id === b.photos[0].id;
+      const big = hoverMain ? EXPANDED : MAIN * ((prefs[b.lens] ?? 0) >= 2 ? 1.15 : 1);
 
       // The edge arrives along its curve: its direction at the node points to the control point.
       const mx = (cx + x) / 2 + (y - cy) * BEND;
@@ -251,7 +267,7 @@
       const stepM = Math.min(1.0, others.length > 1 ? (arc.width - 0.5) / (others.length - 1) : 1);
       const moons = others.map((p, k) => {
         const a = arc.centre + (k - (others.length - 1) / 2) * stepM + (rand() - 0.5) * 0.12;
-        return { p, x: Math.cos(a) * d, y: Math.sin(a) * d };
+        return { p, x: Math.cos(a) * d, y: Math.sin(a) * d, size: SMALL };
       });
 
       // Arc paths for the two lines: above the circle drawn clockwise (glyphs upright,
@@ -266,8 +282,43 @@
       // Above: the label outside, the reason nearer the circle; below: the other way round.
       const labelPath = top ? arcPath(r + 13) : arcPath(r + 9);
       const reasonPath = top ? arcPath(r + 1) : arcPath(r + 22);
-      return { b, x, y, big, moons, label, reason, labelPath, reasonPath, float: 5 + rand() * 4, delay: -rand() * 8 };
+      return { b, x, y, dx: 0, dy: 0, big, moons, label, reason, labelPath, reasonPath, float: 5 + rand() * 4, delay: -rand() * 8 };
     });
+
+    // A hovered photo grows where it is; everything it would cover moves out of its way:
+    // other branches (with their labels) and the branch's own other photos.
+    const hit = focus && nodes.find((n) => n.b.lens === focus.lens);
+    if (hit) {
+      const moon = hit.moons.find((m) => m.p.id === focus.id);
+      const fx = hit.x + (moon ? moon.x : 0);
+      const fy = hit.y + (moon ? moon.y : 0);
+      const reach = EXPANDED / 2;
+      const push = (x, y, r) => {
+        const vx = x - fx, vy = y - fy;
+        const d = Math.hypot(vx, vy) || 1;
+        const need = reach + r + 8;
+        return d < need ? [(vx / d) * (need - d), (vy / d) * (need - d)] : [0, 0];
+      };
+      const margin = MAIN / 2 + 30;
+      for (const n of nodes) {
+        if (n === hit && !moon) continue; // the grown photo itself stays put
+        [n.dx, n.dy] = push(n.x, n.y, n.big / 2 + 30); // + the label around it
+        // …but not off the screen.
+        n.dx = Math.min(width - margin, Math.max(margin, n.x + n.dx)) - n.x;
+        n.dy = Math.min(h - margin, Math.max(margin, n.y + n.dy)) - n.y;
+      }
+      if (moon) {
+        moon.x -= hit.dx; // the hovered small photo stays under the pointer
+        moon.y -= hit.dy;
+        moon.size = EXPANDED;
+      }
+      for (const m of hit.moons) {
+        if (m === moon) continue;
+        const [px, py] = push(hit.x + hit.dx + m.x, hit.y + hit.dy + m.y, SMALL / 2);
+        m.x += px;
+        m.y += py;
+      }
+    }
     const compassShown = branches.some((b) => b.bearing != null);
     return { cx, cy, size, nodes, compassShown, northY: cy - ry - 30, backX: cx - rx * 0.92, backY: cy + (rand() - 0.5) * 40 };
   });
@@ -421,10 +472,8 @@
             <path d={edge(geometry.backX, geometry.backY, 0.05)} fill="none" stroke="#525252" stroke-width="2" stroke-dasharray="6 5" />
           {/if}
           {#each geometry.nodes as n (n.b.lens)}
-            <path d={n.labelPath} id="label-{n.b.lens}" fill="none" />
-            <path d={n.reasonPath} id="reason-{n.b.lens}" fill="none" />
             <path
-              d={edge(n.x, n.y)}
+              d={edge(n.x + n.dx, n.y + n.dy)}
               fill="none"
               stroke={LENS_COLOURS[n.b.lens] ?? '#737373'}
               stroke-opacity={hovered === n.b.lens ? 0.9 : 0.35}
@@ -463,31 +512,33 @@
           {@const colour = LENS_COLOURS[n.b.lens] ?? '#737373'}
           <div
             role="group"
-            class="branch absolute"
-            style="left: {n.x}px; top: {n.y}px; animation: drift {n.float}s ease-in-out {n.delay}s infinite"
+            class="branch moving absolute {focus?.lens === n.b.lens ? 'z-30' : ''}"
+            style="left: {n.x + n.dx}px; top: {n.y + n.dy}px; animation: drift {n.float}s ease-in-out {n.delay}s infinite"
             in:fade={{ duration: 300, delay: 40 * i }}
             onmouseenter={() => (hovered = n.b.lens)}
             onmouseleave={() => (hovered = null)}
           >
             {#each n.moons as m (m.p.id)}
               <button
-                class="absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full ring-1 ring-neutral-700 transition hover:z-10 hover:scale-110"
-                style="left: {m.x}px; top: {m.y}px; width: {SMALL}px; height: {SMALL}px"
+                class="grow absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full ring-1 ring-neutral-700 {m.size > SMALL ? 'z-10 shadow-2xl ring-2' : ''}"
+                style="left: {m.x}px; top: {m.y}px; width: {m.size}px; height: {m.size}px"
                 title="{m.p.reason} · {m.p.rel_path}"
-                onmouseenter={() => (backdrop = m.p.id)}
+                onmouseenter={() => hoverPhoto(n.b.lens, m.p.id)}
+                onmouseleave={leavePhoto}
                 onclick={() => go(m.p, n.b)}
               >
-                <img src={m.p.thumb} alt={m.p.rel_path} class="h-full w-full object-cover" />
+                <img src={m.size > SMALL ? `/previews/${m.p.id}.jpg` : m.p.thumb} alt={m.p.rel_path} class="h-full w-full object-cover" />
               </button>
             {/each}
             <button
-              class="absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full shadow-lg ring-2 transition hover:z-10 hover:scale-105"
+              class="grow absolute -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full shadow-lg ring-2 {n.big > MAIN * 1.2 ? 'z-10 shadow-2xl' : ''}"
               style="width: {n.big}px; height: {n.big}px; --tw-ring-color: {colour}"
               title="{n.b.photos[0].reason} · {n.b.photos[0].rel_path}"
-              onmouseenter={() => (backdrop = n.b.photos[0].id)}
+              onmouseenter={() => hoverPhoto(n.b.lens, n.b.photos[0].id)}
+              onmouseleave={leavePhoto}
               onclick={() => go(n.b.photos[0], n.b)}
             >
-              <img src={n.b.photos[0].thumb} alt={n.b.photos[0].rel_path} class="h-full w-full object-cover" />
+              <img src={n.big > MAIN * 1.2 ? `/previews/${n.b.photos[0].id}.jpg` : n.b.photos[0].thumb} alt={n.b.photos[0].rel_path} class="h-full w-full object-cover" />
             </button>
           </div>
         {/each}
@@ -496,7 +547,9 @@
         <svg class="pointer-events-none absolute inset-0" {width} height={height - TRAIL_H} in:fade={{ duration: 400 }}>
           {#each geometry.nodes as n, i (n.b.lens)}
             {@const colour = LENS_COLOURS[n.b.lens] ?? '#737373'}
-            <g style="animation: drift {n.float}s ease-in-out {n.delay}s infinite">
+            <g class="moving" style="animation: drift {n.float}s ease-in-out {n.delay}s infinite; transform: translate({n.dx}px, {n.dy}px)">
+              <path d={n.labelPath} id="label-{n.b.lens}" fill="none" />
+              <path d={n.reasonPath} id="reason-{n.b.lens}" fill="none" />
               <text class="text-[11px] font-medium" fill={colour} style="paint-order: stroke; stroke: rgb(10 10 10 / 0.7); stroke-width: 3px">
                 <textPath href="#label-{n.b.lens}" startOffset="50%" text-anchor="middle"><tspan fill="#737373">{i + 1} </tspan>{n.label}</textPath>
               </text>
@@ -587,6 +640,13 @@
   @keyframes pulse {
     from { opacity: 0.55; scale: 0.9; }
     to { opacity: 1; scale: 1.1; }
+  }
+  /* Growing a hovered photo, and making way for it. */
+  .grow {
+    transition: width 0.75s ease, height 0.75s ease, left 0.75s ease, top 0.75s ease, box-shadow 0.75s;
+  }
+  .moving {
+    transition: left 0.75s ease, top 0.75s ease, transform 0.75s ease;
   }
   @media (prefers-reduced-motion: reduce) {
     .backdrop, .glow, .branch, g { animation: none !important; }
