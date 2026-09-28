@@ -453,7 +453,12 @@ Text search encodes the query with the CLIP text encoder and ranks the filtered 
 
 A text search takes about 10 ms.
 
-**Your tags** (`custom_tags.py`; stored in selections v3, examples by content hash). A photo belongs when its similarity to its best-matching example reaches a fixed level per model: the stack threshold minus 0.05 (strict), 0.08 (normal), or 0.12 (loose). That is 0.87 / 0.84 / 0.80 for ViT-L-14.
+**Your tags** (`custom_tags.py`; stored in selections v3, examples by content hash). With fewer than four examples, a photo belongs when its similarity to its best-matching example reaches a fixed level per model: the stack threshold minus 0.05 (strict), 0.08 (normal), or 0.12 (loose). That is 0.87 / 0.84 / 0.80 for ViT-L-14.
+
+*A classifier from four examples on (29 Sep 2026).* The rule could only draw circles around the examples: on an illustration library (11,600 images, an anime profile), "kemonomimi" (43 examples, 17 marked) had precision 0.72 / recall 0.28 at Strict, and marking photos carved out true members too. Evaluation: the WD tagger's "animal_ears" / "holo" predictions as the answer key (checked by eye on contact sheets: the rule's extra members really had none; its misses really had cat, fox or wolf ears). WD-tagger features would have been far better for illustrations (character precision 1.00 / recall 0.79 from 10 examples), but were ruled out: core features must work on every photo's CLIP embedding, and photography is the main use.
+  - *The classifier:* logistic regression (C = 1) of the examples against the marked photos and 2,000 random library photos (weight 0.3: some are members), class-balanced. Average precision on the user's tags: 0.62 vs 0.46 (kemonomimi), 0.69 vs 0.27 (Holo). 0.4 s for 11,600 photos, 0.7 s for 95,000.
+  - *The cut:* relative to the median score of the examples held out of training (5-fold), a user-set factor (`custom_tags.cut`, selections v9; Strict 1.0, Normal 0.75, Loose 0.5; 0.2–1.3). No automatic cut suited both tags: kemonomimi (15 % of the library) was best near 0.5 (precision 0.72 / recall 0.45), Holo (0.25 %) near 1.0–1.2 (0.58 / 0.74 … 0.90 / 0.47). Also tried and dropped: percentiles of the held-out scores (too strict for common traits), positive-unlabelled calibration (unstable: every photo in or none), holding out alike examples together (helped the common trait, hurt the character). So the dialog has a slider with the live count, and the photos on both sides of the cut (12 each, one per stack, previews at 160 px): the least sure members to mark, the closest non-members to add as examples. The rule uses the same scale (margin 0.05 + (1 − cut) × 0.14).
+  - *A limit:* a linear classifier also learns the examples' style when the examples share one; varied examples, and marking look-alikes of that style, counter it.
 
 *Negatives* (28 Sep 2026; selections v7, `custom_tag_negatives`, by content hash, copied with a profile's tags): in the tag dialog, the 12 members nearest the edge (one per stack) are clickable; a clicked photo does not belong. A photo is then a member only if it is also more similar to its best example than to every negative (margin 0), so each negative carves out its own neighbourhood; a negative covers its stack and duplicate group; a negative in an example's stack, or as alike as stack members, is refused. Without negatives nothing changes. A linear classifier on top (for tags with many examples) was left for later.
 - *First library, the "Holo" tag* (12 examples of one anime character, Strict, 123 members): in round one, 10 of the 12 edge photos were other characters (mostly white-haired fox girls); marking them took the tag to 62, and all 51 photos removed besides them were other characters. Round two (10 more marked) took it to 47 (35 plus the examples), 5 removed besides them, one of them borderline. What remains is mostly the character, with several look-alikes still in: CLIP does not separate one character from similar ones well, as expected (§15, item 9). A margin of 0 removed nothing that clearly belonged, so it stays at 0.
@@ -746,6 +751,18 @@ Most of the small gain comes from mean-centring (subtracting the library's avera
 Not adopted: it would mean re-embedding every photo and keeping a second matrix, since text search still needs the final one.
 
 **Open:** more nuanced concepts could favour deeper features, which this benchmark could not test: one particular person, pet, or character among others of its kind. That needs a labelled set with such identities. See §15.
+
+**Answered (29 Sep 2026): no, not for a character or a detail trait either.** On the anime profile (11,612 illustrations; the WD tagger's predictions as the answer key, as in §10), with the learned-tag classifier on each variant (average precision; the user's examples and marks | from 10 examples):
+
+| | "animal ears" (15 % of the images) | one character (29 images) |
+|---|---|---|
+| final (now) | 0.63 / 0.56 | 0.76 / 0.70 |
+| pre-proj (centred) | 0.63 / 0.56 | 0.79 / 0.72 |
+| pen CLS (centred) | 0.58 / 0.48 | 0.75 / 0.70 |
+| pen mean (centred) | 0.57 / 0.50 | 0.67 / 0.62 |
+| final, centred | 0.63 / 0.56 | 0.76 / 0.70 |
+
+The penultimate block is worse on the trait and no better on the character; the features before the projection match the final embedding (+0.03 on the character, one tag: noise). Other learners on the final embedding (a linear SVM, a small neural network, nearest examples, label spreading over a similarity graph, the tag's name as a text query) were no better than the logistic regression either (§10). What limits learned tags is how much of a detail one whole-image embedding holds; embedding crops would be the next thing to try.
 
 ### 14.2 Experiment: clustering and a 2D map (27 Sep 2026)
 

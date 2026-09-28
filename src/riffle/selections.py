@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 FLAGS = ("pick", "reject")
-VERSION = 8  # PRAGMA user_version: the tables in SCHEMA are created when missing
+VERSION = 9  # PRAGMA user_version: the tables in SCHEMA are created when missing
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS flags (
@@ -146,6 +146,10 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
+    # v9: a custom tag's cut (custom_tags.py: how like its examples a photo must be; NULL:
+    # its strictness preset). A column, so a profile copy (INSERT … SELECT *) keeps it.
+    if "cut" not in {r[1] for r in conn.execute("PRAGMA table_info(custom_tags)")}:
+        conn.execute("ALTER TABLE custom_tags ADD COLUMN cut REAL")
     conn.execute(f"PRAGMA user_version = {VERSION}")
     conn.commit()
     return conn
@@ -335,7 +339,7 @@ def _add_examples(
 
 def create_tag(
     catalogue: sqlite3.Connection, path: str | Path, name: str, photo_ids: list[int], strictness: str = "normal",
-    negatives: list[int] | None = None,
+    negatives: list[int] | None = None, cut: float | None = None,
 ) -> int:
     """A new tag from example photos (and photos that do not belong); returns its id."""
     name = _clean_name(name)
@@ -349,8 +353,8 @@ def create_tag(
         with conn:
             try:
                 tag_id = conn.execute(
-                    "INSERT INTO custom_tags (name, strictness, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                    (name, strictness, now, now),
+                    "INSERT INTO custom_tags (name, strictness, cut, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (name, strictness, cut, now, now),
                 ).lastrowid
             except sqlite3.IntegrityError:
                 raise TagError(f'a tag named "{name}" already exists')
@@ -369,12 +373,13 @@ def update_tag(
     *,
     name: str | None = None,
     strictness: str | None = None,
+    cut: float | None = None,
     add: list[int] | None = None,
     remove: list[int] | None = None,
     add_negatives: list[int] | None = None,
     remove_negatives: list[int] | None = None,
 ) -> None:
-    """Rename, change strictness, add or remove example photos and negatives."""
+    """Rename, change strictness or the cut, add or remove example photos and negatives."""
     if strictness is not None and strictness not in STRICTNESS:
         raise TagError(f"strictness must be one of {', '.join(STRICTNESS)}")
     conn = connect(path)
@@ -389,7 +394,9 @@ def update_tag(
                 except sqlite3.IntegrityError:
                     raise TagError(f'a tag named "{_clean_name(name)}" already exists')
             if strictness is not None:
-                conn.execute("UPDATE custom_tags SET strictness = ? WHERE id = ?", (strictness, tag_id))
+                conn.execute("UPDATE custom_tags SET strictness = ?, cut = NULL WHERE id = ?", (strictness, tag_id))
+            if cut is not None:
+                conn.execute("UPDATE custom_tags SET cut = ? WHERE id = ?", (float(cut), tag_id))
             if add:
                 _add_examples(conn, catalogue, tag_id, add, now)
             if add_negatives:

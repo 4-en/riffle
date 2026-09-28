@@ -129,13 +129,14 @@ export function fetchAlternatives(view, body) {
 }
 
 /** Custom tags (taught by example photos). */
-export const createCustomTag = (name, photoIds, strictness, negatives = []) =>
-  send('POST', '/api/custom-tags', { name, photo_ids: photoIds, strictness, negatives });
+/** cut: how like its examples a photo must be (1.0 Strict, 0.75 Normal, 0.5 Loose; custom_tags.py). */
+export const createCustomTag = (name, photoIds, cut, negatives = []) =>
+  send('POST', '/api/custom-tags', { name, photo_ids: photoIds, cut, negatives });
 export const editCustomTag = (id, changes) => send('POST', `/api/custom-tags/${id}`, changes);
 export const deleteCustomTag = (id) => send('DELETE', `/api/custom-tags/${id}`);
 /** {counts: {strict, normal, loose}, edge: items, examples, left_out} for these examples and negatives. */
-export const previewCustomTag = (photoIds, strictness, negatives = []) =>
-  send('POST', '/api/custom-tags/preview', { photo_ids: photoIds, strictness, negatives });
+export const previewCustomTag = (photoIds, cut, negatives = []) =>
+  send('POST', '/api/custom-tags/preview', { photo_ids: photoIds, cut, negatives });
 
 /** Captions and fixed tags: {id: {caption, method, edited, tags}}. */
 export async function fetchCaptions(ids) {

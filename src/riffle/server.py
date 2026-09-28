@@ -155,12 +155,14 @@ class CustomTagIn(BaseModel):
     name: str
     photo_ids: list[int]
     strictness: str = "normal"
+    cut: float | None = None  # how like its examples a photo must be (custom_tags.PRESETS); None: the strictness preset
     negatives: list[int] = []  # photos that do not belong
 
 
 class CustomTagEdit(BaseModel):
     name: str | None = None
     strictness: str | None = None
+    cut: float | None = None
     add: list[int] = []
     remove: list[int] = []
     add_negatives: list[int] = []
@@ -170,6 +172,7 @@ class CustomTagEdit(BaseModel):
 class CustomTagPreview(BaseModel):
     photo_ids: list[int]
     strictness: str = "normal"
+    cut: float | None = None
     negatives: list[int] = []
 
 
@@ -486,12 +489,22 @@ def create_app(
 
     ctag_cache: dict[int, tuple] = {}  # tag id -> (key, member ids)
 
+    def custom_tags_presets() -> dict[str, float]:
+        from .custom_tags import PRESETS
+
+        return PRESETS
+
+    def custom_tags_nearest(cut: float) -> str:
+        from .custom_tags import nearest_preset
+
+        return nearest_preset(cut)
+
     def custom_tag_list(conn) -> list[dict]:
         """Every custom tag with the ids of its examples and negatives that are in the
         library; ``negative_group``: the negatives with their stack and duplicate mates
         (a negative applies to its whole stack), for membership."""
         tags = [dict(r) for r in conn.execute(
-            "SELECT id, name, strictness, updated_at FROM sel.custom_tags ORDER BY name COLLATE NOCASE"
+            "SELECT id, name, strictness, cut, updated_at FROM sel.custom_tags ORDER BY name COLLATE NOCASE"
         )]
         found: dict[str, dict[int, list[int]]] = {"examples": {}, "negatives": {}}
         for key, table in (("examples", "custom_tag_examples"), ("negatives", "custom_tag_negatives")):
@@ -525,13 +538,13 @@ def create_app(
 
         out = {}
         for t in tags if tags is not None else custom_tag_list(conn):
-            key = (t["updated_at"], t["strictness"], tuple(t["examples"]), tuple(t["negative_group"]), index.stamp, cfg.stacks.min_similarity)
+            key = (t["updated_at"], t["strictness"], t["cut"], tuple(t["examples"]), tuple(t["negative_group"]), index.stamp, cfg.stacks.min_similarity)
             hit = ctag_cache.get(t["id"])
             if hit is None or hit[0] != key:
                 rows = custom_tags.example_rows(index.row, t["examples"])
                 negative_rows = custom_tags.example_rows(index.row, t["negative_group"])
-                limit = custom_tags.threshold(cfg.stacks.min_similarity, t["strictness"])
-                ids, _ = custom_tags.members(index.E, index.ids, rows, limit, negative_rows)
+                level = t["cut"] if t["cut"] is not None else t["strictness"]
+                ids, _ = custom_tags.members(index.E, index.ids, rows, cfg.stacks.min_similarity, level, negative_rows)
                 ctag_cache[t["id"]] = hit = (key, ids)
             out[t["id"]] = hit[1]
         return out
@@ -1274,7 +1287,7 @@ def create_app(
 
         if level not in clusters.LEVELS:
             raise HTTPException(400, f"level must be one of {', '.join(clusters.LEVELS)}")
-        tag_versions = tuple(conn.execute("SELECT id, updated_at, strictness FROM sel.custom_tags ORDER BY id").fetchall())
+        tag_versions = tuple(conn.execute("SELECT id, updated_at, strictness, cut FROM sel.custom_tags ORDER BY id").fetchall())
         fixed_version = tuple(conn.execute("SELECT COUNT(*), MAX(added_at) FROM sel.fixed_tags").fetchone())
         cache_key = (cte, shown, json.dumps(params, default=str), level, index.stamp, state["encoder"] is not None, tag_versions, fixed_version)
         hit = cluster_cache.get(cache_key)
@@ -1522,6 +1535,7 @@ def create_app(
                 "id": t["id"],
                 "name": t["name"],
                 "strictness": t["strictness"],
+                "cut": t["cut"] if t["cut"] is not None else custom_tags_presets()[t["strictness"]],
                 "examples": t["examples"],
                 "negatives": t["negatives"],
                 "excluded": t["id"] in flt.exclude_ctags,
@@ -1804,7 +1818,8 @@ def create_app(
         """A tag from example photos (stored with the flags, by content hash)."""
         check_negatives(conn, index, body.photo_ids, body.negatives)
         try:
-            tag_id = selections.create_tag(conn, sel_path(), body.name, body.photo_ids, body.strictness, body.negatives)
+            strictness = custom_tags_nearest(body.cut) if body.cut is not None else body.strictness
+            tag_id = selections.create_tag(conn, sel_path(), body.name, body.photo_ids, strictness, body.negatives, body.cut)
         except selections.TagError as e:
             raise tag_error(e)
         return {"id": tag_id}
@@ -1812,37 +1827,55 @@ def create_app(
     @app.post("/api/custom-tags/preview", dependencies=[Depends(require_json)])
     def preview_custom_tag(body: CustomTagPreview, conn=Depends(get_conn), index: Index = Depends(get_index)):
         """How many photos a tag with these examples (and negatives) would have at each
-        strictness, how many the negatives leave out, and the members nearest its edge
-        (the least similar ones still in, one per stack), to mark the wrong ones."""
+        strictness, and the photos on either side of its edge (one per stack): the
+        members it is least sure of (``edge``), to mark the wrong ones, and the photos
+        just outside (``outside``), to add the ones that belong. The rule (fewer than
+        four examples) also says how many the negatives leave out (``left_out``)."""
         from . import custom_tags
 
         rows = custom_tags.example_rows(index.row, body.photo_ids)
         negative_rows = custom_tags.example_rows(index.row, with_stack_mates(conn, body.negatives, exclude=body.photo_ids))
-        counts, edge, left_out = {}, [], 0
-        for level in selections.STRICTNESS:
-            limit = custom_tags.threshold(cfg.stacks.min_similarity, level)
-            ids, s = custom_tags.members(index.E, index.ids, rows, limit, negative_rows)
-            counts[level] = len(ids)
-            if level == body.strictness and rows:
-                left_out = len(custom_tags.members(index.E, index.ids, rows, limit)[0]) - len(ids)
-                keep = np.zeros(len(index.ids), bool)
-                keep[[index.row[i] for i in ids]] = True
-                keep[rows] = False
-                inside = [int(index.ids[k]) for k in np.argsort(s, kind="stable") if keep[k]]
-                # One per stack or duplicate group: a burst would fill the strip with one scene.
-                group = dict(conn.execute(
-                    """SELECT id, COALESCE('s' || stack_id, 'd' || dupe_group, 'p' || id) FROM photos
-                       WHERE id IN (SELECT value FROM json_each(?))""", (json.dumps(inside[: EDGE_PHOTOS * 10]),),
-                ))
-                seen = set()
-                for pid in inside[: EDGE_PHOTOS * 10]:
-                    g = group.get(pid, pid)
-                    if g not in seen:
-                        seen.add(g)
-                        edge.append(pid)
-                    if len(edge) == EDGE_PHOTOS:
-                        break
-        return {"counts": counts, "edge": items_for(conn, edge), "examples": len(rows), "left_out": left_out}
+        if not rows:
+            return {"counts": {level: 0 for level in selections.STRICTNESS}, "count": 0, "edge": [], "outside": [], "examples": 0, "left_out": 0, "learned": False}
+        t = custom_tags.tag_scores(index.E, rows, cfg.stacks.min_similarity, negative_rows)
+        level = body.cut if body.cut is not None else body.strictness
+        counts = {preset: int(t.members(preset).sum()) for preset in selections.STRICTNESS}
+        keep = t.members(level)
+        left_out = 0
+        if not t.learned and negative_rows:
+            left_out = int(((t.score >= t.threshold(level)) & ~keep).sum())  # (the marked ones too)
+        order = np.argsort(t.score, kind="stable")
+        marked = set(rows) | set(negative_rows)
+        inside = [int(index.ids[k]) for k in order if keep[k] and k not in marked]
+        outside = [int(index.ids[k]) for k in order[::-1] if not keep[k] and k not in marked][: EDGE_PHOTOS * 10]
+
+        def one_per_group(pids: list[int]) -> list[int]:
+            """One photo per stack or duplicate group: a burst would fill a strip with one scene."""
+            pids = pids[: EDGE_PHOTOS * 10]
+            group = dict(conn.execute(
+                """SELECT id, COALESCE('s' || stack_id, 'd' || dupe_group, 'p' || id) FROM photos
+                   WHERE id IN (SELECT value FROM json_each(?))""", (json.dumps(pids),),
+            ))
+            seen, out = set(), []
+            for pid in pids:
+                g = group.get(pid, pid)
+                if g not in seen:
+                    seen.add(g)
+                    out.append(pid)
+                if len(out) == EDGE_PHOTOS:
+                    break
+            return out
+
+        return {
+            "counts": counts,  # at each preset
+            "count": int(keep.sum()),  # at this cut
+            "cut": custom_tags.as_cut(level),
+            "edge": items_for(conn, one_per_group(inside)),
+            "outside": items_for(conn, one_per_group(outside)),
+            "examples": len(rows),
+            "left_out": max(0, left_out),
+            "learned": t.learned,
+        }
 
     @app.post("/api/custom-tags/{tag_id}", dependencies=[Depends(require_json)])
     def edit_custom_tag(tag_id: int, body: CustomTagEdit, conn=Depends(get_conn), index: Index = Depends(get_index)):
@@ -1853,7 +1886,8 @@ def create_app(
         try:
             selections.update_tag(
                 conn, sel_path(), tag_id,
-                name=body.name, strictness=body.strictness, add=body.add, remove=body.remove,
+                name=body.name, add=body.add, remove=body.remove,
+                strictness=custom_tags_nearest(body.cut) if body.cut is not None else body.strictness, cut=body.cut,
                 add_negatives=body.add_negatives, remove_negatives=body.remove_negatives,
             )
         except selections.TagError as e:

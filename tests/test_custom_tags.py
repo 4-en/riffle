@@ -83,12 +83,13 @@ def test_negatives_carve_out_their_surroundings():
     e, near_neg, other_way, neg = at(1.0, 1), at(0.86, 2), at(0.86, 3), at(0.8, 2)
     E = np.stack([e, near_neg, other_way, neg])
     E /= np.linalg.norm(E, axis=1, keepdims=True)
-    keep, _ = custom_tags.belongs(E, [0], 0.84)
+    # (One example: the rule. Normal is 0.08 below the stack threshold, 0.92 here.)
+    keep = custom_tags.tag_scores(E, [0], 0.92).members("normal")
     assert keep.tolist() == [True, True, True, False]  # without negatives: as before
-    keep, _ = custom_tags.belongs(E, [0], 0.84, [3])
+    keep = custom_tags.tag_scores(E, [0], 0.92, [3]).members("normal")
     # Row 1 is more like the negative than like the example; row 2 lies the other way.
     assert keep.tolist() == [True, False, True, False]
-    assert custom_tags.belongs(E, [0], 0.84, [0])[0][0]  # an example always belongs
+    assert custom_tags.tag_scores(E, [0], 0.92, [0]).members("normal")[0]  # an example always belongs
 
 
 def test_negatives_in_the_api(client, conn):
@@ -185,3 +186,51 @@ def test_selections_migrate_from_v2(tmp_path):
     assert conn.execute("SELECT flag FROM flags").fetchone()[0] == "pick"
     assert conn.execute("SELECT COUNT(*) FROM custom_tags").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM custom_tag_negatives").fetchone()[0] == 0  # v7
+
+
+def test_from_four_examples_a_classifier_decides():
+    """From four examples a classifier scores the photos (the rule below that); the cut
+    is relative to how it scores its own examples, the presets are points on that
+    scale, marked photos never belong and examples always do. (That it orders photos
+    better than the rule was measured on a real library: custom_tags.py.)"""
+    rng = np.random.default_rng(0)
+    dim = 32
+    trait = np.eye(dim)[1]
+
+    def photos(n, v, noise=0.15):
+        X = v + noise * rng.normal(size=(n, dim))
+        return X / np.linalg.norm(X, axis=1, keepdims=True)
+
+    members = photos(40, np.eye(dim)[2] + 0.6 * trait)
+    others = photos(300, np.zeros(dim), noise=1.0)
+    E = np.concatenate([members, others]).astype(np.float32)
+    examples = list(range(6))
+    assert not custom_tags.tag_scores(E, examples[:3], 0.92).learned  # three: still the rule
+    t = custom_tags.tag_scores(E, examples, 0.92)
+    assert t.learned
+    assert t.threshold("strict") > t.threshold("normal") > t.threshold("loose") > 0
+    assert t.threshold(0.75) == t.threshold("normal") and t.threshold(1.0) == t.threshold("strict")
+    assert t.threshold(99) == t.threshold(custom_tags.CUT_RANGE[1])  # clamped
+    keep = t.members("normal")
+    assert keep[:40].mean() > 0.8 and keep[40:].mean() < 0.05
+    loose, strict = t.members(0.3).sum(), t.members(1.2).sum()
+    assert loose >= keep.sum() >= strict  # the slider: more or fewer
+    marked = custom_tags.tag_scores(E, examples, 0.92, [10, 11]).members("normal")
+    assert not marked[10] and not marked[11] and marked[examples].all()
+
+
+def test_the_cut_is_saved_per_tag(client, conn):
+    ex, near, loose, far = ids(conn, "IMG_0001.jpg", "IMG_0002.jpg", "IMG_0002_edit.png", "IMG_0003.png")
+    # (One example: the rule, on the same scale: 1.0 Strict, 0.75 Normal, 0.5 Loose.)
+    preview = client.post("/api/custom-tags/preview", json={"photo_ids": [ex], "cut": 0.5}).json()
+    assert preview["count"] == 3 and preview["cut"] == 0.5 and preview["counts"] == {"strict": 1, "normal": 2, "loose": 3}
+    assert client.post("/api/custom-tags/preview", json={"photo_ids": [ex], "cut": 9}).json()["cut"] == 1.3  # clamped
+    tag = client.post("/api/custom-tags", json={"name": "Lanterns", "photo_ids": [ex], "cut": 0.5}).json()["id"]
+    assert listed(client, ctags=tag) == sorted([ex, near, loose])
+    t = client.get("/api/tags").json()["custom"][0]
+    assert t["cut"] == 0.5 and t["strictness"] == "loose"  # (the nearest preset, for older clients)
+    client.post(f"/api/custom-tags/{tag}", json={"cut": 1.0})
+    assert listed(client, ctags=tag) == [ex]
+    client.post(f"/api/custom-tags/{tag}", json={"strictness": "normal"})  # a preset clears the cut
+    assert client.get("/api/tags").json()["custom"][0]["cut"] == 0.75
+    assert listed(client, ctags=tag) == sorted([ex, near])
