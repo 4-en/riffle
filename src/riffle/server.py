@@ -50,10 +50,12 @@ from .selections import EXPORTED_EXPR, FLAG_EXPR, flag_expr
 log = logging.getLogger(__name__)
 
 # The built UI (`npm run build` in web/ writes it here; package data in the wheel).
-# The "Similar" grouping's key: a photo's cluster, looked up in a JSON object {photo id:
-# cluster key} held by the clusters CTE (similar_clusters). A lookup by key: a join
-# against a JSON list scanned the whole list per photo (470 ms vs 13 ms for 2,132).
-SIMILAR_KEY = """json_extract((SELECT map FROM clusters), '$."' || p.id || '"')"""
+# The "Similar" grouping's key: a photo's cluster, from the clusters CTE (similar_clusters:
+# a JSON object {photo id: cluster key} unpacked once, MATERIALIZED), joined into the
+# listing's FROM as ``sc``. Looking each photo up instead was quadratic: in the JSON text
+# (0.5 s at 13,000 photos, 24 s at 80,000), and as a subquery inside the cover query's
+# window function (54 s at 80,000, no index used there); the join takes 0.14 s.
+SIMILAR_KEY = "sc.k"
 
 WEB_DIST = Path(__file__).resolve().parent / "web"
 
@@ -381,7 +383,7 @@ def create_app(
         """In the background: whenever the library's embeddings change (at start, after
         an indexing run), build what the Similar grouping and Discover need first
         (the unfiltered library's clusters at every level, Discover's lens data, Curate's
-        uniqueness), so
+        uniqueness, the Similar map's layout), so
         the first click does not wait. Waits for the AI model (the names need it)."""
         from . import clusters
 
@@ -403,6 +405,7 @@ def create_app(
                                     group="similar", level=level, offset=0, limit=1, conn=conn, index=index)
                     discover_pool(conn, index)
                     uniqueness_scores(conn, index)
+                    map_layout(index)  # the Similar map (26 s at 80,000 photos the first time)
                 finally:
                     conn.close()
                 warmed = index.stamp
@@ -706,7 +709,7 @@ def create_app(
         cte, shown, order, params = listing(flt, collapse_mode(collapse, dupes), sort, group)
         names = None
         if group == "similar":
-            cte, params, names = similar_clusters(conn, cte, shown, params, index, level)
+            cte, shown, params, names = similar_clusters(conn, cte, shown, params, index, level)
         key = SIMILAR_KEY if group == "similar" else GROUP_KEYS[group] if group else "NULL"
         total = conn.execute(f"{cte} SELECT COUNT(*) {shown}", params).fetchone()[0]
         direction = "DESC" if sort == "-taken_at" else ""
@@ -826,7 +829,7 @@ def create_app(
         cte, shown, _, params = listing(flt, collapse_mode(collapse, dupes), "taken_at", group)
         names = None
         if group == "similar":
-            cte, params, names = similar_clusters(conn, cte, shown, params, index, level)
+            cte, shown, params, names = similar_clusters(conn, cte, shown, params, index, level)
         return {"group": group, "groups": group_summary(conn, cte, shown, params, group, names=names)}
 
     # ---- "Similar" grouping (clusters.py) ----------------------------------------------
@@ -1197,7 +1200,7 @@ def create_app(
         """The photos of the current listing on the library's 2D map, with their
         Similar cluster, and each cluster's name, size, and centre."""
         cte, shown, _, params = listing(flt, collapse_mode(collapse, dupes), "taken_at", "similar")
-        cte, params, names = similar_clusters(conn, cte, shown, params, index, level)
+        cte, shown, params, names = similar_clusters(conn, cte, shown, params, index, level)
         xy = map_layout(index)
         points, members = [], {}
         for pid, key in conn.execute(f"{cte} SELECT p.id, {SIMILAR_KEY} {shown}", params):
@@ -1264,8 +1267,9 @@ def create_app(
     character_cache: dict = {}  # character tags from the tag lists (captioning.character_tags)
 
     def similar_clusters(conn, cte: str, shown: str, params: list, index: Index, level: str):
-        """Cluster the listing's photos; returns the CTE and params extended with
-        ``clusters(pid, k)``, and the names per cluster key."""
+        """Cluster the listing's photos; returns the CTE extended with ``clusters(pid, k)``,
+        ``shown`` with it joined as ``sc`` (so SIMILAR_KEY works), the params, and the
+        names per cluster key."""
         from . import clusters
 
         if level not in clusters.LEVELS:
@@ -1330,8 +1334,10 @@ def create_app(
                 cluster_cache.popitem(last=False)
         cluster_cache.move_to_end(cache_key)
         mapping, names = hit
-        cte += ", clusters(map) AS (SELECT ?)"
-        return cte, [*params, mapping], names
+        cte += ", clusters(pid, k) AS MATERIALIZED (SELECT CAST(key AS INTEGER), value FROM json_each(?))"
+        assert shown.startswith("FROM filtered p ")
+        shown = "FROM filtered p LEFT JOIN clusters sc ON sc.pid = p.id " + shown[len("FROM filtered p "):]
+        return cte, shown, [*params, mapping], names
 
     @app.get("/api/photos/{photo_id}")
     def photo_detail(photo_id: int, conn=Depends(get_conn), index: Index = Depends(get_index)):
