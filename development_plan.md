@@ -74,7 +74,7 @@ One Ctrl+C stops the server cleanly: the event streams end first, so the gracefu
 | Places | `reverse_geocode` | Offline GeoNames lookup |
 | Paths | `platformdirs` | Per-platform config, data, and cache folders |
 | Frontend | Svelte 5, Tailwind 4, Vite | d3-geo / d3-zoom and `world-atlas` for the map |
-| Tests | pytest, httpx | Synthetic images, fake encoder |
+| Tests | pytest, pytest-xdist, httpx | Synthetic images, fake encoder; the 5 test photos are indexed once per run and copied into each test (`indexed`); `-n auto` runs them in parallel (95 s → 24 s on 4 workers, 19 s on 20) |
 | Releases | PyInstaller, GitHub Actions | §13 |
 
 Deliberately not used: SQLAlchemy, Alembic, FAISS, OpenCV, pyvips, ExifTool, a component library.

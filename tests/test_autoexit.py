@@ -63,16 +63,16 @@ def test_stops_after_the_last_tab_closes(indexed):
     server, thread, url = run_server(indexed, AutoExit(stop=None, min_uptime_seconds=0, idle_seconds=0.8, first_connect_seconds=60))
     tab = Tab(url)
     assert tab.lines[0] == "retry: 2000"
-    assert not wait_stopped(thread, 3.0)  # a tab is open: keeps running
+    assert not wait_stopped(thread, 1.5)  # a tab is open: keeps running (past the 0.8 s grace period)
     tab.close()
     assert wait_stopped(thread, 6.0)  # tab closed: noticed within ~2 s, then the grace period
 
 
 def test_a_reload_within_the_grace_period_keeps_it_running(indexed):
-    server, thread, url = run_server(indexed, AutoExit(stop=None, min_uptime_seconds=0, idle_seconds=4, first_connect_seconds=60))
+    server, thread, url = run_server(indexed, AutoExit(stop=None, min_uptime_seconds=0, idle_seconds=1.5, first_connect_seconds=60))
     Tab(url).close()  # "reload": the old page goes away...
     tab = Tab(url)  # ...and the new one connects right after
-    assert not wait_stopped(thread, 6.0)
+    assert not wait_stopped(thread, 2.5)  # past the grace period: the new tab counts
     tab.close()
     assert wait_stopped(thread, 10.0)
 
@@ -90,12 +90,15 @@ def test_stops_if_no_tab_ever_connects(indexed):
 
 
 def test_never_stops_within_the_minimum_uptime(indexed):
+    # Measured from before the server starts, so a slow start (a Windows runner) cannot
+    # make it look early: the server's own clock starts later still.
+    before = time.monotonic()
     server, thread, url = run_server(
-        indexed, AutoExit(stop=None, min_uptime_seconds=10, idle_seconds=0.3, first_connect_seconds=0.3)
+        indexed, AutoExit(stop=None, min_uptime_seconds=3, idle_seconds=0.3, first_connect_seconds=0.3)
     )
     Tab(url).close()  # a tab that came and went at once
-    assert not wait_stopped(thread, 3.0)  # (10 s leave room for a slow start)
-    assert wait_stopped(thread, 15.0)  # then the usual limits apply
+    assert wait_stopped(thread, 15.0)  # then the usual limits apply…
+    assert time.monotonic() - before >= 3  # …but not within the minimum uptime
 
 
 def test_waits_for_a_running_job(indexed):
@@ -121,7 +124,7 @@ def test_serve_mode_never_stops(indexed):
     first = json.loads(tab.lines[1].removeprefix("data: "))
     assert first["auto_exit"] is False and first["model"] == "ready"
     tab.close()
-    assert not wait_stopped(thread, 3.0)
+    assert not wait_stopped(thread, 1.5)
     server.should_exit = True
     assert wait_stopped(thread, 5.0)
 

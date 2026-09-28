@@ -369,7 +369,8 @@ def run_export(
                 f.caption = "jsonl"
 
     manifest = _unique(dest / "export-manifest.csv")
-    with open(manifest, "w", newline="") as fh:
+    # UTF-8 with a byte order mark: file names in any script, and Excel on Windows reads it as UTF-8.
+    with open(manifest, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh)
         w.writerow(["photo_id", "kind", "source", "exported", "status", "location", "caption"])
         for f in files:

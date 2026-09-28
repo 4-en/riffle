@@ -73,7 +73,7 @@ def test_never_overwrites_and_resumes(picked, tmp_path):
     again = export(cfg, ids, dest)  # identical files already there are skipped
     assert again == again | {"copied": 0, "skipped": 2}
     assert "export-manifest-1.csv" in files_in(dest)
-    rows = list(csv.DictReader(open(dest / "export-manifest-1.csv")))
+    rows = list(csv.DictReader(open(dest / "export-manifest-1.csv", encoding="utf-8-sig")))
     assert {r["status"] for r in rows} == {"skipped"}
 
 

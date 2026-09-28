@@ -57,11 +57,11 @@ jobs:
           if [ -n "${{ matrix.torch_index }}" ]; then
             pip install torch torchvision --index-url "${{ matrix.torch_index }}"
           fi
-          pip install . pyinstaller pytest httpx
+          pip install ".[dev]" pyinstaller
           python -c "import torch; print('torch', torch.__version__)"
 
       - name: Test
-        run: python -m pytest -q
+        run: python -m pytest -q -n auto # in parallel, one worker per core
 
       - name: Build the app
         run: pyinstaller packaging/riffle.spec --noconfirm
@@ -106,7 +106,7 @@ jobs:
           name="Riffle-${version}-${{ matrix.target }}"
           case "${{ matrix.target }}" in
             macos-*) ditto -c -k --keepParent dist/Riffle.app "$name.zip"; file="$name.zip" ;;
-            windows-*) (cd dist && 7z a -tzip -mx=7 "../$name.zip" Riffle > /dev/null); file="$name.zip" ;;
+            windows-*) (cd dist && 7z a -tzip -mx=5 "../$name.zip" Riffle > /dev/null); file="$name.zip" ;; # -mx=7 took 86 s; the libraries hardly compress further
             *) tar czf "$name.tar.gz" -C dist Riffle; file="$name.tar.gz" ;; # keeps the executable bit
           esac
           ls -l "$file"

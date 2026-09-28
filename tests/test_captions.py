@@ -174,14 +174,14 @@ def test_model_method_runs_as_a_job(client, conn, monkeypatch):
 
 def test_taglist_filters_by_list_alias_and_spelling(tmp_path):
     p = tmp_path / "list.csv"
-    p.write_text('1girl,0,100,"1girls,sole_female"\nblue_sky,0,50,""\ntree,0,40,""\nclose-up,0,30,""\n')
+    p.write_text('1girl,0,100,"1girls,sole_female"\nblue_sky,0,50,""\ntree,0,40,""\nclose-up,0,30,""\n', encoding="utf-8")
     tl = captioning.TagList.load(p)
     assert tl.filter(["1girls", "Blue Sky", "trees", "close_up", "serene", "sole female"]) == ["1girl", "blue_sky", "tree", "close-up", "1girl"]
     wd = tmp_path / "selected_tags.csv"
-    wd.write_text("tag_id,name,category,count\n1,general,9,1\n2,solo,0,1\n3,hatsune_miku,4,1\n")
+    wd.write_text("tag_id,name,category,count\n1,general,9,1\n2,solo,0,1\n3,hatsune_miku,4,1\n", encoding="utf-8")
     assert captioning.TagList.load(wd).filter(["general", "solo", "hatsune miku"]) == ["solo", "hatsune_miku"]
     txt = tmp_path / "mine.txt"
-    txt.write_text("# my keywords\nharbour\nSunset\n")
+    txt.write_text("# my keywords\nharbour\nSunset\n", encoding="utf-8")
     assert captioning.TagList.load(txt).filter(["sunsets", "harbours", "boat"]) == ["Sunset", "harbour"]
 
 
@@ -250,7 +250,7 @@ def test_export_captions_in_each_format(client, conn, tmp_path, cfg):
     original = (cfg.sources[0] / "trip" / "IMG_0001.jpg").read_bytes()
 
     out, res = export(client, tmp_path / "txt", [a, b], captions="txt", caption_text="both", underscores=True)
-    assert (out / "IMG_0001.txt").read_text() == "A harbour at dusk\nblue sky, boat\n"
+    assert (out / "IMG_0001.txt").read_text(encoding="utf-8") == "A harbour at dusk\nblue sky, boat\n"
     assert not (out / "IMG_0003.txt").exists() and res["captioned"] == 1 and res["without_caption"] == 1
 
     out, _ = export(client, tmp_path / "embed", [a], captions="embed")
@@ -258,11 +258,11 @@ def test_export_captions_in_each_format(client, conn, tmp_path, cfg):
     assert (cfg.sources[0] / "trip" / "IMG_0001.jpg").read_bytes() == original  # the original is untouched
 
     out, _ = export(client, tmp_path / "xmp", [a], captions="xmp")
-    assert "A harbour at dusk" in (out / "IMG_0001.xmp").read_text()
+    assert "A harbour at dusk" in (out / "IMG_0001.xmp").read_text(encoding="utf-8")
     assert "<rdf:li>" not in xmp_of(out / "IMG_0001.jpg")
 
     out, res = export(client, tmp_path / "jsonl", [a, b], captions="jsonl")
-    rows = [json.loads(line) for line in (out / "metadata.jsonl").read_text().splitlines()]
+    rows = [json.loads(line) for line in (out / "metadata.jsonl").read_text(encoding="utf-8").splitlines()]
     assert rows == [{"file_name": "IMG_0001.jpg", "text": "A harbour at dusk", "tags": ["blue_sky", "boat"]}]
 
     assert client.post("/api/export", json={"folder": str(tmp_path), "name": "x", "photo_ids": [a], "captions": "pdf"}).status_code == 400
@@ -373,12 +373,12 @@ def test_export_with_text(client, conn, tmp_path):
     a, b = pid(conn, "IMG_0001.jpg"), pid(conn, "IMG_0003.png")
     client.post("/api/captions", json={"items": [{"id": a, "caption": "A gate", "text": "出口", "translation": "Exit"}, {"id": b, "text": "Only text"}]})
     out, _ = export(client, tmp_path / "t", [a], captions="txt", caption_text="caption", with_text=True)
-    assert (out / "IMG_0001.txt").read_text() == "A gate\n出口\nExit\n"
+    assert (out / "IMG_0001.txt").read_text(encoding="utf-8") == "A gate\n出口\nExit\n"
     out, _ = export(client, tmp_path / "x", [a, b], captions="xmp", with_text=True)
-    assert "A gate\n\n出口\nExit" in (out / "IMG_0001.xmp").read_text()
-    assert "Only text" in (out / "IMG_0003.xmp").read_text()  # read text alone is enough
+    assert "A gate\n\n出口\nExit" in (out / "IMG_0001.xmp").read_text(encoding="utf-8")
+    assert "Only text" in (out / "IMG_0003.xmp").read_text(encoding="utf-8")  # read text alone is enough
     out, _ = export(client, tmp_path / "j", [a], captions="jsonl")
-    row = json.loads((out / "metadata.jsonl").read_text())
+    row = json.loads((out / "metadata.jsonl").read_text(encoding="utf-8"))
     assert row["ocr_text"] == "出口" and row["ocr_translation"] == "Exit"
 
 

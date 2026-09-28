@@ -1178,7 +1178,7 @@ def create_app(
             return None
         if tag_vector_cache.get("index") == (index.stamp, id(encoder)):
             return tag_vector_cache["namer"]
-        raw = yaml.safe_load(paths.default_file("cluster_names.yaml").read_text())
+        raw = yaml.safe_load(paths.default_file("cluster_names.yaml").read_text(encoding="utf-8"))
         things, media, settings = (list(raw.get(k) or []) for k in ("things", "media", "settings"))
         phrases = things + media + settings
         templates = load_vocabulary(cfg.vocabulary_path).templates

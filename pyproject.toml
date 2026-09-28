@@ -34,7 +34,7 @@ captions = [
   "onnxruntime-gpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "onnxruntime; sys_platform != 'linux' or platform_machine != 'x86_64'",
 ]
-dev = ["pytest>=8", "httpx>=0.27"]
+dev = ["pytest>=8", "pytest-xdist>=3.5", "httpx>=0.27"]
 
 [project.scripts]
 riffle = "riffle.cli:main"

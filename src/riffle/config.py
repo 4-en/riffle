@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 
 from . import paths
+from .paths import read_text
 
 
 @dataclass
@@ -117,7 +118,7 @@ def load_config(path: str | Path | None = None) -> Config:
         raise FileNotFoundError(
             f"Config file not found: {path}. Run without --config to use (and create) the default one."
         )
-    raw = yaml.safe_load(path.read_text()) or {}
+    raw = yaml.safe_load(read_text(path)) or {}
     cfg = config_from_dict(raw, path.parent)
     cfg.path = path
     return cfg
@@ -179,7 +180,7 @@ def _write_path_list(cfg: Config, key: str, paths: list[Path]) -> None:
     relative paths). A missing key is added at the end."""
     if cfg.path is None:
         raise ValueError("config was not loaded from a file")
-    text = cfg.path.read_text()
+    text = read_text(cfg.path)
     raw = yaml.safe_load(text) or {}
     original = {
         (Path(p).expanduser() if Path(p).expanduser().is_absolute() else cfg.root / p).resolve(): p
@@ -204,7 +205,7 @@ def _write_path_list(cfg: Config, key: str, paths: list[Path]) -> None:
         new_text = "".join(lines[:start]) + block + "".join(lines[end:])
 
     tmp = cfg.path.with_suffix(".tmp")
-    tmp.write_text(new_text)
+    tmp.write_text(new_text, encoding="utf-8")
     tmp.replace(cfg.path)
 
 

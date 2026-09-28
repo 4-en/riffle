@@ -281,7 +281,7 @@ cd web && npm run dev
 
 Without the dev server, run `npm run build` after changing `web/src/`. The build goes into `src/riffle/web/`, which the server serves and the Python package ships. Build it before `pip wheel` or `python -m build`.
 
-Tests: `venv/bin/pytest`. They use synthetic images and a fake encoder, so no model download is needed.
+Tests: `venv/bin/pytest -n auto` (in parallel; plain `venv/bin/pytest` works too). They use synthetic images and a fake encoder, so no model download is needed.
 
 Releases are built by GitHub Actions (`.github/workflows/release.yml`) with PyInstaller. Pushing a tag `v<version>` that matches `pyproject.toml` builds all three platforms and publishes a release; running the workflow manually only builds. For a local build: `pip install . pyinstaller`, build the UI, then `pyinstaller packaging/riffle.spec`. PyInstaller needs a Python built with a shared library, which the official installers and `actions/setup-python` provide.
 

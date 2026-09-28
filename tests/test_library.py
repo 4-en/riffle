@@ -24,8 +24,8 @@ model:
 
 @pytest.fixture
 def file_cfg(archive_dir):
-    (archive_dir / "config.yaml").write_text(CONFIG)
-    (archive_dir / "vocabulary.yaml").write_text("subject: [a, b]\nscene: [c, d]\n")
+    (archive_dir / "config.yaml").write_text(CONFIG, encoding="utf-8")
+    (archive_dir / "vocabulary.yaml").write_text("subject: [a, b]\nscene: [c, d]\n", encoding="utf-8")
     return load_config(archive_dir / "config.yaml")
 
 
@@ -33,7 +33,7 @@ def test_set_sources_keeps_rest_of_file(file_cfg, archive_dir, tmp_path):
     extra = tmp_path / "more"
     extra.mkdir()
     set_sources(file_cfg, [*file_cfg.sources, extra])
-    text = (archive_dir / "config.yaml").read_text()
+    text = (archive_dir / "config.yaml").read_text(encoding="utf-8")
     assert text.startswith("# my archive\nsources:\n")
     assert '  - "photos"\n' in text  # original spelling kept
     assert "\nexclude:" in text and "model:" in text
@@ -42,7 +42,7 @@ def test_set_sources_keeps_rest_of_file(file_cfg, archive_dir, tmp_path):
     assert reloaded.exclude == ["**/.Trashes/**"]
 
     set_sources(file_cfg, [])
-    assert yaml.safe_load((archive_dir / "config.yaml").read_text())["sources"] == []
+    assert yaml.safe_load((archive_dir / "config.yaml").read_text(encoding="utf-8"))["sources"] == []
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ def test_add_and_remove_folder(client, archive_dir, tmp_path):
         str(new),
     ]
     assert client.get("/api/tags").json()["photos"] == 5
-    assert str(new) in yaml.safe_load((archive_dir / "config.yaml").read_text())["sources"]
+    assert str(new) in yaml.safe_load((archive_dir / "config.yaml").read_text(encoding="utf-8"))["sources"]
 
     # Already covered, not a folder, relative, or wrong content type.
     assert client.post("/api/sources", json={"path": str(new)}).status_code == 409

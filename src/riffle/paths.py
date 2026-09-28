@@ -61,6 +61,17 @@ def standalone_defaults(template: str) -> str:
     return template
 
 
+def read_text(path: str | Path) -> str:
+    """A text file the user may have edited (config, vocabulary): UTF-8, which Riffle
+    writes, else the system's encoding (e.g. saved by an old Windows editor).
+    Without an explicit encoding Python uses the system's, cp1252 on Windows, which
+    garbles or rejects UTF-8 (a folder or tag with ü or 出口)."""
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return Path(path).read_text(errors="replace")
+
+
 def find_config(explicit: str | Path | None = None) -> Path:
     """The config file to use: ``--config``, else ``$RIFFLE_CONFIG``, else
     ``./config.yaml`` if one exists (a project-local setup), else the user's

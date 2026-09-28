@@ -42,7 +42,7 @@ def health(url: str, timeout: float = 1.0) -> dict | None:
 def running_url(cfg: Config) -> str | None:
     """The URL of a Riffle already serving this config, if any."""
     try:
-        url = json.loads(runtime_file(cfg).read_text())["url"]
+        url = json.loads(runtime_file(cfg).read_text(encoding="utf-8"))["url"]
     except (OSError, ValueError, KeyError, TypeError):
         return None
     info = health(url)
@@ -86,7 +86,7 @@ def launch(cfg: Config, open_browser: bool = True) -> None:
     url = f"http://{HOST}:{port}"
     rt = runtime_file(cfg)
     rt.parent.mkdir(parents=True, exist_ok=True)
-    rt.write_text(json.dumps({"url": url, "pid": os.getpid()}))
+    rt.write_text(json.dumps({"url": url, "pid": os.getpid()}), encoding="utf-8")
     os.environ["RIFFLE_CONFIG"] = str(cfg.path)
     server = None
 
@@ -109,7 +109,7 @@ def launch(cfg: Config, open_browser: bool = True) -> None:
         run_server(app, HOST, port, on_created=created)
     finally:
         try:
-            if json.loads(rt.read_text()).get("pid") == os.getpid():
+            if json.loads(rt.read_text(encoding="utf-8")).get("pid") == os.getpid():
                 rt.unlink()
         except (OSError, ValueError):
             pass

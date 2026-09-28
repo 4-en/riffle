@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from .paths import read_text
 from .quality import FULL_PENALTY_BLOWN, FULL_PENALTY_CRUSHED
 from .selections import EXPORTED_EXPR, FLAG_EXPR
 from .stacks import exif_seconds
@@ -120,7 +121,7 @@ def load_styles(vocabulary_path: Path, default_path: Path) -> list[Style]:
     """Styles from ``styles:`` in vocabulary.yaml, else from the shipped default."""
     for path in (vocabulary_path, default_path):
         try:
-            raw = (yaml.safe_load(Path(path).read_text()) or {}).get("styles")
+            raw = (yaml.safe_load(read_text(path)) or {}).get("styles")
         except OSError:
             continue
         if raw:

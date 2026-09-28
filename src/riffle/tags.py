@@ -14,6 +14,7 @@ import numpy as np
 import yaml
 
 from .config import Config, TagConfig
+from .paths import read_text
 
 DEFAULT_TEMPLATES = ["a photo of {}"]
 
@@ -50,7 +51,7 @@ def _parse_label(entry) -> Label:
 
 
 def load_vocabulary(path: Path) -> Vocabulary:
-    raw = yaml.safe_load(Path(path).read_text()) or {}
+    raw = yaml.safe_load(read_text(path)) or {}
     templates = raw.pop("templates", None) or DEFAULT_TEMPLATES
     family_templates = {k: list(v) for k, v in (raw.pop("family_templates", None) or {}).items() if v}
     raw.pop("styles", None)  # Curate's style sliders, not a tag family (see curate.py)

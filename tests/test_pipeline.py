@@ -66,7 +66,7 @@ def test_tags_written_per_family(indexed, conn, fake_clip):
     # Removing a label from the vocabulary drops it on re-tag.
     indexed.vocabulary_path.write_text(
         'templates: ["{}"]\nsubject: [red things]\nscene: [indoors, outdoors]\n'
-    )
+    , encoding="utf-8")
     E, ids = load_embeddings(indexed)
     tag_photos(conn, indexed, E, ids, fake_clip.encode_text)
     names = {r[0] for r in conn.execute("SELECT name FROM tags")}
@@ -91,7 +91,7 @@ def test_vocabulary_alternative_phrases(tmp_path):
     path = tmp_path / "v.yaml"
     path.write_text(
         'subject:\n  - cats: [a cat, a kitten]\n  - dogs: a dog\n  - boats\n'
-    )
+    , encoding="utf-8")
     v = load_vocabulary(path)
     assert [(l.name, l.phrases) for l in v.families["subject"]] == [
         ("cats", ["cats", "a cat", "a kitten"]),

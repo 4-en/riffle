@@ -53,7 +53,7 @@ def _exists(cfg: Config, slug: str) -> bool:
 
 def active_slug(cfg: Config) -> str:
     try:
-        slug = (_base(cfg) / "active_profile").read_text().strip()
+        slug = (_base(cfg) / "active_profile").read_text(encoding="utf-8").strip()
     except OSError:
         return DEFAULT
     try:
@@ -187,5 +187,5 @@ def switch(cfg: Config, slug: str) -> Path:
         marker.unlink(missing_ok=True)
     else:
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(slug + "\n")
+        marker.write_text(slug + "\n", encoding="utf-8")
     return path_for(cfg, slug)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -63,9 +65,8 @@ def _exif_jpeg(path: Path) -> None:
     im.save(path, exif=exif, quality=92)
 
 
-@pytest.fixture
-def archive_dir(tmp_path: Path) -> Path:
-    src = tmp_path / "photos"
+def _make_archive(root: Path) -> None:
+    src = root / "photos"
     trip = src / "trip"
     (trip / "RAW").mkdir(parents=True)
     (src / ".Trashes").mkdir()
@@ -78,12 +79,26 @@ def archive_dir(tmp_path: Path) -> Path:
     (trip / "orphan.NEF").write_bytes(b"raw without a jpeg")
     (trip / "broken.jpg").write_bytes(b"this is not a jpeg")
     _pattern(4).save(src / ".Trashes" / "deleted.jpg")
-    return tmp_path
+
+
+@pytest.fixture(scope="session")
+def _archive_template(tmp_path_factory) -> Path:
+    """The test photos, made once per run; each test gets a copy (archive_dir)."""
+    root = tmp_path_factory.mktemp("archive-template")
+    _make_archive(root)
+    return root
 
 
 @pytest.fixture
-def cfg(archive_dir: Path):
-    (archive_dir / "vocabulary.yaml").write_text(VOCAB)
+def archive_dir(tmp_path: Path, _archive_template: Path) -> Path:
+    # copy2 keeps the modification times, so an index made from the template still
+    # matches these files (a re-index sees them as unchanged).
+    shutil.copytree(_archive_template / "photos", tmp_path / "photos", copy_function=shutil.copy2)
+    return tmp_path
+
+
+def _make_cfg(root: Path):
+    (root / "vocabulary.yaml").write_text(VOCAB, encoding="utf-8")
     return config_from_dict(
         {
             "sources": ["photos"],
@@ -97,8 +112,13 @@ def cfg(archive_dir: Path):
                 "scene": {"min_prob": 0.0, "max_tags": 1},
             },
         },
-        archive_dir,
+        root,
     )
+
+
+@pytest.fixture
+def cfg(archive_dir: Path):
+    return _make_cfg(archive_dir)
 
 
 @pytest.fixture
@@ -164,9 +184,37 @@ def fake_index(cfg, progress=None, report=print):
         conn.close()
 
 
-@pytest.fixture
-def indexed(cfg, conn):
+@pytest.fixture(scope="session")
+def _indexed_template(_archive_template, tmp_path_factory):
+    """The test photos indexed once per run (about 0.3 s, 2 s on Windows, for each of
+    ~150 tests otherwise); ``indexed`` copies the result into each test."""
+    root = tmp_path_factory.mktemp("indexed-template")
+    shutil.copytree(_archive_template / "photos", root / "photos", copy_function=shutil.copy2)
+    cfg = _make_cfg(root)
     fake_index(cfg)
+    return cfg
+
+
+@pytest.fixture
+def indexed(cfg, conn, _indexed_template):
+    """The test photos, indexed: a copy of the session's index (thumbnails, previews,
+    embeddings, the catalogue), with the stored folder paths pointed at this test's
+    copy of the photos. The same as indexing them here."""
+    template = _indexed_template
+    shutil.copytree(
+        template.data_dir, cfg.data_dir, dirs_exist_ok=True, copy_function=shutil.copy2,
+        ignore=shutil.ignore_patterns(template.db_path.name + "*"),
+    )
+    src = sqlite3.connect(template.db_path)
+    try:
+        src.backup(conn)  # into the open connection (the file is in use)
+    finally:
+        src.close()
+    old, new = [str(s) for s in template.sources], [str(s) for s in cfg.sources]
+    for a, b in zip(old, new):
+        conn.execute("UPDATE photos SET source = ? WHERE source = ?", (b, a))
+        conn.execute("UPDATE raws SET source = ? WHERE source = ?", (b, a))
+    conn.commit()
     return cfg
 
 

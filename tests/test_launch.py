@@ -41,7 +41,7 @@ def test_health_identifies_riffle_and_its_config(server):
 def test_running_instance_is_reused_only_for_the_same_config(server, tmp_path):
     cfg, url = server
     assert running_url(cfg) is None  # no runtime file yet
-    runtime_file(cfg).write_text(json.dumps({"url": url, "pid": 1}))
+    runtime_file(cfg).write_text(json.dumps({"url": url, "pid": 1}), encoding="utf-8")
     assert running_url(cfg) == url
     other = type(cfg)(**{**cfg.__dict__, "path": tmp_path / "other.yaml"})
     assert running_url(other) is None  # a different library: start another instance
@@ -49,9 +49,9 @@ def test_running_instance_is_reused_only_for_the_same_config(server, tmp_path):
 
 def test_stale_runtime_file_is_ignored(indexed):
     runtime_file(indexed).parent.mkdir(parents=True, exist_ok=True)
-    runtime_file(indexed).write_text(json.dumps({"url": "http://127.0.0.1:1", "pid": 1}))
+    runtime_file(indexed).write_text(json.dumps({"url": "http://127.0.0.1:1", "pid": 1}), encoding="utf-8")
     assert running_url(indexed) is None
-    runtime_file(indexed).write_text("garbage")
+    runtime_file(indexed).write_text("garbage", encoding="utf-8")
     assert running_url(indexed) is None
 
 

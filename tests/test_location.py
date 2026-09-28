@@ -70,23 +70,23 @@ def test_parse_ios_records_and_gpx(tmp_path):
             "visit": {"probability": "0.9", "topCandidate": {"placeLocation": f"geo:{STOCKHOLM[0]},{STOCKHOLM[1]}"}}},
            {"startTime": "2024-05-01T11:00:00.000+02:00", "endTime": "2024-05-01T12:00:00.000+02:00",
             "timelinePath": [{"point": f"geo:{UPPSALA[0]},{UPPSALA[1]}", "durationMinutesOffsetFromStartTime": "30"}]}]
-    (tmp_path / "ios.json").write_text(json.dumps(ios))
+    (tmp_path / "ios.json").write_text(json.dumps(ios), encoding="utf-8")
     h = load_file(tmp_path / "ios.json")
     assert len(h.visits) == 1 and h.points[0][0] == load_file(tmp_path / "ios.json").visits[0][1] + 1800
 
     records = {"locations": [{"latitudeE7": 593293000, "longitudeE7": 180686000, "timestamp": "2024-05-01T08:00:00Z", "accuracy": 20},
                              {"latitudeE7": 598586000, "longitudeE7": 176389000, "timestampMs": "1714554000000"}]}
-    (tmp_path / "Records.json").write_text(json.dumps(records))
+    (tmp_path / "Records.json").write_text(json.dumps(records), encoding="utf-8")
     assert len(load_file(tmp_path / "Records.json").points) == 2
 
     gpx = f"""<?xml version="1.0"?><gpx xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg>
       <trkpt lat="{STOCKHOLM[0]}" lon="{STOCKHOLM[1]}"><time>2024-05-01T08:00:00Z</time></trkpt>
       <trkpt lat="{UPPSALA[0]}" lon="{UPPSALA[1]}"><time>2024-05-01T09:00:00Z</time></trkpt>
     </trkseg></trk></gpx>"""
-    (tmp_path / "track.gpx").write_text(gpx)
+    (tmp_path / "track.gpx").write_text(gpx, encoding="utf-8")
     assert [p[1:3] for p in load_file(tmp_path / "track.gpx").points] == [STOCKHOLM, UPPSALA]
 
-    (tmp_path / "other.json").write_text('{"hello": 1}')
+    (tmp_path / "other.json").write_text('{"hello": 1}', encoding="utf-8")
     with pytest.raises(HistoryError, match="not a recognised"):
         load_file(tmp_path / "other.json")
 
@@ -187,8 +187,8 @@ def test_unknown_location_group_is_last(indexed, conn):
 
 
 def test_library_location_history_endpoints(archive_dir, timeline_file, tmp_path):
-    (archive_dir / "config.yaml").write_text("sources:\n  - photos\nmodel:\n  name: fake\n  pretrained: test\n")
-    (archive_dir / "vocabulary.yaml").write_text("subject: [a, b]\n")
+    (archive_dir / "config.yaml").write_text("sources:\n  - photos\nmodel:\n  name: fake\n  pretrained: test\n", encoding="utf-8")
+    (archive_dir / "vocabulary.yaml").write_text("subject: [a, b]\n", encoding="utf-8")
     cfg = load_config(archive_dir / "config.yaml")
     with TestClient(create_app(cfg, text_encoder=FakeClip().encode_text, index_runner=fake_index)) as c:
         added = c.post("/api/location-history", json={"path": str(timeline_file)})
@@ -196,7 +196,7 @@ def test_library_location_history_endpoints(archive_dir, timeline_file, tmp_path
         assert load_config(archive_dir / "config.yaml").location_history == [timeline_file]
         assert c.post("/api/location-history", json={"path": str(timeline_file)}).status_code == 409
         bad = tmp_path / "notes.json"
-        bad.write_text("[1, 2]")
+        bad.write_text("[1, 2]", encoding="utf-8")
         assert c.post("/api/location-history", json={"path": str(bad)}).status_code == 400
 
         listed = c.get("/api/location-history").json()

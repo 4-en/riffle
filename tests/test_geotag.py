@@ -132,7 +132,7 @@ def test_export_adds_location_to_copies_only(placed, archive_dir, tmp_path):
     assert b"exif:GPSLatitude" in (dest / "IMG_0002.xmp").read_bytes()  # ...its position is in the sidecar
     assert sha256_file(dest / "IMG_0001.jpg") == originals[trip / "IMG_0001.jpg"]  # camera GPS: untouched
     assert (dest / "IMG_0002.jpg").stat().st_mtime == pytest.approx((trip / "IMG_0002.jpg").stat().st_mtime, abs=1)
-    manifest = (dest / "export-manifest.csv").read_text()
+    manifest = (dest / "export-manifest.csv").read_text(encoding="utf-8-sig")
     assert ",image," in manifest and "sidecar" in manifest and ",exif" in manifest
 
     again = run_export(cfg, report=lambda _: None, photo_ids=ids, folder=str(dest), content="images_raws", add_location=True)
