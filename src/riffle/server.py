@@ -102,6 +102,8 @@ class CurateIn(BaseModel):
     query: str = ""  # a text search that scores the candidates (query.py syntax)
     surprise: float = 0.0  # 0 = the same draft every time … 1 = less obvious photos get a chance
     like_locked: float = 0.0  # -1 unlike the locked photos … 1 like them (0: no influence)
+    unique: float = 0.0  # -1 common … 1 unlike the rest of the library (0: no influence)
+    query_weight: float = 1.0  # how much the search counts, 0..2
     seed: int = 0  # the random draw for surprise
 
 
@@ -337,7 +339,8 @@ def create_app(
     def warm_caches() -> None:
         """In the background: whenever the library's embeddings change (at start, after
         an indexing run), build what the Similar grouping and Discover need first
-        (the unfiltered library's clusters at every level, Discover's lens data), so
+        (the unfiltered library's clusters at every level, Discover's lens data, Curate's
+        uniqueness), so
         the first click does not wait. Waits for the AI model (the names need it)."""
         from . import clusters
 
@@ -359,10 +362,11 @@ def create_app(
                         list_photos(flt=PhotoFilter(), dupes="collapse", collapse="dupes", sort="taken_at",
                                     group="similar", level=level, offset=0, limit=1, conn=conn, index=index)
                     discover_pool(conn, index)
+                    uniqueness_scores(conn, index)
                 finally:
                     conn.close()
                 warmed = index.stamp
-                log.info("warmed the Similar grouping and Discover for %d photos", len(index.ids))
+                log.info("warmed the Similar grouping, Discover and uniqueness for %d photos", len(index.ids))
             except Exception:  # noqa: BLE001 - warming is an optimisation; first use computes it anyway
                 log.exception("warming the caches failed")
                 warmed = index.stamp
@@ -815,6 +819,42 @@ def create_app(
             return layout_state["matrix"], index.row
 
     cluster_files: dict = {"lock": threading.Lock()}
+    unique_state: dict = {"key": None, "scores": None, "lock": threading.Lock()}
+
+    def uniqueness_scores(conn, index: Index) -> dict[int, float]:
+        """curate.uniqueness for every photo, {id: score}: in memory, and on disk by the
+        exact photos and their groups, so a restart does not redo it (1.3 s at 13,000)."""
+        import hashlib
+
+        from . import curate
+
+        groups = {
+            r[0]: r[1] or (r[2] and 10**9 + r[2]) or -r[0]
+            for r in conn.execute("SELECT id, stack_id, dupe_group FROM photos WHERE status = 'ok'")
+        }
+        ids = np.array([i for i in index.ids.tolist() if i in groups], dtype=np.int64)
+        group = np.array([groups[i] for i in ids.tolist()], dtype=np.int64)
+        key = hashlib.sha1(ids.tobytes() + group.tobytes() + str(curate.UNIQUE_NEIGHBOURS).encode()).hexdigest()[:20]
+        with unique_state["lock"]:
+            if unique_state["key"] == key:
+                return unique_state["scores"]
+            folder = cfg.embeddings_dir / "clusters"
+            path = folder / f"{model_id}-unique.{key}.npy"
+            try:
+                u = np.load(path)
+                if len(u) != len(ids):
+                    raise ValueError("stale")
+            except (OSError, ValueError):
+                u = curate.uniqueness(index.E[[index.row[i] for i in ids.tolist()]], group) if len(ids) else np.zeros(0)
+                folder.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_suffix(".tmp.npy")
+                np.save(tmp, u)
+                os.replace(tmp, path)
+                for old in folder.glob(f"{model_id}-unique.*.npy"):
+                    if old != path:
+                        old.unlink(missing_ok=True)
+            unique_state["key"], unique_state["scores"] = key, dict(zip(ids.tolist(), u.tolist()))
+            return unique_state["scores"]
 
     def cached_cluster(ids: np.ndarray, E: np.ndarray, level: str) -> np.ndarray:
         """clusters.cluster, cached on disk by the exact set of photos, the level, and
@@ -854,13 +894,15 @@ def create_app(
 
         from . import discover
 
-        key = (index.stamp, id(state["encoder"]))
+        # (With how many photos have colours and accents: an indexing run that only adds
+        # those does not change the embeddings.)
+        key = (index.stamp, id(state["encoder"]), tuple(conn.execute("SELECT COUNT(brightness), COUNT(accents) FROM photos").fetchone()))
         with discover_state["lock"]:
             if discover_state["key"] == key:
                 return discover_state["pool"]
             info = {r["id"]: r for r in conn.execute(
                 """SELECT id, stack_id, dupe_group, taken_at, brightness, contrast, colorfulness, hues,
-                          clip_highlights, clip_shadows
+                          accents, clip_highlights, clip_shadows
                    FROM photos WHERE status = 'ok'"""
             )}
             ids = np.array([i for i in index.ids.tolist() if i in info], dtype=np.int64)
@@ -890,6 +932,7 @@ def create_app(
                 contrast=floats("contrast"),
                 colorfulness=floats("colorfulness"),
                 hues=hues,
+                accents=discover.accent_matrix([r["accents"] for r in rows]),
             )
             namer = cluster_namer(index)
             if namer is not None and len(ids):
@@ -1222,6 +1265,7 @@ def create_app(
         photo = dict(r)
         photo.pop("hues", None)  # binary (colors.py); only Curate uses it
         photo.pop("layout", None)  # binary (discover.layout_of); only Discover uses it
+        photo.pop("accents", None)  # colors.accents_of; for Curate and Discover
         photo["path"] = str(Path(r["source"]) / r["rel_path"])
         photo["thumb"] = f"/thumbs/{photo_id}.jpg"
         photo["preview"] = f"/previews/{photo_id}.jpg"
@@ -1615,6 +1659,8 @@ def create_app(
             removed=body.removed,
             surprise=min(1.0, max(0.0, body.surprise)),
             like_locked=min(1.0, max(-1.0, body.like_locked)),
+            unique=min(1.0, max(-1.0, body.unique)),
+            query_weight=min(2.0, max(0.0, body.query_weight)),
             seed=body.seed,
         )
         where, params = flt.where(model_id)
@@ -1636,6 +1682,7 @@ def create_app(
             style_scores={**scores, **look},
             place_labels=location_labels(conn)["place"],
             query_scores=query_scores,
+            unique_scores=uniqueness_scores(conn, index) if p.unique else None,
         )
         return pool, p, look_labels
 
@@ -1993,7 +2040,7 @@ def create_app(
                 "query": pool.query_pct is not None if body.query.strip() else None,
                 # candidates whose colours are not analysed yet (the next index does it)
                 "colors_missing": conn.execute(
-                    f"SELECT COUNT(*) FROM photos p WHERE {where} AND p.brightness IS NULL", params
+                    f"SELECT COUNT(*) FROM photos p WHERE {where} AND (p.brightness IS NULL OR p.accents IS NULL)", params
                 ).fetchone()[0],
             },
         }

@@ -395,6 +395,8 @@
     tag: '#c084fc',
     opposite: '#fb923c',
     complement: '#2dd4bf',
+    accent: '#f87171',
+    accent_grows: '#fca5a5',
     moment: '#94a3b8',
     place: '#34d399',
     nearby: '#4ade80',
@@ -659,10 +661,10 @@
   }
   /* Growing a hovered photo, and making way for it. */
   .grow {
-    transition: width 0.75s ease, height 0.75s ease, left 0.75s ease, top 0.75s ease, box-shadow 0.75s;
+    transition: width 1.4s ease, height 1.4s ease, left 1.4s ease, top 1.4s ease, box-shadow 1.4s;
   }
   .moving {
-    transition: left 0.75s ease, top 0.75s ease, transform 0.75s ease;
+    transition: left 1.4s ease, top 1.4s ease, transform 1.4s ease;
   }
   @media (prefers-reduced-motion: reduce) {
     .backdrop, .glow, .branch, g { animation: none !important; }

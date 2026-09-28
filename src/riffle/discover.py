@@ -8,7 +8,8 @@ aspect and are opposite in another; context lenses use time and place. The aspec
   (clusters.Namer), z-scored per phrase and kept to the phrases that stand out
   most, split into *things* (subjects) and *settings* (light, style, texture,
   composition);
-- colour and light (colors.py): hue histogram, brightness, contrast, colourfulness;
+- colour and light (colors.py): hue histogram, brightness, contrast, colourfulness,
+  and accent colours (intense but perhaps small: the red balloon in a blue sky);
 - a layout fingerprint: a 12×12 luminance grid of the thumbnail (``layout_of``);
 - the user's own tags (fixed and learned), and time;
 - place: every known position, with its uncertainty (camera GPS ~20 m, the location
@@ -37,7 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .colors import BINS, HUES, WIDTH
+from .colors import BINS, HUES, WIDTH, accent_strength, hue_name, parse_accents
 
 GRID = 12  # layout fingerprint: GRID × GRID luminance cells
 TOP_PHRASES = 12  # phrases kept per photo in its profile (the ones that stand out most)
@@ -52,6 +53,8 @@ UNCERTAINTY_COST = 0.4  # score lost at MAX_UNCERTAIN (so certain positions come
 DRIFT_WEIGHT = 0.15
 OTHER_KIND = 0.25  # penalty for a photo ↔ illustration jump in the colour, light, and shape lenses
 MIN_COLOUR = 0.04  # colour lenses need this much chroma-weighted hue mass in the centre
+MIN_ACCENT = 0.35  # accent lenses need an accent this strong in the centre (colors.accent_strength)
+ACCENT_OTHER_KIND = 0.6  # their photo ↔ illustration penalty: illustrations' accents are louder (first library: most of the branch)
 QUALITY_FLOOR = 0.3  # the weakest share of the library is left out (unless picked)
 QUALITY_WEIGHT = 0.3  # the quality bonus: -0.1 at the floor … +0.15 for the best
 SAMPLE_FROM = 4  # a branch samples its photos from this many times as many top candidates
@@ -73,6 +76,7 @@ class Pool:
     contrast: np.ndarray
     colorfulness: np.ndarray
     hues: np.ndarray  # (n, 24), zeros if not analysed
+    accents: np.ndarray | None = None  # (n, 3, 2): per accent (hue in degrees, strength), strongest first; zeros: none
     layout: np.ndarray | None = None  # (n, GRID*GRID) z-scored, or None
     things: np.ndarray | None = None  # (n, T) sparse profile over thing phrases, rows normalised
     settings: np.ndarray | None = None  # (n, S) the same over setting phrases
@@ -142,6 +146,21 @@ def load_layouts(path: Path, thumbs_dir: Path, ids: np.ndarray, stamp) -> np.nda
     return out
 
 
+def accent_matrix(texts: list) -> np.ndarray:
+    """(n, 3, 2) accents from the catalogue's JSON (colors.accents_of): hue and strength."""
+    out = np.zeros((len(texts), 3, 2), np.float32)
+    for k, text in enumerate(texts):
+        for a, (deg, intensity, area) in enumerate(parse_accents(text)[:3]):
+            out[k, a] = (deg, accent_strength(intensity, area))
+    return out
+
+
+def _accent_near(accents: np.ndarray, degrees: float) -> np.ndarray:
+    """Per photo: its strongest accent within ±30° of this hue (triangular window)."""
+    delta = np.abs(((accents[:, :, 0] - degrees + 180.0) % 360.0) - 180.0)
+    return (np.clip(1.0 - delta / 30.0, 0, None) * accents[:, :, 1]).max(axis=1)
+
+
 def _hue_names(hist: np.ndarray, k: int = 2) -> list[str]:
     """The named hues (colors.HUES) that carry most of this histogram's colour."""
     centres = np.arange(BINS) * WIDTH
@@ -198,6 +217,8 @@ LENS_LABELS = {
     "tag": "Shares a tag",
     "opposite": "Same subject, opposite light",
     "complement": "Complementary colours",
+    "accent": "Accent echo",
+    "accent_grows": "Accent takes over",
     "moment": "Same day",
     "traits": "Shared traits",
     "mirror": "Mirrored",
@@ -258,6 +279,46 @@ def lens_complement(pool, c, sim, rng=None):
     score = inter * mass - 0.3 * sim - OTHER_KIND * _other_kind(pool, c)
     here, there = _hue_names(pool.hues[c], 1), _hue_names(opposite, 1)
     return score, 0.3, lambda j: f"{(here or ['?'])[0]} ↔ {(_hue_names(pool.hues[j], 1) or there or ['?'])[0]}"
+
+
+def _centre_accent(pool, c):
+    """The centre's strongest accent (hue, strength), or None if it has no strong one."""
+    if pool.accents is None or pool.accents[c, 0, 1] < MIN_ACCENT:
+        return None
+    return float(pool.accents[c, 0, 0]), float(pool.accents[c, 0, 1])
+
+
+def lens_accent(pool, c, sim, rng=None):
+    """The same accent colour elsewhere, in photos that are otherwise different: the red
+    balloon, then a red door."""
+    found = _centre_accent(pool, c)
+    if found is None:
+        return None
+    deg, strength = found
+    # As strong as the centre's is enough: a louder accent is not a closer echo.
+    near = np.minimum(_accent_near(pool.accents, deg), strength)
+    score = near - 0.6 * sim - ACCENT_OTHER_KIND * _other_kind(pool, c)
+    name = hue_name(deg)
+    return score, 0.0, lambda j: f"{'an' if name[0] in 'aeiou' else 'a'} {name} accent"
+
+
+def lens_accent_grows(pool, c, sim, rng=None):
+    """The centre's accent colour as the whole palette: from a red balloon in a blue sky
+    to a red sunset. Photos with much colour, most of it near the accent's hue."""
+    found = _centre_accent(pool, c)
+    if found is None:
+        return None
+    deg, _ = found
+    centres = np.arange(BINS) * WIDTH
+    delta = np.abs(((centres - deg + 180.0) % 360.0) - 180.0)
+    near = pool.hues @ np.clip(1.0 - delta / 30.0, 0, None)  # colour mass near the accent's hue
+    mass = pool.hues.sum(axis=1)
+    share = near / (mass + 1e-9)  # how much of each photo's colour it is
+    if share[c] >= 0.5:  # already the centre's main colour: the colour echo covers it
+        return None
+    score = share * np.clip(mass / 0.15, 0, 1) - 0.3 * sim - ACCENT_OTHER_KIND * _other_kind(pool, c)
+    name = hue_name(deg)
+    return score, 0.3, lambda j: f"the {name} accent, everywhere"
 
 
 def lens_shape(pool, c, sim, rng=None):
@@ -480,6 +541,8 @@ LENSES = {
     "tag": lens_tag,
     "opposite": lens_opposite,
     "complement": lens_complement,
+    "accent": lens_accent,
+    "accent_grows": lens_accent_grows,
     "moment": lens_moment,
     "traits": lens_traits,
     "mirror": lens_mirror,

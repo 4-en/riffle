@@ -134,6 +134,10 @@ MIGRATIONS = [
     """
     ALTER TABLE photos ADD COLUMN layout BLOB;
     """,
+    # v9: accent colours of the preview (colors.accents_of, JSON), derived; for Curate and Discover.
+    """
+    ALTER TABLE photos ADD COLUMN accents TEXT;
+    """,
 ]
 
 # v1 is SCHEMA; each migration adds one version (so adding one bumps it).

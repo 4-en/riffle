@@ -81,6 +81,22 @@ def test_lenses_find_their_kind_of_relation():
     assert subject["photos"][0][0] in (12, 15) and "sheep" in subject["reason"]
 
 
+def test_accent_lenses():
+    pool = make_pool()
+    pool.hues[0] = hues(b14=0.3)  # the centre: mostly blue, with a red accent (a balloon in the sky)
+    red = "[[2.0, 0.8, 0.02]]"
+    pool.accents = discover.accent_matrix([red, red, None, None, red, None, red])
+    echo = first(pool, "accent")
+    assert echo["photos"][0][0] == 14 and echo["reason"] == "a red accent"  # the same accent, least alike first
+    assert 11 not in lens_ids([echo], "accent")  # (its stack mate)
+    grows = first(pool, "accent_grows")
+    assert grows["photos"][0][0] == 13 and "red" in grows["reason"]  # red all over
+    pool.hues[0] = hues(b0=0.3)  # a mostly red centre: red is its main colour, not an accent
+    assert "accent_grows" not in {b["lens"] for b in discover.discover(pool, 10)}
+    pool.accents[0] = 0  # no accent: neither lens
+    assert not {"accent", "accent_grows"} & {b["lens"] for b in discover.discover(pool, 10)}
+
+
 def test_exclusions_and_no_photo_twice():
     pool = make_pool()
     branches = discover.discover(pool, 10, trail=[13])

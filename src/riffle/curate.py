@@ -5,7 +5,8 @@ rejects), each stack or duplicate group enters once, as its pick or its best
 frame. Every candidate gets a quality score ``q`` (rank percentiles within the
 candidates, so the scales are comparable): the user's taste model, the CLIP
 quality score, exposure, and bonuses for picks and exports; optional style
-sliders (CLIP prompt pairs from vocabulary.yaml) add to it. Then a greedy
+sliders (CLIP prompt pairs from vocabulary.yaml), colour and light choices, a
+search, and uniqueness in the whole library add to it. Then a greedy
 maximal-marginal-relevance selection trades quality against redundancy with the
 photos already chosen: similar content, close in time, close in place (from the
 coordinates). Locked photos are kept, removed ones never return (for this draft
@@ -31,7 +32,9 @@ from .stacks import exif_seconds
 W_TASTE, W_CLIP, W_EXPOSURE = 0.45, 0.25, 0.10
 BONUS_PICK, BONUS_EXPORTED = 0.15, 0.05
 STYLE_STRENGTH = 0.6  # a style slider at full strength can outweigh the generic quality
-QUERY_STRENGTH = 1.0  # a search in Curate: its best matches clearly win, its worst rarely get in
+QUERY_STRENGTH = 1.0  # a search in Curate at the default weight: its best matches clearly win, its worst rarely get in
+UNIQUE_STRENGTH = 0.6  # the uniqueness slider at either end, like a style slider
+UNIQUE_NEIGHBOURS = 5  # uniqueness: 1 − the mean similarity to this many closest photos (outside the photo's own group)
 GREY_BELOW = 0.02  # a photo with less colour mass than this has no main hue (sorted with the greys)
 LIKE_LOCKED_STRENGTH = 0.7  # the "like the locked photos" slider at either end (a percentile of closeness to them)
 SURPRISE_SCALE = 1.0  # the surprise slider at 1: Gumbel noise of this many standard deviations of the candidates' quality
@@ -52,6 +55,8 @@ class Params:
     removed: list[int] = field(default_factory=list)
     surprise: float = 0.0  # 0 = the same draft every time; up to 1 = more chance for less obvious photos
     like_locked: float = 0.0  # -1 = unlike the locked photos, 0 = no influence, 1 = like them
+    unique: float = 0.0  # -1 = common photos (like many others in the library), 0 = no influence, 1 = one of a kind
+    query_weight: float = 1.0  # how much a search counts: 0 = not at all, 1 = the default, 2 = twice as much
     seed: int = 0  # which random draw (a new seed: another draft)
 
 
@@ -67,16 +72,18 @@ LOOKS = {
 def look_scores(conn: sqlite3.Connection, look: dict) -> tuple[dict, dict, dict]:
     """Scores, weights and labels for the chosen colour/light preferences, in the
     form of styles: ``({key: {photo id: score}}, {key: weight}, {key: label})``.
-    ``look``: ``{"brightness": -1|0|1, "contrast": ..., "colorfulness": ..., "hue": name}``.
-    Photos not analysed yet get the median, so they are neither favoured nor dropped."""
-    from .colors import HUES, hue_affinity
+    ``look``: ``{"brightness": -1|0|1, "contrast": ..., "colorfulness": ..., "hue": name,
+    "accent": name}``. Photos not analysed yet get the median, so they are neither
+    favoured nor dropped."""
+    from .colors import HUES, accent_affinity, hue_affinity
 
     wanted = {col: int(look.get(col) or 0) for col in LOOKS if look.get(col) in (1, -1)}
     hue = look.get("hue") if look.get("hue") in HUES else None
-    if not wanted and not hue:
+    accent = look.get("accent") if look.get("accent") in HUES else None
+    if not wanted and not hue and not accent:
         return {}, {}, {}
     rows = conn.execute(
-        "SELECT id, brightness, contrast, colorfulness, hues FROM photos WHERE status = 'ok'"
+        "SELECT id, brightness, contrast, colorfulness, hues, accents FROM photos WHERE status = 'ok'"
     ).fetchall()
     scores, weights, labels = {}, {}, {}
 
@@ -93,6 +100,10 @@ def look_scores(conn: sqlite3.Connection, look: dict) -> tuple[dict, dict, dict]
     if hue:
         degrees = HUES[hue][0]
         add("look.hue", hue, {r["id"]: None if r["hues"] is None else hue_affinity(r["hues"], degrees) for r in rows})
+    if accent:
+        degrees = HUES[accent][0]
+        add("look.accent", f"{accent} accent",
+            {r["id"]: None if r["accents"] is None else accent_affinity(r["accents"], degrees) for r in rows})
     return scores, weights, labels
 
 
@@ -135,6 +146,25 @@ def percentile(values: np.ndarray) -> np.ndarray:
     return (sums / counts)[inverse] / (n - 1)
 
 
+def uniqueness(E: np.ndarray, group: np.ndarray, k: int = UNIQUE_NEIGHBOURS, chunk: int = 1024) -> np.ndarray:
+    """How unlike the rest of the library each photo is: 1 − its mean CLIP similarity to
+    its ``k`` closest photos, not counting its own stack or duplicate group (``group``:
+    one key per row), so a burst of one scene is judged against everything else. About
+    1.3 s for 13,000 photos (in chunks, so memory stays small)."""
+    n = len(E)
+    out = np.zeros(n, np.float32)
+    k = min(k, n - 1)
+    if k <= 0:
+        return out
+    for start in range(0, n, chunk):
+        S = E[start : start + chunk] @ E.T
+        S[group[start : start + chunk, None] == group[None, :]] = -np.inf
+        top = -np.partition(-S, k - 1, axis=1)[:, :k]
+        top = np.where(np.isfinite(top), top, 0.0)  # (fewer than k photos outside the group)
+        out[start : start + chunk] = 1.0 - top.mean(axis=1)
+    return out
+
+
 def haversine(lat1, lon1, lat2, lon2):
     p1, p2 = np.radians(lat1), np.radians(lat2)
     dp, dl = p2 - p1, np.radians(lon2 - lon1)
@@ -159,6 +189,7 @@ class Pool:
     style_pct: dict[str, np.ndarray]
     info: list[dict]  # per candidate: taken_at, place, day
     query_pct: np.ndarray | None = None  # rank of each candidate for the search (if any)
+    unique_lib: np.ndarray | None = None  # uniqueness as a percentile within the whole library (if asked for)
     brightness: np.ndarray | None = None  # for ordering a draft (nan: not analysed)
     hue: np.ndarray | None = None  # main hue in degrees (nan: too little colour to have one)
 
@@ -176,6 +207,7 @@ def build_pool(
     style_scores: dict[str, dict[int, float]],
     place_labels: dict[str, str],
     query_scores: dict[int, float] | None = None,
+    unique_scores: dict[int, float] | None = None,
 ) -> Pool | None:
     rows = conn.execute(
         f"""SELECT p.id, p.stack_id, p.dupe_group, p.taken_at, p.width, p.height,
@@ -247,7 +279,16 @@ def build_pool(
     # A search scores (it does not filter): its own term, not averaged with the styles.
     query_pct = percentile(np.array([query_scores.get(int(i), -1.0) for i in ids])) if query_scores else None
     if query_pct is not None:
-        q = q + QUERY_STRENGTH * (2 * query_pct - 1)
+        q = q + QUERY_STRENGTH * p.query_weight * (2 * query_pct - 1)
+    # Uniqueness in the library (not within the candidates: that is what variety does),
+    # ranked among the candidates so the slider means the same in any selection.
+    unique_lib = None
+    if unique_scores:
+        u = np.array([unique_scores.get(int(i), np.nan) for i in ids])
+        known = np.array(sorted(v for v in unique_scores.values()))
+        unique_lib = np.searchsorted(known, np.nan_to_num(u, nan=float(np.median(known)))) / max(len(known) - 1, 1)
+        if p.unique:
+            q = q + UNIQUE_STRENGTH * p.unique * (2 * percentile(np.nan_to_num(u, nan=float(np.median(known)))) - 1)
 
     info = []
     for r in reps:
@@ -262,7 +303,7 @@ def build_pool(
 
     brightness = np.array([np.nan if r["brightness"] is None else r["brightness"] for r in reps])
     hue = np.array([h if h is not None and mass >= GREY_BELOW else np.nan for h, mass in (dominant_hue(r["hues"]) for r in reps)])
-    return Pool(ids, members, E, t, lat, lon, loc_w, q, picked, landscape, style_pct, info, query_pct, brightness, hue)
+    return Pool(ids, members, E, t, lat, lon, loc_w, q, picked, landscape, style_pct, info, query_pct, unique_lib, brightness, hue)
 
 
 def redundancy_to(pool: Pool, j: int, p: Params) -> np.ndarray:
@@ -442,6 +483,8 @@ def reason(pool: Pool, j: int, p: Params, style_labels: dict[str, str]) -> str:
         parts.append(f"best of {len(pool.members[j])} similar shots")
     if pool.query_pct is not None and pool.query_pct[j] >= 0.9:
         parts.append("a top match for the search")
+    if p.unique > 0 and pool.unique_lib is not None and pool.unique_lib[j] >= 0.9:
+        parts.append("unlike most of the library")
     strong = [style_labels.get(k, k).lower() for k, w in p.styles.items() if w > 0 and k in pool.style_pct and pool.style_pct[k][j] >= 0.8]
     if strong:
         parts.append("very " + " & ".join(strong))

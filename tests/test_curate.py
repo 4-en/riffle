@@ -46,17 +46,18 @@ class Lib:
     def flag(self, ids, value):
         selections.set_flags(self.conn, self.cfg.selections_path, [(list(ids), value)])
 
-    def pool(self, p, quality=None, styles=None, query=None):
+    def pool(self, p, quality=None, styles=None, query=None, uniqueness=None):
         ids = list(self.vecs)
         where, params = PhotoFilter().where("fake__test")
         return curate.build_pool(
             self.conn, where, params, {pid: k for k, pid in enumerate(ids)}, np.stack([self.vecs[i] for i in ids]), p,
             taste=None, clip_quality=quality, style_scores=styles or {}, place_labels={}, query_scores=query,
+            unique_scores=uniqueness,
         )
 
-    def pick(self, quality=None, scores=None, query=None, **kw) -> list[int]:
+    def pick(self, quality=None, scores=None, query=None, uniqueness=None, **kw) -> list[int]:
         p = curate.Params(**kw)
-        pool = self.pool(p, quality, scores, query)
+        pool = self.pool(p, quality, scores, query, uniqueness)
         return [int(pool.ids[j]) for j in curate.select(pool, p)]
 
 
@@ -272,6 +273,34 @@ def test_a_search_scores_but_does_not_filter(cfg):
     j = list(pool.ids).index(ids[0])
     assert "top match for the search" in curate.reason(pool, j, p, {})
     assert lib.pick(quality, n=3, **FLAT) == ids[::-1][:3]  # without a search: quality
+    # Its influence: 0 ignores it, more makes it win over bigger quality gaps.
+    assert lib.pick(quality, query=relevance, n=3, query_weight=0.0, **FLAT) == ids[::-1][:3]
+    steep = {pid: k / 5 for k, pid in enumerate(ids)}  # quality now differs a lot
+    assert not set(lib.pick(steep, query=relevance, n=3, query_weight=0.3, **FLAT)) & set(ids[:3])
+    assert set(lib.pick(steep, query=relevance, n=3, query_weight=2.0, **FLAT)) == set(ids[:3])
+
+
+def test_uniqueness_ignores_the_photos_own_group():
+    E = np.stack([axis(0), near(axis(0), 1), axis(1), near(axis(1), 2), near(axis(1), 3), axis(2)])
+    E /= np.linalg.norm(E, axis=1, keepdims=True)
+    u = curate.uniqueness(E, np.array([1, 1, 2, 3, 4, 5]), k=1)
+    assert u[0] > 0.9  # its only look-alike is in its own stack: unique in the library
+    assert u[2] < 0.1  # others (not its stack) look like it
+    assert u[5] > 0.9
+    assert curate.uniqueness(E[:1], np.array([1])).tolist() == [0.0]  # alone: nothing to compare
+
+
+def test_uniqueness_slider(cfg):
+    lib = Lib(cfg)
+    ids = [lib.add() for _ in range(10)]
+    quality = {pid: 0.5 + k / 100 for k, pid in enumerate(ids)}  # later ones slightly better
+    scores = {pid: (1.0 if k < 3 else 0.1) - k / 1000 for k, pid in enumerate(ids)}  # the first three are one of a kind
+    assert lib.pick(quality, uniqueness=scores, n=3, **FLAT) == lib.pick(quality, n=3, **FLAT)  # 0: no influence
+    assert set(lib.pick(quality, uniqueness=scores, n=3, unique=1.0, **FLAT)) == set(ids[:3])
+    assert not set(lib.pick(quality, uniqueness=scores, n=3, unique=-1.0, **FLAT)) & set(ids[:3])
+    p = curate.Params(n=3, unique=1.0, **FLAT)
+    pool = lib.pool(p, quality, uniqueness=scores)
+    assert "unlike most of the library" in curate.reason(pool, list(pool.ids).index(ids[0]), p, {})
 
 
 def test_alternatives_start_with_the_stack(cfg):
@@ -353,3 +382,17 @@ def test_curate_api_with_a_search(indexed):
         assert "top match for the search" in next(i["reason"] for i in d["items"] if i["id"] == best)
         assert c.post("/api/curate", json={"n": 2}).json()["used"]["query"] is None  # no search given
         assert c.post("/api/curate", json={"n": 2, "query": '-""'}).json()["used"]["query"] is False  # nothing to search for
+
+
+def test_curate_api_uniqueness_is_cached_on_disk(indexed):
+    body = {"n": 2, "variety": 0, "time_spread": 0, "place_spread": 0}
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:
+        assert not list((indexed.embeddings_dir / "clusters").glob("*-unique.*.npy"))  # only computed when used
+        d = c.post("/api/curate", params={"dupes": "all"}, json=body | {"unique": 1.0}).json()
+        assert len(d["items"]) == 2
+    saved = list((indexed.embeddings_dir / "clusters").glob("*-unique.*.npy"))
+    assert len(saved) == 1
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:  # a restart reads it back
+        again = c.post("/api/curate", params={"dupes": "all"}, json=body | {"unique": 1.0}).json()
+        assert [i["id"] for i in again["items"]] == [i["id"] for i in d["items"]]
+    assert list((indexed.embeddings_dir / "clusters").glob("*-unique.*.npy")) == saved
