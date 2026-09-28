@@ -215,15 +215,19 @@ Matching relies on the camera clock, so a camera set to the wrong time places ph
 
 ## Model
 
-The CLIP model drives search, tags, stacks, Curate, and the quality hint. Set it under `model:` in `config.yaml`:
+The CLIP model drives search, tags, stacks, Curate, and the quality hint. Choose it in **Settings → AI model**, or set it under `model:` in `config.yaml`:
 
 | | `name` / `pretrained` | Notes |
 |---|---|---|
 | Default | `ViT-L-14-quickgelu` / `dfn2b` | Good search and tags. Fast on a GPU, slow to index on a laptop CPU. |
 | Faster | `ViT-B-16` / `dfn2b` | About 4× faster to index, 0.6 GB. Somewhat looser results. The default of the downloadable builds. |
 | Max quality | `ViT-H-14-quickgelu` / `dfn5b` | Best results. About 2.5× slower than the default, ~4 GB of memory. |
+| Nature: BioCLIP 2.5 | `hf-hub:imageomics/bioclip-2.5-vith14` (no `pretrained`) | Plants, animals, fungi: tells species apart (female mallards next to the drakes) and finds them by common or scientific name. Weaker on everyday scenes, styles and the quality hint. 3.9 GB. |
+| Nature: BioCLIP 2 | `hf-hub:imageomics/bioclip-2` | The same focus, smaller (1.7 GB). |
 
-Each model keeps its own embeddings and tags, so you can switch back and forth. The first `riffle index` after switching embeds every photo once. Similarity values differ between models, so also set `stacks.min_similarity`: 0.92 for ViT-L-14, about 0.90 for ViT-B-16.
+Any other model OpenCLIP can load works too (Settings → AI model → *Another OpenCLIP model*), including Hugging Face repositories in OpenCLIP's format (`hf-hub:<repo>`).
+
+Each model keeps its own embeddings and tags, so you can switch back and forth. Switching in Settings reads every photo with the new model first, in the background, while the current one stays in use; a model used before switches at once. Similarity values differ between models, so switching also sets `stacks.min_similarity`: 0.92 for ViT-L-14, 0.90 for ViT-B-16, and for other models a value fitted to your camera bursts (photos taken within two seconds of each other). When editing `config.yaml` by hand, run `riffle index` and set it yourself.
 
 ## Tags
 
@@ -251,7 +255,7 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 
 | Where | Keys |
 |---|---|
-| Anywhere | `?` help · `Ctrl+,` settings (`1`–`7` switch pages) · `/` search · `O` calendar / map · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
+| Anywhere | `?` help · `Ctrl+,` settings (`1`–`8` switch pages) · `/` search · `O` calendar / map · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
 | Grid | click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag · `C` compare selection · `S` stacks · `H` hide rejected · `R` review stacks · right-click for a menu |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag and advance |
 | Compare | click or `1`–`9` keep · `A` keep suggested · `Enter` pick kept, reject rest (with nothing kept, press twice to reject all) · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag focused · arrows focus · `Z` zoom · `N` / `B` next / back (review) |

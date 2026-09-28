@@ -109,6 +109,11 @@ class ScopedIndex:
         pass  # get_index() builds a new view when anything changes
 
 
+class ModelIn(BaseModel):
+    name: str  # an OpenCLIP model name, or "hf-hub:<repo>"
+    pretrained: str = ""
+
+
 class FolderIn(BaseModel):
     path: str
 
@@ -329,11 +334,15 @@ def create_app(
     auto_exit: AutoExit | None = None,
 ) -> FastAPI:
     cfg = cfg or load_config()  # --config / $RIFFLE_CONFIG / ./config.yaml / the user's config
-    model_id = cfg.model.model_id
+    def mid() -> str:
+        """The current model's id (it can change at runtime: Settings → AI model)."""
+        return cfg.model.model_id
+
     # clients: open /api/events streams (browser tabs); seen_client: one ever connected.
     # stopping: the server is shutting down, so the event streams should end now.
     state: dict = {
         "encoder": text_encoder,
+        "encoder_given": text_encoder is not None,  # (tests) keep it when the model changes
         # The CLIP text encoder loads in the background (the first start downloads it):
         # "loading" -> "ready" | "failed" (with model_error). Browsing works meanwhile.
         "model": "ready" if text_encoder else "loading",
@@ -342,7 +351,17 @@ def create_app(
         "seen_client": False,
         "stopping": False,
     }
-    job = index_job(cfg, run=index_runner)
+    def run_index_job(cfg_, progress=None, report=print, model: dict | None = None):
+        """An indexing run; with ``model`` ({name, pretrained}), one that prepares that
+        model (embeds and tags every photo with it) and then switches to it."""
+        from .index import run_index
+
+        run = index_runner or run_index
+        if model is None:
+            return run(cfg_, progress=progress, report=report)
+        return prepare_model(run, progress, report, **model)
+
+    job = index_job(cfg, run=run_index_job)
     # The active profile's selections database (profiles.py); switched at runtime.
     from . import profiles
 
@@ -427,6 +446,61 @@ def create_app(
             log.error("Could not load the text encoder: %s", e)
             state["model_error"] = str(e) or type(e).__name__
             state["model"] = "failed"
+
+    # ---- the AI model (models.py): prepared by an index run, then switched in place ----
+
+    def prepare_model(run, progress, report, name: str, pretrained: str = "") -> dict:
+        """Embed and tag every photo with this model (only what it lacks: a model used
+        before is quick), fit the stack similarity to it, then switch to it. The app
+        keeps using the current model until then."""
+        from . import models
+        from .embed import load_embeddings
+        from .stacks import compute_stacks
+
+        known = models.find(name, pretrained)
+        label = known.label if known else name
+        stack = known.stack_similarity if known and known.stack_similarity else cfg.stacks.min_similarity
+        new = dataclasses.replace(
+            cfg,
+            model=dataclasses.replace(cfg.model, name=name, pretrained=pretrained),
+            stacks=dataclasses.replace(cfg.stacks, min_similarity=stack),
+        )
+        report(f"preparing {label}: every photo is embedded with it once")
+        run(new, progress=progress, report=report)
+        if not (known and known.stack_similarity):
+            E, ids = load_embeddings(new)
+            conn = db.connect(cfg.db_path)
+            try:
+                fitted = models.calibrate_stack_similarity(conn, E, ids)
+                if fitted is not None and abs(fitted - stack) > 1e-3:
+                    stack = fitted
+                    new.stacks = dataclasses.replace(new.stacks, min_similarity=stack)
+                    compute_stacks(conn, new)
+                report(f"stacks: similarity {stack}" + (" (from the library's camera bursts)" if fitted is not None else " (kept: too few camera bursts to fit it)"))
+            finally:
+                conn.close()
+        switch_model(name, pretrained, stack)
+        report(f"now using {label}")
+        return {"model": name, "pretrained": pretrained, "stack_similarity": stack}
+
+    def switch_model(name: str, pretrained: str, stack: float) -> None:
+        """Use another model from now on: the config (file and object), the text encoder,
+        the taste model, and every cache that does not already follow the embeddings."""
+        from .config import set_model
+
+        set_model(cfg, name, pretrained, stack)
+        if not state.get("encoder_given"):
+            state["encoder"], state["model"], state["model_error"] = None, "loading", ""
+            threading.Thread(target=load_encoder, name="riffle-model", daemon=True).start()
+        taste_store.use(sel_path(), state["profile"])
+        for cache in (ctag_cache, cluster_cache, tag_vector_cache):
+            cache.clear()
+        for holder in (discover_state, unique_state, scoped_state):
+            holder["key"] = None
+        map_state["stamp"] = None
+        layout_state["stamp"] = None
+        state.pop("style_key", None)
+        state["profile_version"] += 1  # open tabs reload
 
     def model_status() -> dict:
         from . import frozen
@@ -621,7 +695,7 @@ def create_app(
         keeping the similarity order within each group."""
         if index.E.size == 0:
             return {"total": 0, "items": []}
-        where, params = flt.where(model_id)
+        where, params = flt.where(mid())
         allowed = {r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)}
         allowed.discard(exclude)
         mask = np.array([int(p) in allowed for p in index.ids], dtype=bool)
@@ -668,7 +742,7 @@ def create_app(
     def listing(flt: PhotoFilter, collapse: str, sort: str, group: str | None):
         """SQL pieces for the grid listing: (cte, shown, order, params).
         ``{cte} SELECT ... {shown}`` selects the listed photos as ``p``."""
-        where, params = flt.where(model_id)
+        where, params = flt.where(mid())
         if group and group not in GROUP_KEYS and group != "similar":
             raise HTTPException(400, f"group must be one of {', '.join([*GROUP_KEYS, 'similar'])}")
         order = {
@@ -858,7 +932,7 @@ def create_app(
             if map_state["stamp"] == index.stamp:
                 return map_state["xy"]
             # One file per profile library (switching back and forth keeps both).
-            path = cfg.embeddings_dir / f"{model_id}.map.{getattr(index, 'scope', 'all')}.npz"
+            path = cfg.embeddings_dir / f"{mid()}.map.{getattr(index, 'scope', 'all')}.npz"
             stamp = np.array(index.stamp or (0, 0), dtype=np.int64)
             xy = None
             try:
@@ -904,7 +978,7 @@ def create_app(
                     else:
                         missing.append(k)
                 if missing:
-                    path = cfg.embeddings_dir / f"{model_id}.layout.npz"
+                    path = cfg.embeddings_dir / f"{mid()}.layout.npz"
                     L[missing] = discover.load_layouts(path, cfg.thumbs_dir, index.ids[missing], index.stamp)
                 layout_state["matrix"], layout_state["stamp"] = L, index.stamp
             return layout_state["matrix"], index.row
@@ -925,12 +999,12 @@ def create_app(
         }
         ids = np.array([i for i in index.ids.tolist() if i in groups], dtype=np.int64)
         group = np.array([groups[i] for i in ids.tolist()], dtype=np.int64)
-        key = hashlib.sha1(ids.tobytes() + group.tobytes() + str(curate.UNIQUE_NEIGHBOURS).encode()).hexdigest()[:20]
+        key = hashlib.sha1(ids.tobytes() + group.tobytes() + str(curate.UNIQUE_NEIGHBOURS).encode() + mid().encode()).hexdigest()[:20]
         with unique_state["lock"]:
             if unique_state["key"] == key:
                 return unique_state["scores"]
             folder = cfg.embeddings_dir / "clusters"
-            path = folder / f"{model_id}-unique.{key}.npy"
+            path = folder / f"{mid()}-unique.{key}.npy"
             try:
                 u = np.load(path)
                 if len(u) != len(ids):
@@ -941,7 +1015,7 @@ def create_app(
                 tmp = path.with_suffix(".tmp.npy")
                 np.save(tmp, u)
                 os.replace(tmp, path)
-                for old in folder.glob(f"{model_id}-unique.*.npy"):
+                for old in folder.glob(f"{mid()}-unique.*.npy"):
                     if old != path:
                         old.unlink(missing_ok=True)
             unique_state["key"], unique_state["scores"] = key, dict(zip(ids.tolist(), u.tolist()))
@@ -959,7 +1033,7 @@ def create_app(
                          clusters.SPLIT_STEP, clusters.MIN_CUT, clusters.MAX_DIRECT))
         key = hashlib.sha1(np.asarray(ids, dtype=np.int64).tobytes() + level.encode() + settings.encode()).hexdigest()[:20]
         folder = cfg.embeddings_dir / "clusters"
-        path = folder / f"{model_id}.{key}.npy"
+        path = folder / f"{mid()}.{key}.npy"
         try:
             labels = np.load(path)
             if len(labels) == len(ids):
@@ -973,7 +1047,7 @@ def create_app(
             np.save(tmp, labels)
             os.replace(tmp, path)
             # Keep the 24 most recent (views come and go with the filters).
-            files = sorted(folder.glob(f"{model_id}.*.npy"), key=lambda f: f.stat().st_mtime, reverse=True)
+            files = sorted(folder.glob(f"{mid()}.*.npy"), key=lambda f: f.stat().st_mtime, reverse=True)
             for old in files[24:]:
                 old.unlink(missing_ok=True)
         return labels
@@ -1053,7 +1127,7 @@ def create_app(
             discover_state["clip_pct"] = percentile(np.array([clipq.get(i, 0.5) for i in ids.tolist()]))
             kinds = dict(conn.execute(
                 """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
-                   WHERE t.family = 'kind' AND pt.model_id = ?""", (model_id,)))
+                   WHERE t.family = 'kind' AND pt.model_id = ?""", (mid(),)))
             pool.kind = ["" if "photo" in (kinds.get(i) or "photo") else kinds[i] for i in ids.tolist()]
             # Every known position, with its uncertainty: camera GPS ~20 m, the location
             # history's estimates their own accuracy (unknown: taken as MAX_UNCERTAIN).
@@ -1122,7 +1196,7 @@ def create_app(
 
         pool = discover_pool(conn, index)
         discover_quality(conn, index, pool)
-        where, params = flt.where(model_id)
+        where, params = flt.where(mid())
         inside = {r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)}
         rows = np.array([int(i) in inside for i in pool.ids])
         good = rows & ~pool.rejected & ((pool.quality >= discover.QUALITY_FLOOR) | pool.picked)
@@ -1180,7 +1254,7 @@ def create_app(
                     heading = float(discover.bearing(pool.lat[a], pool.lon[a], pool.lat[b], pool.lon[b]))
         allowed = None
         if scoped:
-            where, params = flt.where(model_id)
+            where, params = flt.where(mid())
             inside = {r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)}
             allowed = np.array([int(i) in inside for i in pool.ids])
         branches = discover.discover(pool, photo_id, trail_ids, allowed, prefs_, drift_, rng=np.random.default_rng(seed), heading=heading)
@@ -1253,7 +1327,7 @@ def create_app(
         phrases = things + media + settings
         templates = load_vocabulary(cfg.vocabulary_path).templates
         signature = json.dumps([phrases, templates])
-        path = cfg.embeddings_dir / f"{model_id}.names.npz"
+        path = cfg.embeddings_dir / f"{mid()}.names.npz"
         vecs = None
         try:
             with np.load(path) as f:
@@ -1302,13 +1376,13 @@ def create_app(
                     members.setdefault(int(lab), []).append(pid)
             kinds = dict(conn.execute(
                 """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
-                   WHERE t.family = 'kind' AND pt.model_id = ?""", (model_id,)))
+                   WHERE t.family = 'kind' AND pt.model_id = ?""", (mid(),)))
             namer = cluster_namer(index)
             subjects: dict[int, list[str]] = {}
             if namer is None:
                 for pid, name in conn.execute(
                     """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
-                       WHERE t.family = 'subject' AND pt.model_id = ?""", (model_id,)):
+                       WHERE t.family = 'subject' AND pt.model_id = ?""", (mid(),)):
                     subjects.setdefault(pid, []).append(name)
             # The user's custom tags of each photo (a cluster mostly in one takes its name).
             ctags = custom_tag_list(conn)
@@ -1372,7 +1446,7 @@ def create_app(
                    JOIN tags t ON t.id = pt.tag_id
                    WHERE pt.photo_id = ? AND pt.model_id = ?
                    ORDER BY t.family, pt.prob DESC""",
-                (photo_id, model_id),
+                (photo_id, mid()),
             )
         ]
         ctags = custom_tag_list(conn)
@@ -1494,14 +1568,14 @@ def create_app(
         """Tags with photo counts within the current filter (tags and EXIF).
         Tags that no matching photo carries are omitted, except the selected ones."""
         selected = flt.tags
-        where, params = flt.where(model_id)
+        where, params = flt.where(mid())
         counts = {
             r[0]: r[1]
             for r in conn.execute(
                 f"""SELECT pt.tag_id, COUNT(*) FROM photo_tags pt
                     WHERE pt.model_id = ? AND pt.photo_id IN (SELECT p.id FROM photos p WHERE {where})
                     GROUP BY pt.tag_id""",
-                [model_id, *params],
+                [mid(), *params],
             )
         }
         families: dict[str, list] = {}
@@ -1571,7 +1645,7 @@ def create_app(
             "exported": exported,
             "location_history": bool(cfg.location_history),
             "unmatched_raws": unmatched,
-            "model_id": model_id,
+            "model_id": mid(),
             "text_search": state["encoder"] is not None,
         }
 
@@ -1579,7 +1653,7 @@ def create_app(
     def list_facets(flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn)):
         """EXIF filter options (date range, cameras, lenses, focal length, aperture,
         ISO, orientation, GPS, folder) within the other active filters."""
-        out = facets(conn, flt, model_id)
+        out = facets(conn, flt, mid())
         # Folders labelled like the folder groups, by photo folder in the Library's order.
         order = {f"{src}/": k for k, src in enumerate(current_library().folders)}
 
@@ -1610,7 +1684,7 @@ def create_app(
         if body.scope == "all":
             n = selections.clear_exported(conn, sel_path())
         elif body.scope == "filtered":
-            where, params = flt.where(model_id)
+            where, params = flt.where(mid())
             ids = [r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)]
             n = selections.clear_exported(conn, sel_path(), ids)
         else:
@@ -1624,7 +1698,7 @@ def create_app(
         if body.scope == "all":
             previous = selections.clear_flags(conn, sel_path())
         elif body.scope == "filtered":
-            where, params = flt.where(model_id)
+            where, params = flt.where(mid())
             ids = [r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)]
             previous = selections.clear_flags(conn, sel_path(), ids)
         else:
@@ -1652,7 +1726,7 @@ def create_app(
     ):
         """Stacks with at least one photo matching the filters, in date order.
         ``unreviewed``: only stacks that still have an unflagged photo."""
-        where, params = flt.where(model_id)
+        where, params = flt.where(mid())
         having = f"HAVING SUM({flag_expr('s')} IS NULL) > 0" if unreviewed else ""
         rows = conn.execute(
             f"""SELECT s.stack_id, COUNT(*) AS size, MIN(s.taken_at) AS taken_at,
@@ -1731,7 +1805,7 @@ def create_app(
         if encoder is None or index.E.size == 0:
             return {}
         styles = styles_config()
-        key = tuple((s.name, tuple(s.towards), tuple(s.away)) for s in styles)
+        key = (mid(), id(encoder), tuple((s.name, tuple(s.towards), tuple(s.away)) for s in styles))
         if state.get("style_key") != key:
             vecs = {}
             for st in styles:
@@ -1763,7 +1837,7 @@ def create_app(
             query_weight=min(2.0, max(0.0, body.query_weight)),
             seed=body.seed,
         )
-        where, params = flt.where(model_id)
+        where, params = flt.where(mid())
         model = taste_store.current(index)
         scores = style_scores(index) if any(p.styles.values()) else {}
         look, look_weights, look_labels = curate.look_scores(conn, body.look)
@@ -1954,7 +2028,7 @@ def create_app(
         for r in conn.execute(
             """SELECT pt.photo_id, t.family, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
                WHERE pt.model_id = ? AND pt.photo_id IN (SELECT value FROM json_each(?)) ORDER BY t.id""",
-            (model_id, json.dumps(ids)),
+            (mid(), json.dumps(ids)),
         ):
             if r["name"] in clusters.CATCH_ALL or (r["family"] == "kind" and "photo" in r["name"]):
                 continue  # "other", "ordinary daylight": no information
@@ -2168,7 +2242,7 @@ def create_app(
         from . import curate
 
         pool, p, look_labels = curate_pool(body, flt, conn, index)
-        where, params = flt.where(model_id)
+        where, params = flt.where(mid())
         if pool is None:
             return {"items": [], "cover": None, "sections": [], "candidates": 0, "used": {}}
         d = curate.draft(pool, p)
@@ -2243,7 +2317,7 @@ def create_app(
         except ExportError as e:
             raise HTTPException(400, str(e))
         scope = flt if body.scope == "filtered" else PhotoFilter(library=current_library())
-        where, params = scope.where(model_id)
+        where, params = scope.where(mid())
         if body.photo_ids is not None:
             wanted = list(dict.fromkeys(body.photo_ids))
             present = {r[0] for r in conn.execute(
@@ -2591,6 +2665,60 @@ def create_app(
             "source": within,  # in this profile (this folder, or one around it)
             "indexed": indexed,  # indexed for some profile: adding it is instant
         }
+
+    # ---- AI model (models.py) ---------------------------------------------------------
+
+    @app.get("/api/models")
+    def list_models(conn=Depends(get_conn)):
+        """The models to choose from: the catalogue (and the current one if it is not in
+        it), each with how many of the library's photos it has embedded already."""
+        from . import models
+        from .embed import embedding_paths
+
+        ok = {r[0] for r in conn.execute("SELECT id FROM photos WHERE status = 'ok'")}
+
+        def embedded(name: str, pretrained: str) -> int:
+            m = dataclasses.replace(cfg.model, name=name, pretrained=pretrained)
+            try:
+                ids = np.load(embedding_paths(cfg, m.model_id)[1])
+            except (OSError, ValueError):
+                return 0
+            return len(ok.intersection(ids.tolist()))
+
+        current = (cfg.model.name, cfg.model.pretrained or "")
+        entries = [m.as_dict() for m in models.CATALOGUE]
+        if models.find(*current) is None:
+            entries.append({"key": "custom", "label": current[0], "name": current[0], "pretrained": current[1],
+                            "group": "custom", "description": "Set in config.yaml.", "size_gb": None, "speed": "",
+                            "stack_similarity": None})
+        for e in entries:
+            e["in_use"] = (e["name"], e["pretrained"]) == current
+            e["embedded"] = embedded(e["name"], e["pretrained"])
+        try:
+            from .embed import pick_device
+
+            device = pick_device(cfg.model.device)
+        except Exception:  # noqa: BLE001 - no torch in a test setup
+            device = "cpu"
+        preparing = job.kwargs.get("model") if job.running else None
+        return {"models": entries, "photos": len(ok), "device": device, "preparing": preparing,
+                "stack_similarity": cfg.stacks.min_similarity}
+
+    @app.post("/api/model", dependencies=[Depends(require_json)])
+    def choose_model(body: ModelIn):
+        """Switch to another model: embed the photos with it first (in the background; the
+        current model stays in use until then), then switch."""
+        name, pretrained = body.name.strip(), body.pretrained.strip()
+        if not name:
+            raise HTTPException(400, "the model needs a name")
+        if name.startswith("hf-hub:"):
+            pretrained = ""
+        if (name, pretrained) == (cfg.model.name, cfg.model.pretrained or ""):
+            return {"started": False, "in_use": True}
+        if job.running or export_job.running or caption_job.running:
+            raise HTTPException(409, "wait until indexing, the export, or captioning has finished")
+        job.start(model={"name": name, "pretrained": pretrained})
+        return {"started": True}
 
     @app.get("/api/index")
     def index_status():

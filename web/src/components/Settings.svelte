@@ -1,11 +1,12 @@
 <script>
-  // Settings: one page per section, chosen in the nav on the left (or 1–7). Other parts of
+  // Settings: one page per section, chosen in the nav on the left (or 1–8). Other parts of
   // the app open a page directly (view.settings = 'taste'); 'last' reopens the last one.
   import { untrack } from 'svelte';
   import { view } from '../lib/state.svelte.js';
   import { fetchSources, fetchLocationHistory } from '../lib/api.js';
   import Folders from './settings/Folders.svelte';
   import Indexing from './settings/Indexing.svelte';
+  import Model from './settings/Model.svelte';
   import Locations from './settings/Locations.svelte';
   import Profiles from './settings/Profiles.svelte';
   import Taste from './settings/Taste.svelte';
@@ -21,6 +22,7 @@
   const PAGES = [
     ['folders', 'Photo folders'],
     ['indexing', 'Indexing'],
+    ['model', 'AI model'],
     ['locations', 'Locations'],
     ['profiles', 'Profiles'],
     ['taste', 'Your taste'],
@@ -183,6 +185,8 @@
           <Folders {sources} {busy} {act} />
         {:else if page === 'indexing'}
           <Indexing {status} {busy} {act} />
+        {:else if page === 'model'}
+          <Model {status} {busy} {act} />
         {:else if page === 'locations'}
           <Locations {history} {placed} {busy} {act} reload={loadHistory} />
         {:else if page === 'profiles'}

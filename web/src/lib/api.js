@@ -172,3 +172,7 @@ export const cleanUp = () => send('POST', '/api/cleanup', {});
 export const browse = (path, files = null) => get('/api/fs', { path, files });
 export const fetchIndexStatus = () => get('/api/index');
 export const startIndex = () => send('POST', '/api/index');
+/** The AI models (models.py): {models: [{key, label, name, pretrained, group, description, size_gb, speed, in_use, embedded}], photos, device, preparing}. */
+export const fetchModels = () => get('/api/models');
+/** Switch model: the photos are embedded with it first (an index run), then it is used. */
+export const chooseModel = (name, pretrained = '') => send('POST', '/api/model', { name, pretrained });

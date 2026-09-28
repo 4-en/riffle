@@ -36,8 +36,9 @@ class Clip:
 
         self.torch = torch
         self.device = pick_device(mcfg.device)
+        # "hf-hub:<repo>" models (BioCLIP…) carry their weights: no separate pretrained name.
         model, _, preprocess = open_clip.create_model_and_transforms(
-            mcfg.name, pretrained=mcfg.pretrained, device=self.device
+            mcfg.name, pretrained=mcfg.pretrained or None, device=self.device
         )
         model.eval()
         if text_only and hasattr(model, "visual"):

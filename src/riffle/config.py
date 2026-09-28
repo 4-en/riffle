@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from dataclasses import dataclass, field
@@ -213,6 +214,49 @@ def set_sources(cfg: Config, sources: list[Path]) -> None:
     """Rewrite the ``sources`` list in the config file and update ``cfg``."""
     _write_path_list(cfg, "sources", sources)
     cfg.sources = list(sources)
+
+
+def _write_scalars(cfg: Config, section: str, values: dict) -> None:
+    """Set ``section.key: value`` in the config file for each of ``values``, keeping
+    everything else (comments, other keys) as it is; missing keys or sections are added."""
+    if cfg.path is None:
+        raise ValueError("config was not loaded from a file")
+    lines = read_text(cfg.path).splitlines(keepends=True)
+    start = next((i for i, l in enumerate(lines) if re.match(rf"{re.escape(section)}\s*:", l)), None)
+    if start is None:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines += ["\n", f"{section}:\n"]
+        start = len(lines) - 1
+    end = start + 1
+    while end < len(lines) and (lines[end][:1] in (" ", "\t") or not lines[end].strip()):
+        end += 1
+    while end > start + 1 and not lines[end - 1].strip():
+        end -= 1
+    for key, value in values.items():
+        text = json.dumps(value) if isinstance(value, str) else repr(value)
+        for i in range(start + 1, end):
+            m = re.match(rf"(\s+){re.escape(key)}\s*:[^#\n]*(#.*)?", lines[i])
+            if m:
+                comment = f"  {m.group(2)}" if m.group(2) else ""
+                lines[i] = f"{m.group(1)}{key}: {text}{comment}\n"
+                break
+        else:
+            lines.insert(end, f"  {key}: {text}\n")
+            end += 1
+    tmp = cfg.path.with_suffix(".tmp")
+    tmp.write_text("".join(lines), encoding="utf-8")
+    tmp.replace(cfg.path)
+
+
+def set_model(cfg: Config, name: str, pretrained: str, stack_similarity: float) -> None:
+    """Switch the CLIP model in the config file and ``cfg`` (and the stack similarity,
+    which depends on the model: models.py)."""
+    if cfg.path is not None:
+        _write_scalars(cfg, "model", {"name": name, "pretrained": pretrained})
+        _write_scalars(cfg, "stacks", {"min_similarity": stack_similarity})
+    cfg.model = dataclasses.replace(cfg.model, name=name, pretrained=pretrained)
+    cfg.stacks = dataclasses.replace(cfg.stacks, min_similarity=stack_similarity)
 
 
 def set_location_history(cfg: Config, files: list[Path]) -> None:
