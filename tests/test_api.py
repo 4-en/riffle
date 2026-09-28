@@ -128,3 +128,9 @@ def test_exclude_tags(client, conn):
     both = client.get("/api/photos", params={"tags": str(scene["id"]), "exclude_tags": str(scene["id"]), "dupes": "all"})
     assert both.json()["total"] == with_it
     assert client.get("/api/photos", params={"exclude_tags": "x"}).status_code == 400
+
+
+def test_items_carry_size_and_resolution(client):
+    """For the compare view's size indicator (resolution, file size, compression)."""
+    items = client.get("/api/photos", params={"dupes": "all"}).json()["items"]
+    assert items and all(i["size_bytes"] > 0 and i["width"] and i["height"] for i in items)

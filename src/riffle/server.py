@@ -640,7 +640,7 @@ def create_app(
             return []
         marks = ",".join("?" * len(ids))
         rows = conn.execute(
-            f"""SELECT p.id, p.source, p.rel_path, p.width, p.height, p.taken_at, p.dupe_group,
+            f"""SELECT p.id, p.source, p.rel_path, p.width, p.height, p.size_bytes, p.taken_at, p.dupe_group,
                        p.stack_id, p.sharpness, p.clip_highlights, p.clip_shadows, {FLAG_EXPR} AS flag,
                        {EXPORTED_EXPR} AS exported,
                        EXISTS (SELECT 1 FROM raws r WHERE r.photo_id = p.id) AS has_raw,
@@ -662,6 +662,7 @@ def create_app(
                 "rel_path": r["rel_path"],
                 "width": r["width"],
                 "height": r["height"],
+                "size_bytes": r["size_bytes"],
                 "taken_at": r["taken_at"],
                 "has_raw": bool(r["has_raw"]),
                 "dupe_group": r["dupe_group"],
