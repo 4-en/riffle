@@ -96,6 +96,13 @@ def test_name_clashes_keep_image_and_raw_together(indexed, conn, archive_dir, tm
     ]
 
 
+def test_numbered_export_keeps_the_order(picked, tmp_path):
+    cfg, ids = picked
+    order = ids[::-1]  # a walk visits them in this order
+    export(cfg, order, tmp_path / "walk", numbered=True)
+    assert files_in(tmp_path / "walk") == ["01_IMG_0003.png", "02_IMG_0001.jpg", "export-manifest.csv"]
+
+
 def test_refuses_destinations_that_would_be_indexed(picked, archive_dir):
     cfg, ids = picked
     with pytest.raises(ExportError, match="inside the photo folder"):

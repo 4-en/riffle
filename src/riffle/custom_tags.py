@@ -14,6 +14,12 @@ merely similar scenes (open sky, other waterfront buildings) below 0.80. A thres
 derived from how alike the examples are was worse: near-identical examples made it
 far too strict, and varied examples need no lower bar, since each example counts on
 its own. The examples themselves always belong.
+
+Negatives (photos the user marked as not belonging, usually from the photos at the
+tag's edge) carve out their surroundings: a photo is left out when it is at least as
+similar to a negative as to its best example (less NEGATIVE_MARGIN, so a photo halfway
+between counts as not belonging). A negative applies to its whole stack. Without
+negatives, nothing changes.
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ import numpy as np
 
 # Below the model's stack threshold, per strictness.
 MARGINS = {"strict": 0.05, "normal": 0.08, "loose": 0.12}
+NEGATIVE_MARGIN = 0.0  # a photo must be this much closer to an example than to any negative
 
 
 def threshold(stack_similarity: float, strictness: str) -> float:
@@ -40,11 +47,20 @@ def scores(E: np.ndarray, rows: list[int]) -> np.ndarray:
     return (E @ E[rows].T).max(axis=1)
 
 
-def members(E: np.ndarray, ids: np.ndarray, rows: list[int], limit: float) -> tuple[list[int], np.ndarray]:
+def belongs(E: np.ndarray, rows: list[int], limit: float, negative_rows: list[int] = ()) -> tuple[np.ndarray, np.ndarray]:
+    """(a mask of the members, each photo's best example similarity)."""
+    s = scores(E, rows)
+    keep = s >= limit
+    if len(negative_rows):
+        keep &= s > scores(E, list(negative_rows)) + NEGATIVE_MARGIN
+        keep[list(negative_rows)] = False
+    keep[rows] = True  # the examples always belong
+    return keep, s
+
+
+def members(E: np.ndarray, ids: np.ndarray, rows: list[int], limit: float, negative_rows: list[int] = ()) -> tuple[list[int], np.ndarray]:
     """(member photo ids, all scores). Empty without indexed examples."""
     if not rows:
         return [], np.zeros(len(ids), dtype=np.float32)
-    s = scores(E, rows)
-    keep = s >= limit
-    keep[rows] = True  # the examples always belong
+    keep, s = belongs(E, rows, limit, negative_rows)
     return [int(i) for i in ids[keep]], s

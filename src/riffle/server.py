@@ -100,6 +100,11 @@ class CurateIn(BaseModel):
     removed: list[int] = []
     look: dict[str, int | str | None] = {}  # colour and light: see curate.look_scores
     query: str = ""  # a text search that scores the candidates (query.py syntax)
+    surprise: float = 0.0  # 0 = the same draft every time … 1 = less obvious photos get a chance
+    like_locked: float = 0.0  # -1 unlike the locked photos … 1 like them (0: no influence)
+    unique: float = 0.0  # -1 common … 1 unlike the rest of the library (0: no influence)
+    query_weight: float = 1.0  # how much the search counts, 0..2
+    seed: int = 0  # the random draw for surprise
 
 
 class AlternativesIn(CurateIn):
@@ -120,6 +125,7 @@ class CustomTagIn(BaseModel):
     name: str
     photo_ids: list[int]
     strictness: str = "normal"
+    negatives: list[int] = []  # photos that do not belong
 
 
 class CustomTagEdit(BaseModel):
@@ -127,11 +133,14 @@ class CustomTagEdit(BaseModel):
     strictness: str | None = None
     add: list[int] = []
     remove: list[int] = []
+    add_negatives: list[int] = []
+    remove_negatives: list[int] = []
 
 
 class CustomTagPreview(BaseModel):
     photo_ids: list[int]
     strictness: str = "normal"
+    negatives: list[int] = []
 
 
 class CaptionItem(BaseModel):
@@ -197,6 +206,7 @@ class ExportIn(BaseModel):
     caption_text: str = "tags"  # for txt: tags | caption | both
     underscores: bool = False  # for txt and jsonl: write tags with spaces instead of "_"
     with_text: bool = False  # also the text read from the photo and its translation (XMP description, txt)
+    numbered: bool = False  # prefix the files with their position in photo_ids ("01_…": a Discover walk)
 
 
 COLLAPSE = ("dupes", "stacks", "none")
@@ -322,10 +332,48 @@ def create_app(
         state["index"] = Index(cfg)
         if state["encoder"] is None:
             threading.Thread(target=load_encoder, name="riffle-model", daemon=True).start()
+        threading.Thread(target=warm_caches, name="riffle-warm", daemon=True).start()
         watchdog = asyncio.create_task(watch_clients()) if auto_exit else None
         yield
         if watchdog:
             watchdog.cancel()
+
+    WARM_ABOVE = 1000  # photos: below this, first use is quick enough without warming
+
+    def warm_caches() -> None:
+        """In the background: whenever the library's embeddings change (at start, after
+        an indexing run), build what the Similar grouping and Discover need first
+        (the unfiltered library's clusters at every level, Discover's lens data, Curate's
+        uniqueness), so
+        the first click does not wait. Waits for the AI model (the names need it)."""
+        from . import clusters
+
+        warmed = None
+        while not state.get("stopping"):
+            time.sleep(3)
+            if state["model"] == "loading" or job.running:
+                continue
+            index = state.get("index")
+            if index is None:
+                continue
+            try:
+                index.refresh()
+                if index.stamp == warmed or len(index.ids) < WARM_ABOVE:
+                    continue
+                conn = db.connect_readonly(cfg.db_path, sel_path())
+                try:
+                    for level in clusters.LEVELS:  # the default grid: collapse duplicates, no filters
+                        list_photos(flt=PhotoFilter(), dupes="collapse", collapse="dupes", sort="taken_at",
+                                    group="similar", level=level, offset=0, limit=1, conn=conn, index=index)
+                    discover_pool(conn, index)
+                    uniqueness_scores(conn, index)
+                finally:
+                    conn.close()
+                warmed = index.stamp
+                log.info("warmed the Similar grouping, Discover and uniqueness for %d photos", len(index.ids))
+            except Exception:  # noqa: BLE001 - warming is an optimisation; first use computes it anyway
+                log.exception("warming the caches failed")
+                warmed = index.stamp
 
     def load_encoder() -> None:
         try:
@@ -386,20 +434,37 @@ def create_app(
     ctag_cache: dict[int, tuple] = {}  # tag id -> (key, member ids)
 
     def custom_tag_list(conn) -> list[dict]:
-        """Every custom tag with the ids of its examples that are in the library."""
+        """Every custom tag with the ids of its examples and negatives that are in the
+        library; ``negative_group``: the negatives with their stack and duplicate mates
+        (a negative applies to its whole stack), for membership."""
         tags = [dict(r) for r in conn.execute(
             "SELECT id, name, strictness, updated_at FROM sel.custom_tags ORDER BY name COLLATE NOCASE"
         )]
-        examples: dict[int, list[int]] = {}
-        for r in conn.execute(
-            """SELECT e.tag_id, p.id FROM sel.custom_tag_examples e
-               JOIN photos p ON p.sha256 = e.sha256 AND p.status = 'ok' ORDER BY e.added_at, p.id"""
-        ):
-            if r[1] not in examples.setdefault(r[0], []):
-                examples[r[0]].append(r[1])
+        found: dict[str, dict[int, list[int]]] = {"examples": {}, "negatives": {}}
+        for key, table in (("examples", "custom_tag_examples"), ("negatives", "custom_tag_negatives")):
+            for r in conn.execute(
+                f"""SELECT e.tag_id, p.id FROM sel.{table} e
+                    JOIN photos p ON p.sha256 = e.sha256 AND p.status = 'ok' ORDER BY e.added_at, p.id"""
+            ):
+                if r[1] not in found[key].setdefault(r[0], []):
+                    found[key][r[0]].append(r[1])
         for t in tags:
-            t["examples"] = examples.get(t["id"], [])
+            t["examples"] = found["examples"].get(t["id"], [])
+            t["negatives"] = found["negatives"].get(t["id"], [])
+            t["negative_group"] = with_stack_mates(conn, t["negatives"], exclude=t["examples"]) if t["negatives"] else []
         return tags
+
+    def with_stack_mates(conn, ids: list[int], exclude: list[int] = ()) -> list[int]:
+        """These photos and every photo in their stacks or duplicate groups (sorted)."""
+        rows = conn.execute(
+            """SELECT DISTINCT p.id FROM photos n JOIN photos p ON p.status = 'ok' AND (p.id = n.id
+                   OR (n.stack_id IS NOT NULL AND p.stack_id = n.stack_id)
+                   OR (n.dupe_group IS NOT NULL AND p.dupe_group = n.dupe_group))
+               WHERE n.id IN (SELECT value FROM json_each(?))""",
+            (json.dumps(list(ids)),),
+        )
+        skip = set(exclude)
+        return sorted(r[0] for r in rows if r[0] not in skip)
 
     def custom_tag_members(conn, index: Index, tags: list[dict] | None = None) -> dict[int, list[int]]:
         """Member photo ids per custom tag, cached until the tag or the embeddings change."""
@@ -407,12 +472,13 @@ def create_app(
 
         out = {}
         for t in tags if tags is not None else custom_tag_list(conn):
-            key = (t["updated_at"], t["strictness"], tuple(t["examples"]), index.stamp, cfg.stacks.min_similarity)
+            key = (t["updated_at"], t["strictness"], tuple(t["examples"]), tuple(t["negative_group"]), index.stamp, cfg.stacks.min_similarity)
             hit = ctag_cache.get(t["id"])
             if hit is None or hit[0] != key:
                 rows = custom_tags.example_rows(index.row, t["examples"])
+                negative_rows = custom_tags.example_rows(index.row, t["negative_group"])
                 limit = custom_tags.threshold(cfg.stacks.min_similarity, t["strictness"])
-                ids, _ = custom_tags.members(index.E, index.ids, rows, limit)
+                ids, _ = custom_tags.members(index.E, index.ids, rows, limit, negative_rows)
                 ctag_cache[t["id"]] = hit = (key, ids)
             out[t["id"]] = hit[1]
         return out
@@ -742,6 +808,329 @@ def create_app(
             map_state["stamp"], map_state["xy"] = index.stamp, xy
             return xy
 
+    # ---- discover (discover.py) -----------------------------------------------------
+
+    discover_state: dict = {"key": None, "pool": None, "lock": threading.Lock()}
+    layout_state: dict = {"stamp": None, "matrix": None, "lock": threading.Lock()}
+
+    def layout_matrix(index: Index) -> tuple[np.ndarray, dict[int, int]]:
+        """Layout fingerprints of all embedded photos (rows as ``index.row``): from the
+        catalogue (indexing computes them with the colours); photos indexed before that
+        get theirs from the thumbnails, cached on disk until the embeddings change."""
+        from . import discover
+
+        with layout_state["lock"]:
+            if layout_state["stamp"] != index.stamp:
+                conn = db.connect_readonly(cfg.db_path)
+                try:
+                    stored = {r[0]: r[1] for r in conn.execute("SELECT id, layout FROM photos WHERE layout IS NOT NULL")}
+                finally:
+                    conn.close()
+                L = np.zeros((len(index.ids), discover.GRID * discover.GRID), np.float32)
+                missing = []
+                for k, pid in enumerate(index.ids.tolist()):
+                    blob = stored.get(pid)
+                    if blob is not None and len(blob) == L.shape[1] * 4:
+                        L[k] = np.frombuffer(blob, dtype=np.float32)
+                    else:
+                        missing.append(k)
+                if missing:
+                    path = cfg.embeddings_dir / f"{model_id}.layout.npz"
+                    L[missing] = discover.load_layouts(path, cfg.thumbs_dir, index.ids[missing], index.stamp)
+                layout_state["matrix"], layout_state["stamp"] = L, index.stamp
+            return layout_state["matrix"], index.row
+
+    cluster_files: dict = {"lock": threading.Lock()}
+    unique_state: dict = {"key": None, "scores": None, "lock": threading.Lock()}
+
+    def uniqueness_scores(conn, index: Index) -> dict[int, float]:
+        """curate.uniqueness for every photo, {id: score}: in memory, and on disk by the
+        exact photos and their groups, so a restart does not redo it (1.3 s at 13,000)."""
+        import hashlib
+
+        from . import curate
+
+        groups = {
+            r[0]: r[1] or (r[2] and 10**9 + r[2]) or -r[0]
+            for r in conn.execute("SELECT id, stack_id, dupe_group FROM photos WHERE status = 'ok'")
+        }
+        ids = np.array([i for i in index.ids.tolist() if i in groups], dtype=np.int64)
+        group = np.array([groups[i] for i in ids.tolist()], dtype=np.int64)
+        key = hashlib.sha1(ids.tobytes() + group.tobytes() + str(curate.UNIQUE_NEIGHBOURS).encode()).hexdigest()[:20]
+        with unique_state["lock"]:
+            if unique_state["key"] == key:
+                return unique_state["scores"]
+            folder = cfg.embeddings_dir / "clusters"
+            path = folder / f"{model_id}-unique.{key}.npy"
+            try:
+                u = np.load(path)
+                if len(u) != len(ids):
+                    raise ValueError("stale")
+            except (OSError, ValueError):
+                u = curate.uniqueness(index.E[[index.row[i] for i in ids.tolist()]], group) if len(ids) else np.zeros(0)
+                folder.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_suffix(".tmp.npy")
+                np.save(tmp, u)
+                os.replace(tmp, path)
+                for old in folder.glob(f"{model_id}-unique.*.npy"):
+                    if old != path:
+                        old.unlink(missing_ok=True)
+            unique_state["key"], unique_state["scores"] = key, dict(zip(ids.tolist(), u.tolist()))
+            return unique_state["scores"]
+
+    def cached_cluster(ids: np.ndarray, E: np.ndarray, level: str) -> np.ndarray:
+        """clusters.cluster, cached on disk by the exact set of photos, the level, and
+        the clustering settings: a restart (or the same view again) does not redo it
+        (about 4.5 s at 12,000 photos)."""
+        import hashlib
+
+        from . import clusters
+
+        settings = repr((clusters.LEVELS, clusters.MIN_SIZE, clusters.MAX_SHARE, clusters.MIN_CAP,
+                         clusters.SPLIT_STEP, clusters.MIN_CUT, clusters.MAX_DIRECT))
+        key = hashlib.sha1(np.asarray(ids, dtype=np.int64).tobytes() + level.encode() + settings.encode()).hexdigest()[:20]
+        folder = cfg.embeddings_dir / "clusters"
+        path = folder / f"{model_id}.{key}.npy"
+        try:
+            labels = np.load(path)
+            if len(labels) == len(ids):
+                return labels
+        except (OSError, ValueError):
+            pass
+        labels = clusters.cluster(E, level) if len(ids) else np.zeros(0, int)
+        with cluster_files["lock"]:
+            folder.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp.npy")
+            np.save(tmp, labels)
+            os.replace(tmp, path)
+            # Keep the 24 most recent (views come and go with the filters).
+            files = sorted(folder.glob(f"{model_id}.*.npy"), key=lambda f: f.stat().st_mtime, reverse=True)
+            for old in files[24:]:
+                old.unlink(missing_ok=True)
+        return labels
+
+    def discover_pool(conn, index: Index):
+        """The lens data for the whole library, cached until the embeddings (or the
+        model) change; tags are filled in per request (fixed tags change often)."""
+        from datetime import datetime
+
+        from . import discover
+
+        # (With how many photos have colours and accents: an indexing run that only adds
+        # those does not change the embeddings.)
+        key = (index.stamp, id(state["encoder"]), tuple(conn.execute("SELECT COUNT(brightness), COUNT(accents) FROM photos").fetchone()))
+        with discover_state["lock"]:
+            if discover_state["key"] == key:
+                return discover_state["pool"]
+            info = {r["id"]: r for r in conn.execute(
+                """SELECT id, stack_id, dupe_group, taken_at, brightness, contrast, colorfulness, hues,
+                          accents, clip_highlights, clip_shadows
+                   FROM photos WHERE status = 'ok'"""
+            )}
+            ids = np.array([i for i in index.ids.tolist() if i in info], dtype=np.int64)
+            rows = [info[i] for i in ids.tolist()]
+            E = index.E[[index.row[i] for i in ids.tolist()]]
+
+            def seconds(t):
+                try:
+                    return datetime.strptime(t[:19], "%Y:%m:%d %H:%M:%S").timestamp()
+                except (TypeError, ValueError):
+                    return np.nan
+
+            def floats(col):
+                return np.array([np.nan if r[col] is None else r[col] for r in rows], dtype=np.float64)
+
+            hues = np.zeros((len(rows), 24), np.float32)
+            for k, r in enumerate(rows):
+                if r["hues"] is not None and len(r["hues"]) == 96:
+                    hues[k] = np.frombuffer(r["hues"], dtype=np.float32)
+            pool = discover.Pool(
+                ids=ids,
+                E=E,
+                group=np.array([r["stack_id"] or (r["dupe_group"] and 10**9 + r["dupe_group"]) or -r["id"] for r in rows]),
+                day=[(r["taken_at"] or "")[:10].replace(":", "-") for r in rows],
+                taken=np.array([seconds(r["taken_at"]) for r in rows]),
+                brightness=floats("brightness"),
+                contrast=floats("contrast"),
+                colorfulness=floats("colorfulness"),
+                hues=hues,
+                accents=discover.accent_matrix([r["accents"] for r in rows]),
+            )
+            namer = cluster_namer(index)
+            if namer is not None and len(ids):
+                thing = ~namer.setting & ~(namer.media if namer.media is not None else np.zeros_like(namer.setting))
+                pool.things = discover.profile(E, namer.vecs[thing])
+                pool.settings = discover.profile(E, namer.vecs[namer.setting])
+                pool.thing_names = [p for p, t in zip(namer.phrases, thing) if t]
+                pool.setting_names = [p for p, s_ in zip(namer.phrases, namer.setting) if s_]
+                pool.axes, pool.axis_ends = discover.text_axes(E, state["encoder"])
+            if len(ids) > 20:
+                from . import clusters
+
+                # A day for photos without a date: their own id (they never make a "series").
+                days = [d or f"#{i}" for d, i in zip(pool.day, ids.tolist())]
+                pool.pca = discover.library_axes(E, cached_cluster(ids, E, "fine"), days)
+            L, rows_ = layout_matrix(index)
+            pool.layout = L[[rows_[i] for i in ids.tolist()]]
+            # The stable parts of quality (as in Curate); flags and taste are read per request.
+            from .curate import FULL_PENALTY_BLOWN, FULL_PENALTY_CRUSHED, percentile
+
+            exposure = np.array([
+                1 - min(1.0, (r["clip_highlights"] or 0) / FULL_PENALTY_BLOWN + (r["clip_shadows"] or 0) / FULL_PENALTY_CRUSHED)
+                for r in rows
+            ])
+            clipq = clip_quality(index, ids.tolist()) or {}
+            discover_state["exposure_pct"] = percentile(exposure)
+            discover_state["clip_pct"] = percentile(np.array([clipq.get(i, 0.5) for i in ids.tolist()]))
+            kinds = dict(conn.execute(
+                """SELECT pt.photo_id, t.name FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
+                   WHERE t.family = 'kind' AND pt.model_id = ?""", (model_id,)))
+            pool.kind = ["" if "photo" in (kinds.get(i) or "photo") else kinds[i] for i in ids.tolist()]
+            # Every known position, with its uncertainty: camera GPS ~20 m, the location
+            # history's estimates their own accuracy (unknown: taken as MAX_UNCERTAIN).
+            located = {
+                r[0]: (r[1], r[2], 20.0 if r[3] == "exif" else (r[4] if r[4] is not None else discover.MAX_UNCERTAIN))
+                for r in conn.execute("SELECT photo_id, lat, lon, source, accuracy_m FROM photo_locations")
+            }
+            none = (np.nan, np.nan, np.nan)
+            pool.lat = np.array([located.get(i, none)[0] for i in ids.tolist()], dtype=np.float64)
+            pool.lon = np.array([located.get(i, none)[1] for i in ids.tolist()], dtype=np.float64)
+            pool.uncertainty = np.array([located.get(i, none)[2] for i in ids.tolist()], dtype=np.float64)
+            discover_state["key"], discover_state["pool"] = key, pool
+            return pool
+
+    def discover_tags(conn, index: Index, pool) -> dict[int, list[str]]:
+        """Per pool row: the user's tags that are shared but not common, rarest first;
+        fixed tags before learned tags."""
+        n = len(pool.ids)
+        per: dict[int, dict[str, list[str]]] = {}
+        for pid, tag in conn.execute(
+            "SELECT p.id, t.tag FROM sel.fixed_tags t JOIN photos p ON p.sha256 = t.sha256 WHERE p.status = 'ok'"
+        ):
+            per.setdefault(pid, {}).setdefault("fixed", []).append(tag)
+        ctags = custom_tag_list(conn)
+        members = custom_tag_members(conn, index, ctags)
+        for t in ctags:
+            for pid in members[t["id"]]:
+                per.setdefault(pid, {}).setdefault("learned", []).append(t["name"])
+        count: dict[str, int] = {}
+        for kinds in per.values():
+            for tags in kinds.values():
+                for t in set(tags):
+                    count[t] = count.get(t, 0) + 1
+        out = {}
+        for pid, kinds in per.items():
+            k = pool.row.get(pid)
+            if k is None:
+                continue
+            ranked = []
+            for kind in ("fixed", "learned"):
+                ranked += sorted((t for t in dict.fromkeys(kinds.get(kind, [])) if 3 <= count[t] <= 0.4 * n), key=lambda t: count[t])
+            if ranked:
+                out[k] = ranked
+        return out
+
+    def discover_quality(conn, index: Index, pool) -> None:
+        """Quality percentiles as Curate weighs them, with the current flags and taste."""
+        from .curate import W_CLIP, W_EXPOSURE, W_TASTE, percentile
+
+        flags = dict(conn.execute(f"SELECT p.id, {FLAG_EXPR} FROM photos p WHERE p.status = 'ok'").fetchall())
+        pool.picked = np.array([flags.get(int(i)) == "pick" for i in pool.ids])
+        pool.rejected = np.array([flags.get(int(i)) == "reject" for i in pool.ids])
+        q = W_CLIP * discover_state["clip_pct"] + W_EXPOSURE * discover_state["exposure_pct"]
+        model = taste_store.current(index)
+        if model and model.enabled:
+            q = q + W_TASTE * percentile(np.array([taste_store.scores.get(int(i), 0.0) for i in pool.ids]))
+        pool.quality = percentile(q)
+
+    @app.get("/api/discover/start")
+    def discover_start(flt: PhotoFilter = Depends(resolved_filter), conn=Depends(get_conn), index: Index = Depends(get_index)):
+        """A photo to start a walk from: random within the filters, favouring newer ones
+        (the newest about 20 times as likely as the oldest), never a reject or a weak photo
+        (discover.QUALITY_FLOOR) unless nothing else is left."""
+        from . import discover
+
+        pool = discover_pool(conn, index)
+        discover_quality(conn, index, pool)
+        where, params = flt.where(model_id)
+        inside = {r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)}
+        rows = np.array([int(i) in inside for i in pool.ids])
+        good = rows & ~pool.rejected & ((pool.quality >= discover.QUALITY_FLOOR) | pool.picked)
+        candidates = np.flatnonzero(good) if good.any() else np.flatnonzero(rows)
+        if not len(candidates):
+            raise HTTPException(404, "no photo to start from within these filters")
+        taken = pool.taken[candidates]
+        order = np.argsort(np.argsort(np.nan_to_num(taken, nan=np.nanmin(taken) if np.isfinite(taken).any() else 0)))
+        recency = order / max(len(candidates) - 1, 1)  # 0 oldest … 1 newest
+        weights = np.exp(3.0 * recency)
+        pick = candidates[np.random.default_rng().choice(len(candidates), p=weights / weights.sum())]
+        return {"id": int(pool.ids[pick])}
+
+    @app.get("/api/discover/{photo_id}")
+    def discover_from(
+        photo_id: int,
+        trail: str = "",  # ids of the walk so far, oldest first (never shown again)
+        came_from: int | None = None,  # the previous centre: the step updates the drift
+        prefs: str = "{}",  # {lens: times chosen}
+        drift: str = "{}",  # {phrase: weight}
+        scoped: bool = False,  # only photos within the query-string filters
+        seed: int | None = None,  # for sampling each branch from its best candidates (same seed: same branches)
+        rejects: bool = False,  # also show rejected photos
+        heading: float | None = None,  # the walk's compass direction (from an earlier step), for momentum
+        flt: PhotoFilter = Depends(resolved_filter),
+        conn=Depends(get_conn),
+        index: Index = Depends(get_index),
+    ):
+        """Branches from a photo to others related in one way each (discover.py)."""
+        from . import discover
+
+        try:
+            trail_ids = [int(t) for t in trail.split(",") if t.strip()]
+            prefs_ = {str(k): float(v) for k, v in json.loads(prefs or "{}").items()}
+            drift_ = {str(k): float(v) for k, v in json.loads(drift or "{}").items()}
+        except (ValueError, AttributeError):
+            raise HTTPException(400, "trail must be ids; prefs and drift JSON objects of numbers")
+        pool = discover_pool(conn, index)
+        if photo_id not in pool.row:
+            raise HTTPException(404, "this photo has no embedding yet")
+        pool.tags = discover_tags(conn, index, pool)
+        discover_quality(conn, index, pool)
+        if rejects:
+            pool.rejected = None
+        if came_from is not None and came_from in pool.row:
+            drift_ = discover.step_drift(pool, pool.row[came_from], pool.row[photo_id], drift_)
+            # The walk's heading: the direction of this step, if it went somewhere (else none).
+            a, b = pool.row[came_from], pool.row[photo_id]
+            heading = None
+            if np.isfinite(pool.lat[a]) and np.isfinite(pool.lat[b]):
+                from .curate import haversine
+
+                step = haversine(pool.lat[a], pool.lon[a], pool.lat[b], pool.lon[b])
+                if step > max(discover.SAME_PLACE, (pool.uncertainty[a] + pool.uncertainty[b]) / 2):  # longer than the doubt
+                    heading = float(discover.bearing(pool.lat[a], pool.lon[a], pool.lat[b], pool.lon[b]))
+        allowed = None
+        if scoped:
+            where, params = flt.where(model_id)
+            inside = {r[0] for r in conn.execute(f"SELECT p.id FROM photos p WHERE {where}", params)}
+            allowed = np.array([int(i) in inside for i in pool.ids])
+        branches = discover.discover(pool, photo_id, trail_ids, allowed, prefs_, drift_, rng=np.random.default_rng(seed), heading=heading)
+        paths = dict(conn.execute(
+            "SELECT id, rel_path FROM photos WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps([photo_id] + [p for b in branches for p, *_ in b["photos"]]),),
+        ).fetchall())
+        for b in branches:
+            b["photos"] = [
+                {"id": p, "score": round(sc, 3), "reason": why, "sim": round(sm, 3), "thumb": f"/thumbs/{p}.jpg", "rel_path": paths.get(p)}
+                for p, sc, why, sm in b["photos"]
+            ]
+        return {
+            "centre": {"id": photo_id, "thumb": f"/thumbs/{photo_id}.jpg", "preview": f"/previews/{photo_id}.jpg", "rel_path": paths.get(photo_id)},
+            "branches": branches,
+            "drift": drift_,
+            "heading": heading,
+            "drift_labels": [n for n, w in sorted(drift_.items(), key=lambda kv: -kv[1]) if w > 0][:4],
+        }
+
     @app.get("/api/similar/map")
     def similar_map(
         flt: PhotoFilter = Depends(resolved_filter),
@@ -835,7 +1224,7 @@ def create_app(
             ids = [r[0] for r in conn.execute(f"{cte} SELECT p.id {shown} ORDER BY p.id", params)]
             ids = [i for i in ids if i in index.row]
             rows = [index.row[i] for i in ids]
-            labels = clusters.cluster(index.E[rows], level) if rows else np.zeros(0, int)
+            labels = cached_cluster(np.array(ids, dtype=np.int64), index.E[rows], level) if rows else np.zeros(0, int)
             members: dict[int, list[int]] = {}
             for pid, lab in zip(ids, labels):
                 if lab >= 0:
@@ -897,6 +1286,8 @@ def create_app(
             raise HTTPException(404, "photo not found")
         photo = dict(r)
         photo.pop("hues", None)  # binary (colors.py); only Curate uses it
+        photo.pop("layout", None)  # binary (discover.layout_of); only Discover uses it
+        photo.pop("accents", None)  # colors.accents_of; for Curate and Discover
         photo["path"] = str(Path(r["source"]) / r["rel_path"])
         photo["thumb"] = f"/thumbs/{photo_id}.jpg"
         photo["preview"] = f"/previews/{photo_id}.jpg"
@@ -1069,6 +1460,7 @@ def create_app(
                 "name": t["name"],
                 "strictness": t["strictness"],
                 "examples": t["examples"],
+                "negatives": t["negatives"],
                 "excluded": t["id"] in flt.exclude_ctags,
                 "count": conn.execute(
                     f"SELECT COUNT(*) FROM photos p WHERE {where} AND p.id IN (SELECT value FROM json_each(?))",
@@ -1288,6 +1680,11 @@ def create_app(
             include_rejects=body.include_rejects,
             locked=body.locked,
             removed=body.removed,
+            surprise=min(1.0, max(0.0, body.surprise)),
+            like_locked=min(1.0, max(-1.0, body.like_locked)),
+            unique=min(1.0, max(-1.0, body.unique)),
+            query_weight=min(2.0, max(0.0, body.query_weight)),
+            seed=body.seed,
         )
         where, params = flt.where(model_id)
         model = taste_store.current(index)
@@ -1308,6 +1705,7 @@ def create_app(
             style_scores={**scores, **look},
             place_labels=location_labels(conn)["place"],
             query_scores=query_scores,
+            unique_scores=uniqueness_scores(conn, index) if p.unique else None,
         )
         return pool, p, look_labels
 
@@ -1322,40 +1720,78 @@ def create_app(
         text = str(e)
         return HTTPException(404 if text == "no such tag" else 409 if "already exists" in text else 400, text)
 
+    EDGE_PHOTOS = 12  # the tag dialog's strip of members nearest the edge
+
+    def check_negatives(conn, index: Index, examples: list[int], negatives: list[int]) -> None:
+        """A negative must not be (almost) one of the examples: the same stack or
+        duplicate group, or as alike as stack members."""
+        from . import custom_tags
+
+        if not negatives or not examples:
+            return
+        mates = set(with_stack_mates(conn, examples))
+        rows = custom_tags.example_rows(index.row, examples)
+        for pid in negatives:
+            close = pid in index.row and rows and float((index.E[rows] @ index.E[index.row[pid]]).max()) >= cfg.stacks.min_similarity
+            if pid in mates or close:
+                raise HTTPException(400, "a photo marked as not belonging is almost the same as one of the examples")
+
     @app.post("/api/custom-tags", dependencies=[Depends(require_json)])
-    def create_custom_tag(body: CustomTagIn, conn=Depends(get_conn)):
+    def create_custom_tag(body: CustomTagIn, conn=Depends(get_conn), index: Index = Depends(get_index)):
         """A tag from example photos (stored with the flags, by content hash)."""
+        check_negatives(conn, index, body.photo_ids, body.negatives)
         try:
-            tag_id = selections.create_tag(conn, sel_path(), body.name, body.photo_ids, body.strictness)
+            tag_id = selections.create_tag(conn, sel_path(), body.name, body.photo_ids, body.strictness, body.negatives)
         except selections.TagError as e:
             raise tag_error(e)
         return {"id": tag_id}
 
     @app.post("/api/custom-tags/preview", dependencies=[Depends(require_json)])
     def preview_custom_tag(body: CustomTagPreview, conn=Depends(get_conn), index: Index = Depends(get_index)):
-        """How many photos a tag with these examples would have at each strictness,
-        and the members closest to its edge (the least similar ones still in)."""
+        """How many photos a tag with these examples (and negatives) would have at each
+        strictness, how many the negatives leave out, and the members nearest its edge
+        (the least similar ones still in, one per stack), to mark the wrong ones."""
         from . import custom_tags
 
         rows = custom_tags.example_rows(index.row, body.photo_ids)
-        s = custom_tags.scores(index.E, rows)
-        counts, edge = {}, []
+        negative_rows = custom_tags.example_rows(index.row, with_stack_mates(conn, body.negatives, exclude=body.photo_ids))
+        counts, edge, left_out = {}, [], 0
         for level in selections.STRICTNESS:
             limit = custom_tags.threshold(cfg.stacks.min_similarity, level)
-            ids, _ = custom_tags.members(index.E, index.ids, rows, limit)
+            ids, s = custom_tags.members(index.E, index.ids, rows, limit, negative_rows)
             counts[level] = len(ids)
             if level == body.strictness and rows:
-                own = set(rows)
-                inside = [k for k in np.argsort(s) if s[k] >= limit and k not in own]
-                edge = [int(index.ids[k]) for k in inside[:8]]
-        return {"counts": counts, "edge": items_for(conn, edge), "examples": len(rows)}
+                left_out = len(custom_tags.members(index.E, index.ids, rows, limit)[0]) - len(ids)
+                keep = np.zeros(len(index.ids), bool)
+                keep[[index.row[i] for i in ids]] = True
+                keep[rows] = False
+                inside = [int(index.ids[k]) for k in np.argsort(s, kind="stable") if keep[k]]
+                # One per stack or duplicate group: a burst would fill the strip with one scene.
+                group = dict(conn.execute(
+                    """SELECT id, COALESCE('s' || stack_id, 'd' || dupe_group, 'p' || id) FROM photos
+                       WHERE id IN (SELECT value FROM json_each(?))""", (json.dumps(inside[: EDGE_PHOTOS * 10]),),
+                ))
+                seen = set()
+                for pid in inside[: EDGE_PHOTOS * 10]:
+                    g = group.get(pid, pid)
+                    if g not in seen:
+                        seen.add(g)
+                        edge.append(pid)
+                    if len(edge) == EDGE_PHOTOS:
+                        break
+        return {"counts": counts, "edge": items_for(conn, edge), "examples": len(rows), "left_out": left_out}
 
     @app.post("/api/custom-tags/{tag_id}", dependencies=[Depends(require_json)])
-    def edit_custom_tag(tag_id: int, body: CustomTagEdit, conn=Depends(get_conn)):
+    def edit_custom_tag(tag_id: int, body: CustomTagEdit, conn=Depends(get_conn), index: Index = Depends(get_index)):
+        if body.add_negatives:
+            tag = next((t for t in custom_tag_list(conn) if t["id"] == tag_id), None)
+            examples = [i for i in (tag["examples"] if tag else []) if i not in body.remove] + body.add
+            check_negatives(conn, index, examples, body.add_negatives)
         try:
             selections.update_tag(
                 conn, sel_path(), tag_id,
                 name=body.name, strictness=body.strictness, add=body.add, remove=body.remove,
+                add_negatives=body.add_negatives, remove_negatives=body.remove_negatives,
             )
         except selections.TagError as e:
             raise tag_error(e)
@@ -1655,6 +2091,7 @@ def create_app(
             "items": items,
             "cover": d["cover"],
             "sections": d["sections"],
+            "orders": d["orders"],  # the same photos by date, best, flow, colour, light (ids)
             "candidates": len(pool.ids),
             "used": {
                 "taste": bool(taste_store.scores),
@@ -1664,7 +2101,7 @@ def create_app(
                 "query": pool.query_pct is not None if body.query.strip() else None,
                 # candidates whose colours are not analysed yet (the next index does it)
                 "colors_missing": conn.execute(
-                    f"SELECT COUNT(*) FROM photos p WHERE {where} AND p.brightness IS NULL", params
+                    f"SELECT COUNT(*) FROM photos p WHERE {where} AND (p.brightness IS NULL OR p.accents IS NULL)", params
                 ).fetchone()[0],
             },
         }
@@ -1747,6 +2184,7 @@ def create_app(
             caption_text=body.caption_text,
             underscores=body.underscores,
             with_text=body.with_text,
+            numbered=body.numbered and body.photo_ids is not None,
         )
         if not started:
             raise HTTPException(409, "an export is already running")

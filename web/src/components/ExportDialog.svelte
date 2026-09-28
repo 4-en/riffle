@@ -7,8 +7,9 @@
 
   // picksTotal: all picks; picksFiltered: picks within the current filters.
   // hasHistory: a location history is configured (enables adding GPS to the copies).
-  // draft: {ids, fresh, kind} exports exactly these photos: a Curate draft, or the grid's
-  // selection (kind 'selection'); fresh = how many were not exported before (null: unknown).
+  // draft: {ids, fresh, kind} exports exactly these photos: a Curate draft, the grid's
+  // selection (kind 'selection'), or a Discover walk (kind 'walk', in walk order);
+  // fresh = how many were not exported before (null: unknown).
   // ondone(): an export finished (refresh the grid's "exported" badges).
   let { picksTotal = 0, picksFiltered = 0, hasHistory = false, draft = null, ondone = () => {} } = $props();
 
@@ -25,8 +26,9 @@
   let dir = $state(null);
   // The dialog is opened for one purpose; draft does not change while it is open.
   const kind = untrack(() => (draft ? (draft.kind ?? 'curate') : 'picks'));
-  let name = $state(`${kind === 'curate' ? 'Curated' : 'Selection'} ${today}`);
-  const title = { curate: 'Export the draft', selection: 'Export the selection', picks: 'Export picks' }[kind];
+  let name = $state(`${{ curate: 'Curated', walk: 'Walk' }[kind] ?? 'Selection'} ${today}`);
+  const title = { curate: 'Export the draft', selection: 'Export the selection', walk: 'Export the walk', picks: 'Export picks' }[kind];
+  let numbered = $state(setting('numbered', true)); // a walk: "01_…" prefixes keep its order
   let content = $state(setting('content', 'images'));
   let rawFallback = $state(setting('rawFallback', true));
   let structure = $state(setting('structure', 'flat'));
@@ -61,7 +63,7 @@
 
   async function start() {
     error = '';
-    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, withCaptions, captionFormat, captionText, underscores, withText, folder: dir.path }))
+    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, withCaptions, captionFormat, captionText, underscores, withText, numbered, folder: dir.path }))
       saveSetting(`export.${k}`, v);
     try {
       status = await startExport(view, {
@@ -77,6 +79,7 @@
         caption_text: captionText,
         underscores,
         with_text: withText,
+        numbered: (kind === 'walk' || kind === 'curate') && numbered,
         ...(draft ? { photo_ids: draft.ids } : {}),
       });
       while (status.running) {
@@ -118,8 +121,19 @@
 
       {#if draft}
         <p class="text-neutral-300">
-          The {draft.ids.length} {kind === 'curate' ? 'photos of the Curate draft' : `selected photo${draft.ids.length === 1 ? '' : 's'}`}, whether they are picked or not.
+          The {draft.ids.length}
+          {kind === 'curate' ? 'photos of the Curate draft' : kind === 'walk' ? 'photos of your Discover walk' : `selected photo${draft.ids.length === 1 ? '' : 's'}`},
+          whether they are picked or not.
         </p>
+        {#if kind === 'walk' || kind === 'curate'}
+          <label class="{radio} -mt-2">
+            <input type="checkbox" bind:checked={numbered} disabled={running} class="mt-0.5" />
+            <span>
+              Number the files in {kind === 'walk' ? 'walk' : 'draft'} order
+              <span class="block text-xs text-neutral-500">01_IMG_1234.jpg, 02_…: the folder keeps the order {kind === 'walk' ? 'you walked' : 'of the draft'}.</span>
+            </span>
+          </label>
+        {/if}
       {:else}
         <fieldset class="grid gap-1 sm:grid-cols-2" disabled={running}>
           <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Which photos</legend>

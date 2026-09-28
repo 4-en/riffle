@@ -15,7 +15,7 @@ The model is a logistic regression with balanced class weights (L-BFGS). Every
 training run is also checked with 5-fold cross-validation over scenes, and the
 model is only offered when there is enough data and it clearly helps.
 
-Training happens only when the user asks for it (Library → Calibrate); the
+Training happens only when the user asks for it (Settings → Your taste → Calibrate); the
 result is saved next to the embeddings (derived data) and loaded at startup.
 """
 

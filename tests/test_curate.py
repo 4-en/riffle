@@ -46,17 +46,18 @@ class Lib:
     def flag(self, ids, value):
         selections.set_flags(self.conn, self.cfg.selections_path, [(list(ids), value)])
 
-    def pool(self, p, quality=None, styles=None, query=None):
+    def pool(self, p, quality=None, styles=None, query=None, uniqueness=None):
         ids = list(self.vecs)
         where, params = PhotoFilter().where("fake__test")
         return curate.build_pool(
             self.conn, where, params, {pid: k for k, pid in enumerate(ids)}, np.stack([self.vecs[i] for i in ids]), p,
             taste=None, clip_quality=quality, style_scores=styles or {}, place_labels={}, query_scores=query,
+            unique_scores=uniqueness,
         )
 
-    def pick(self, quality=None, scores=None, query=None, **kw) -> list[int]:
+    def pick(self, quality=None, scores=None, query=None, uniqueness=None, **kw) -> list[int]:
         p = curate.Params(**kw)
-        pool = self.pool(p, quality, scores, query)
+        pool = self.pool(p, quality, scores, query, uniqueness)
         return [int(pool.ids[j]) for j in curate.select(pool, p)]
 
 
@@ -127,6 +128,23 @@ def test_spread_over_places(cfg):
     assert viewpoint in lib.pick(quality, n=2, variety=0.7, time_spread=0, place_spread=1)
 
 
+def test_surprise_samples_but_stays_reasonable(cfg):
+    lib = Lib(cfg)
+    ids = [lib.add() for _ in range(30)]
+    quality = {pid: k / 30 for k, pid in enumerate(ids)}  # later ones are better
+    best = lib.pick(quality, n=6, **FLAT)
+    assert lib.pick(quality, n=6, surprise=0.0, seed=5, **FLAT) == best  # 0: no randomness, whatever the seed
+    drafts = [lib.pick(quality, n=6, surprise=1.0, seed=k, **FLAT) for k in range(10)]
+    assert len({tuple(sorted(d)) for d in drafts}) > 1  # seeds give different drafts
+    assert drafts[3] == lib.pick(quality, n=6, surprise=1.0, seed=3, **FLAT)  # the same seed: the same draft
+    worst = set(ids[:10])  # the weakest third never makes it, even at full surprise
+    assert not any(worst & set(d) for d in drafts)
+    # Removing a photo only changes its slot (the noise is fixed per photo, not per pick).
+    removed = drafts[0][0]
+    again = lib.pick(quality, n=6, surprise=1.0, seed=0, removed=[removed], **FLAT)
+    assert len(set(again) & set(drafts[0])) == 5
+
+
 def test_locked_and_removed_are_for_the_draft_only(cfg):
     lib = Lib(cfg)
     ids = [lib.add() for _ in range(8)]
@@ -136,6 +154,93 @@ def test_locked_and_removed_are_for_the_draft_only(cfg):
     assert ids[0] in got and ids[-1] not in got and len(got) == 3
     assert got == lib.pick(quality, **kw)  # deterministic
     assert lib.conn.execute("SELECT COUNT(*) FROM sel.flags").fetchone()[0] == 0
+
+
+def test_orders(cfg):
+    lib = Lib(cfg)
+    a = lib.add(axis(0), taken="2024:05:01 10:00:00")
+    b = lib.add(axis(1), taken="2024:05:01 11:00:00")
+    c = lib.add(near(axis(0), 1, eps=0.1), taken="2024:05:01 12:00:00")
+    lib.conn.execute("UPDATE photos SET brightness = ? WHERE id = ?", (0.2, a))
+    lib.conn.execute("UPDATE photos SET brightness = ? WHERE id = ?", (0.9, b))
+    lib.conn.execute("UPDATE photos SET brightness = ? WHERE id = ?", (0.5, c))
+    red, blue = np.zeros(24, np.float32), np.zeros(24, np.float32)
+    red[0], blue[14] = 0.3, 0.3
+    lib.conn.execute("UPDATE photos SET hues = ? WHERE id = ?", (blue.tobytes(), a))
+    lib.conn.execute("UPDATE photos SET hues = ? WHERE id = ?", (red.tobytes(), b))  # c: no colour data
+    lib.conn.commit()
+    quality = {a: 0.2, b: 0.9, c: 0.5}
+    p = curate.Params(n=3, **FLAT)
+    pool = lib.pool(p, quality)
+    d = curate.draft(pool, p)
+    o = d["orders"]
+    assert o["date"] == [a, b, c] and [i["id"] for i in d["items"]] == [a, b, c]
+    assert o["best"][0] == b
+    assert o["flow"] == [a, c, b]  # a, then the photo most like it
+    assert o["light"] == [b, c, a]  # light to dark
+    assert o["colour"] == [b, a, c]  # red, blue, then the photo without colour data
+
+
+def test_shortest_and_longest_paths():
+    # Five points on a line (distances = gaps): the shortest path runs along it, the
+    # longest jumps from end to end.
+    x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+    D = np.abs(x[:, None] - x[None, :])
+    short = curate._path(D)
+    assert short in ([0, 1, 2, 3, 4], [4, 3, 2, 1, 0])
+    long = curate._path(D, longest=True)
+    length = lambda p: sum(D[a, b] for a, b in zip(p, p[1:]))  # noqa: E731
+    assert length(long) >= 10 and length(short) == 4  # e.g. 2 0 4 1 3 or 1 4 0 3 2: 10 or more
+    # A random cloud: 2-opt never does worse than the greedy start it began from.
+    rng = np.random.default_rng(0)
+    P = rng.random((30, 2))
+    D = np.hypot(*(P[:, None, :] - P[None, :, :]).transpose(2, 0, 1))
+    greedy = [0]
+    rest = set(range(1, 30))
+    while rest:
+        nxt = min(rest, key=lambda j: D[greedy[-1], j])
+        greedy.append(nxt)
+        rest.remove(nxt)
+    assert length(curate._path(D)) <= length(greedy) + 1e-9
+    assert sorted(curate._path(D)) == list(range(30))
+
+
+def test_route_and_zigzag_orders(cfg):
+    lib = Lib(cfg)
+    # Four places west to east (Stockholm-ish longitudes) and one photo without a position.
+    ids = [lib.add(taken=f"2024:05:01 1{k}:00:00", place=(59.33, 18.00 + 0.01 * k)) for k in (2, 0, 3, 1)]
+    nowhere = lib.add(taken="2024:05:01 09:00:00")
+    p = curate.Params(n=5, **FLAT)
+    o = curate.draft(lib.pool(p), p)["orders"]
+    west_to_east = [ids[1], ids[3], ids[0], ids[2]]
+    assert o["route"][:4] in (west_to_east, west_to_east[::-1]) and o["route"][-1] == nowhere
+    assert o["zigzag"][-1] == nowhere and o["zigzag"][:4] != o["route"][:4]
+
+
+def test_like_the_locked_photos(cfg):
+    lib = Lib(cfg)
+    anchor = lib.add(axis(0))
+    alike = [lib.add(near(axis(0), s, eps=0.6)) for s in range(4)]  # like the locked one, not copies
+    other = [lib.add(axis(k + 1)) for k in range(4)]
+    quality = {**{a: 0.5 for a in alike}, **{o: 0.5 for o in other}, anchor: 0.5}
+    pick = lambda w: set(lib.pick(quality, n=3, locked=[anchor], like_locked=w, **FLAT)) - {anchor}  # noqa: E731
+    assert pick(1.0) <= set(alike)
+    assert pick(-1.0) <= set(other)
+    assert lib.pick(quality, n=3, like_locked=1.0, **FLAT) == lib.pick(quality, n=3, **FLAT)  # nothing locked: no effect
+
+
+def test_locked_photos_stay_outside_the_filters(cfg):
+    lib = Lib(cfg)
+    a = lib.add(taken="2024:05:01 10:00:00")
+    b = lib.add(taken="2024:06:01 10:00:00")
+    p = curate.Params(n=2, locked=[b], **FLAT)
+    where, params = PhotoFilter(date_to="2024-05-15").where("fake__test")  # b is outside
+    ids = list(lib.vecs)
+    pool = curate.build_pool(
+        lib.conn, where, params, {pid: k for k, pid in enumerate(ids)}, np.stack([lib.vecs[i] for i in ids]), p,
+        taste=None, clip_quality=None, style_scores={}, place_labels={},
+    )
+    assert set(int(pool.ids[j]) for j in curate.select(pool, p)) == {a, b}
 
 
 def test_locked_reject_stays_even_without_rejects(cfg):
@@ -168,6 +273,34 @@ def test_a_search_scores_but_does_not_filter(cfg):
     j = list(pool.ids).index(ids[0])
     assert "top match for the search" in curate.reason(pool, j, p, {})
     assert lib.pick(quality, n=3, **FLAT) == ids[::-1][:3]  # without a search: quality
+    # Its influence: 0 ignores it, more makes it win over bigger quality gaps.
+    assert lib.pick(quality, query=relevance, n=3, query_weight=0.0, **FLAT) == ids[::-1][:3]
+    steep = {pid: k / 5 for k, pid in enumerate(ids)}  # quality now differs a lot
+    assert not set(lib.pick(steep, query=relevance, n=3, query_weight=0.3, **FLAT)) & set(ids[:3])
+    assert set(lib.pick(steep, query=relevance, n=3, query_weight=2.0, **FLAT)) == set(ids[:3])
+
+
+def test_uniqueness_ignores_the_photos_own_group():
+    E = np.stack([axis(0), near(axis(0), 1), axis(1), near(axis(1), 2), near(axis(1), 3), axis(2)])
+    E /= np.linalg.norm(E, axis=1, keepdims=True)
+    u = curate.uniqueness(E, np.array([1, 1, 2, 3, 4, 5]), k=1)
+    assert u[0] > 0.9  # its only look-alike is in its own stack: unique in the library
+    assert u[2] < 0.1  # others (not its stack) look like it
+    assert u[5] > 0.9
+    assert curate.uniqueness(E[:1], np.array([1])).tolist() == [0.0]  # alone: nothing to compare
+
+
+def test_uniqueness_slider(cfg):
+    lib = Lib(cfg)
+    ids = [lib.add() for _ in range(10)]
+    quality = {pid: 0.5 + k / 100 for k, pid in enumerate(ids)}  # later ones slightly better
+    scores = {pid: (1.0 if k < 3 else 0.1) - k / 1000 for k, pid in enumerate(ids)}  # the first three are one of a kind
+    assert lib.pick(quality, uniqueness=scores, n=3, **FLAT) == lib.pick(quality, n=3, **FLAT)  # 0: no influence
+    assert set(lib.pick(quality, uniqueness=scores, n=3, unique=1.0, **FLAT)) == set(ids[:3])
+    assert not set(lib.pick(quality, uniqueness=scores, n=3, unique=-1.0, **FLAT)) & set(ids[:3])
+    p = curate.Params(n=3, unique=1.0, **FLAT)
+    pool = lib.pool(p, quality, uniqueness=scores)
+    assert "unlike most of the library" in curate.reason(pool, list(pool.ids).index(ids[0]), p, {})
 
 
 def test_alternatives_start_with_the_stack(cfg):
@@ -249,3 +382,17 @@ def test_curate_api_with_a_search(indexed):
         assert "top match for the search" in next(i["reason"] for i in d["items"] if i["id"] == best)
         assert c.post("/api/curate", json={"n": 2}).json()["used"]["query"] is None  # no search given
         assert c.post("/api/curate", json={"n": 2, "query": '-""'}).json()["used"]["query"] is False  # nothing to search for
+
+
+def test_curate_api_uniqueness_is_cached_on_disk(indexed):
+    body = {"n": 2, "variety": 0, "time_spread": 0, "place_spread": 0}
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:
+        assert not list((indexed.embeddings_dir / "clusters").glob("*-unique.*.npy"))  # only computed when used
+        d = c.post("/api/curate", params={"dupes": "all"}, json=body | {"unique": 1.0}).json()
+        assert len(d["items"]) == 2
+    saved = list((indexed.embeddings_dir / "clusters").glob("*-unique.*.npy"))
+    assert len(saved) == 1
+    with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:  # a restart reads it back
+        again = c.post("/api/curate", params={"dupes": "all"}, json=body | {"unique": 1.0}).json()
+        assert [i["id"] for i in again["items"]] == [i["id"] for i in d["items"]]
+    assert list((indexed.embeddings_dir / "clusters").glob("*-unique.*.npy")) == saved

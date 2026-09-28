@@ -62,6 +62,20 @@ async function send(method, path, body = {}) {
 /** Just the groups (count, dates, cover; location: label and centre) for an overview. */
 export const fetchGroups = (view, group) => get('/api/groups', { ...filterParams(view), collapse: view.collapse, group });
 /** The Similar map: the view's photos on the library's 2D layout, with their clusters. */
+/** Discover: a photo to start from (random within the filters, favouring newer ones). */
+export const fetchDiscoverStart = (view) => get('/api/discover/start', filterParams(view));
+/** Discover: branches from a photo. opts: {trail, came_from, prefs, drift, scoped, rejects, seed}. */
+export const fetchDiscover = (view, id, { trail = [], came_from = null, prefs = {}, drift = {}, scoped = false, rejects = false, seed = null, heading = null }) =>
+  get(`/api/discover/${id}`, {
+    ...(scoped ? { ...filterParams(view), scoped: 'true' } : {}),
+    trail: trail.join(','),
+    came_from,
+    prefs: JSON.stringify(prefs),
+    drift: JSON.stringify(drift),
+    rejects: rejects ? 'true' : undefined,
+    seed,
+    heading,
+  });
 export const fetchSimilarMap = (view) =>
   get('/api/similar/map', { ...filterParams(view), collapse: view.collapse, level: view.level });
 export const fetchIds = (view) => get('/api/ids', { ...filterParams(view), collapse: view.collapse });
@@ -115,13 +129,13 @@ export function fetchAlternatives(view, body) {
 }
 
 /** Custom tags (taught by example photos). */
-export const createCustomTag = (name, photoIds, strictness) =>
-  send('POST', '/api/custom-tags', { name, photo_ids: photoIds, strictness });
+export const createCustomTag = (name, photoIds, strictness, negatives = []) =>
+  send('POST', '/api/custom-tags', { name, photo_ids: photoIds, strictness, negatives });
 export const editCustomTag = (id, changes) => send('POST', `/api/custom-tags/${id}`, changes);
 export const deleteCustomTag = (id) => send('DELETE', `/api/custom-tags/${id}`);
-/** {counts: {strict, normal, loose}, edge: items, examples} for these example photos. */
-export const previewCustomTag = (photoIds, strictness) =>
-  send('POST', '/api/custom-tags/preview', { photo_ids: photoIds, strictness });
+/** {counts: {strict, normal, loose}, edge: items, examples, left_out} for these examples and negatives. */
+export const previewCustomTag = (photoIds, strictness, negatives = []) =>
+  send('POST', '/api/custom-tags/preview', { photo_ids: photoIds, strictness, negatives });
 
 /** Captions and fixed tags: {id: {caption, method, edited, tags}}. */
 export async function fetchCaptions(ids) {

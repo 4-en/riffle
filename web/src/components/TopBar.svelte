@@ -100,6 +100,11 @@
       onclick={() => (view.curate = true)}>Curate</button
     >
     <button
+      class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+      title="Walk from photo to photo, related in one way each; starts at a random photo in the current filters, often a recent one"
+      onclick={() => (view.discover = { id: null })}>Discover</button
+    >
+    <button
       class="shrink-0 rounded px-2.5 py-1 text-xs font-medium {picks
         ? 'bg-emerald-600 text-black hover:bg-emerald-500'
         : 'border border-neutral-700 text-neutral-500'}"
@@ -114,14 +119,18 @@
 
   <button
     class="flex shrink-0 items-center gap-2 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
-    title={indexStatus?.running ? indexStatus.step : 'Photo folders and indexing'}
-    onclick={() => (view.library = true)}
+    title={indexStatus?.running ? indexStatus.step : 'Settings: photo folders, indexing, locations, profiles, taste (Ctrl+,)'}
+    onclick={() => (view.settings = indexStatus?.running ? 'indexing' : 'last')}
   >
     {#if indexStatus?.running}
       <span class="h-2 w-2 animate-pulse rounded-full bg-sky-500"></span>
       Indexing{indexPct !== null ? ` ${indexPct}%` : '…'}
     {:else}
-      Library
+      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+      Settings
     {/if}
   </button>
 

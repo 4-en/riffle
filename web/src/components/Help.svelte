@@ -11,10 +11,18 @@
       ['O', 'Calendar or map overview (with a grouping)'],
       ['Ctrl+Z', 'Undo the last flag change'],
       ['Esc', 'Close the current view / clear the selection'],
+      ['Ctrl+,', 'Settings (1–7 switch pages)'],
     ]],
     ['Curate', [
       ['Esc', 'Close the draft'],
       ['← / → (photo view)', 'Step through the draft'],
+    ]],
+    ['Discover', [
+      ['1–9', 'Follow a branch'],
+      ['Backspace', 'Back one step'],
+      ['R', 'Other photos for the same branches'],
+      ['← → · Space (replay)', 'Step · pause the replay'],
+      ['Esc', 'Close'],
     ]],
     ['Grid', [
       ['Right-click', 'Menu: flag, compare, similar, show day / place, copy path, its tags'],
@@ -57,9 +65,9 @@
 
       <ol class="list-decimal space-y-3 pl-5 marker:text-neutral-500">
         <li>
-          <strong class="text-neutral-100">Add your photos.</strong> Open <em>Library</em> (top right), browse to a photo folder and
-          add it. Indexing runs in the background: thumbnails, search, tags, duplicates, and stacks of similar shots.
-          Optionally add your phone's <em>location history</em> there to place photos that have no GPS.
+          <strong class="text-neutral-100">Add your photos.</strong> Open <em>Settings</em> (top right) → <em>Photo folders</em>, browse to a
+          photo folder and add it. Indexing runs in the background: thumbnails, search, tags, duplicates, and stacks of similar shots.
+          Optionally add your phone's location history under <em>Locations</em> to place photos that have no GPS.
         </li>
         <li>
           <strong class="text-neutral-100">Find what you want.</strong> Search by what is in the picture ("boats at sunset"; a minus leaves something out: "street -people"; | finds either: "beach | lake"), click
@@ -80,6 +88,12 @@
           rejected), lock the ones to keep, or pick an alternative. <em>Mark as picks</em> or <em>Export</em> when it's right.
         </li>
         <li>
+          <strong class="text-neutral-100">Discover (optional).</strong> <em>Discover</em> (top bar, or on a photo) puts a photo in the
+          middle, with branches to photos related to it in one way each: the same subject elsewhere, the same light, a colour or
+          accent echo, a similar composition, the same place, a place nearby. Click one to walk on; the trail along the bottom leads
+          back. Replay the walk, pick or export it, or open it in Curate.
+        </li>
+        <li>
           <strong class="text-neutral-100">Caption (optional).</strong> Select photos and click <em>Caption…</em>: write a caption and
           tags for each, or generate them (from Riffle's own tags, or with JoyCaption if it is installed). Rename or remove a tag in all
           of them at once. The tags appear under <em>Fixed tags</em> on the left, and search finds words in captions and tags.
@@ -97,7 +111,7 @@
         Your picks and rejects, tags, and captions are saved in <span class="font-mono">selections.sqlite3</span> in your user data folder
         (<span class="font-mono">~/.local/share/riffle</span> on Linux): back it up. The derived data (thumbnails,
         embeddings, tags) is in your cache folder (<span class="font-mono">~/.cache/riffle</span>) and can be deleted;
-        indexing rebuilds it. Settings: <span class="font-mono">~/.config/riffle</span>. The Library shows the exact
+        indexing rebuilds it. Settings: <span class="font-mono">~/.config/riffle</span>. <em>Settings → Files</em> shows the exact
         places, and so does <span class="font-mono">riffle paths</span>.
       </div>
 

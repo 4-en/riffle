@@ -14,8 +14,9 @@
   // onorder(ids): the draft in reading order (the photo view steps through it).
   let { onorder = () => {} } = $props();
 
-  const NO_LOOK = { brightness: 0, contrast: 0, colorfulness: 0, hue: '' };
-  const DEFAULTS = { n: 12, variety: 0.4, time_spread: 0.5, place_spread: 0.5, include_rejects: false, look: NO_LOOK, query: '' };
+  const NO_LOOK = { brightness: 0, contrast: 0, colorfulness: 0, hue: '', accent: '' };
+  // surprise: 0 = the same draft every time; seed: which random draw (Shuffle picks a new one).
+  const DEFAULTS = { n: 12, variety: 0.4, time_spread: 0.5, place_spread: 0.5, include_rejects: false, look: NO_LOOK, query: '', surprise: 0, seed: 0, like_locked: 0, unique: 0, query_weight: 1 };
   const SIZES = [6, 12, 24, 48];
   // Colour and light: three-way choices (lean one way, or not at all).
   const LOOK_CHOICES = [
@@ -33,12 +34,24 @@
   const saved = load();
   // A search on the main page comes along (it scores the candidates; it does not filter).
   const startQuery = untrack(() => view.q) || saved.settings?.query || '';
-  let settings = $state({ ...DEFAULTS, ...saved.settings, look: { ...NO_LOOK, ...saved.settings?.look }, query: startQuery });
+  // From a Discover walk: its photos locked in, the rest filled around them (and at least as many photos).
+  const walk = untrack(() => (typeof view.curate === 'object' ? view.curate.locked : null));
+  const base = { ...DEFAULTS, ...saved.settings };
+  let settings = $state({
+    ...base,
+    n: walk ? Math.min(60, Math.max(base.n, walk.length)) : base.n,
+    look: { ...NO_LOOK, ...saved.settings?.look },
+    query: startQuery,
+  });
   let queryText = $state(startQuery);
   const applyQuery = () => (settings.query = queryText.trim());
   let styles = $state(saved.styles ?? {}); // name -> -1..1
-  let locked = $state(saved.locked ?? []);
-  let removed = $state(saved.removed ?? []);
+  let locked = $state(walk ?? saved.locked ?? []);
+  let removed = $state(walk ? [] : (saved.removed ?? []));
+  // How the draft is laid out (the same photos; changing it asks the server for nothing):
+  // date, best, flow (alike together), colour, light, or manual (dragged; `manual` ids).
+  let order = $state(walk ? 'manual' : (saved.order ?? 'date'));
+  let manual = $state(walk ?? saved.manual ?? []);
 
   let styleList = $state([]);
   let hues = $state([]);
@@ -46,7 +59,7 @@
   let draft = $state(null);
   let loading = $state(true);
   let error = $state('');
-  let notice = $state('');
+  let notice = $state(walk ? `The ${walk.length} photos of your walk are locked in; the rest is filled from the current filters.` : '');
   let alt = $state(null); // {id, items} alternatives for one slot
 
   function hash(s) {
@@ -77,12 +90,19 @@
   // Regenerate (debounced) whenever a slider, lock or removal changes; remember the draft.
   let timer;
   let token = 0;
+  function persist() {
+    try {
+      localStorage.setItem(key, JSON.stringify({ settings, styles, locked, removed, order, manual }));
+    } catch {}
+  }
+  $effect(() => {
+    order, manual;
+    untrack(persist);
+  });
   $effect(() => {
     const request = JSON.stringify(body());
     untrack(() => {
-      try {
-        localStorage.setItem(key, JSON.stringify({ settings, styles, locked, removed }));
-      } catch {}
+      persist();
       clearTimeout(timer);
       const mine = ++token;
       loading = true;
@@ -92,7 +112,6 @@
           if (mine !== token) return;
           draft = d;
           error = '';
-          onorder(d.items.map((i) => i.id));
         } catch (e) {
           if (mine === token) error = e.message;
         } finally {
@@ -108,6 +127,8 @@
     styles = {};
     locked = [];
     removed = [];
+    order = 'date';
+    manual = [];
     alt = null;
   }
 
@@ -143,7 +164,54 @@
     alt = null;
   }
 
-  const items = $derived(draft?.items ?? []);
+  // The draft's photos in the chosen order. Manual: the dragged order for the photos still
+  // in the draft, then any new ones by date.
+  const byId = $derived(new Map((draft?.items ?? []).map((i) => [i.id, i])));
+  const items = $derived.by(() => {
+    const dated = draft?.orders?.date ?? (draft?.items ?? []).map((i) => i.id);
+    let ids = draft?.orders?.[order] ?? dated;
+    if (order === 'manual') {
+      const kept = manual.filter((id) => byId.has(id));
+      ids = [...kept, ...dated.filter((id) => !kept.includes(id))];
+    }
+    return ids.map((id) => byId.get(id)).filter(Boolean);
+  });
+  // The photo view steps through the draft in this order too.
+  $effect(() => {
+    const ids = items.map((i) => i.id);
+    untrack(() => onorder(ids));
+  });
+
+  const ORDERS = [
+    ['date', 'Date', 'By capture time'],
+    ['best', 'Best', 'The best photos first'],
+    ['flow', 'Alike', 'Each photo next to the one most like it, so the sequence flows'],
+    ['colour', 'Colour', 'Around the colour wheel from red; black-and-white and grey last'],
+    ['light', 'Light', 'Light to dark'],
+    ['route', 'Route', 'The shortest way through the places, like a trip that visits each once (photos without a place last)'],
+    ['zigzag', 'Zigzag', 'The longest way: from one side of the map to the other at every step (photos without a place last)'],
+    ['manual', 'Yours', 'The order you dragged the photos into'],
+  ];
+
+  // Drag a photo onto another to put it before or after it (then the order is yours).
+  let dragId = $state(null);
+  let dropAt = $state(null); // {id, after}
+  function dragOver(e, id) {
+    if (dragId == null) return;
+    e.preventDefault();
+    const r = e.currentTarget.getBoundingClientRect();
+    dropAt = { id, after: e.clientX > r.left + r.width / 2 };
+  }
+  function drop(e) {
+    e.preventDefault();
+    if (dragId != null && dropAt && dropAt.id !== dragId) {
+      const ids = items.map((i) => i.id).filter((i) => i !== dragId);
+      ids.splice(ids.indexOf(dropAt.id) + (dropAt.after ? 1 : 0), 0, dragId);
+      manual = ids;
+      order = 'manual';
+    }
+    dragId = dropAt = null;
+  }
   const toPick = $derived(items.filter((i) => flagOf(i) !== 'pick'));
 
   async function markPicks() {
@@ -167,10 +235,22 @@
   });
 
   const pct = (v) => `${Math.round(v * 100)}%`;
+  // A -1..1 slider's value: "neutral", or which way and how far.
+  const balance = (v, more, less) => (v === 0 ? 'neutral' : `${v > 0 ? more : less} ${pct(Math.abs(v))}`);
   const sliderRow = 'block text-xs text-neutral-300';
   const range = 'mt-1 w-full accent-sky-600';
   const action = 'rounded bg-black/70 px-1.5 py-0.5 text-[11px] text-neutral-100 hover:bg-black';
 </script>
+
+<!-- A sidebar section's heading, with Clear when something in it is set. -->
+{#snippet heading(title, clear)}
+  <h3 class="flex items-center text-xs font-semibold uppercase tracking-wider text-neutral-500">
+    {title}
+    {#if clear}
+      <button class="ml-auto text-[11px] font-normal normal-case tracking-normal text-sky-400 hover:underline" onclick={clear}>Clear</button>
+    {/if}
+  </h3>
+{/snippet}
 
 <div class="fixed inset-0 z-20 flex flex-col bg-neutral-950" role="dialog" aria-modal="true" aria-label="Curate">
   <header class="flex flex-wrap items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-4 py-2 text-sm">
@@ -200,73 +280,149 @@
   {/if}
 
   <div class="flex min-h-0 flex-1">
-    <aside class="w-64 shrink-0 space-y-4 overflow-y-auto border-r border-neutral-800 bg-neutral-900/60 p-4">
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          applyQuery();
-        }}
-      >
-        <input
-          type="search"
-          bind:value={queryText}
-          onblur={applyQuery}
-          placeholder="Lean towards…, e.g. boats -people"
-          title="Photos matching this come first; others can still fill the draft. The same syntax as the main search: -term leaves out, | means either. Enter applies."
-          class="w-full rounded-md border bg-neutral-950 px-2.5 py-1.5 text-xs placeholder-neutral-500 outline-none focus:border-sky-600 {settings.query ? 'border-sky-700' : 'border-neutral-700'}"
-        />
-      </form>
-      {#if draft?.used?.query === false}
-        <p class="-mt-2 text-[11px] text-amber-300/80">The search is not used: the AI model is not loaded yet, or it has no words.</p>
-      {/if}
-      <div class={sliderRow}>
-        <span class="flex justify-between"><span>Photos</span><span class="tabular-nums text-neutral-400">{settings.n}</span></span>
-        <div class="mt-1.5 grid grid-cols-4 gap-1" role="group" aria-label="Number of photos">
-          {#each SIZES as size (size)}
-            <button
-              class="rounded py-0.5 text-xs tabular-nums {settings.n === size ? 'bg-sky-700 text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
-              aria-pressed={settings.n === size}
-              onclick={() => (settings.n = size)}>{size}</button
-            >
-          {/each}
-        </div>
-        <input type="range" min="2" max="60" step="1" bind:value={settings.n} class={range} aria-label="Number of photos" />
-      </div>
-      <label class={sliderRow} title="Left: simply the best photos. Right: fewer similar ones, more different subjects.">
-        <span class="flex justify-between"><span>Best ↔ Most varied</span><span class="tabular-nums text-neutral-400">{pct(settings.variety)}</span></span>
-        <input type="range" min="0" max="1" step="0.05" bind:value={settings.variety} class={range} />
-      </label>
-      <label class={sliderRow} title="Prefer photos taken hours or days apart over several from the same moment.">
-        <span class="flex justify-between"><span>Spread over time</span><span class="tabular-nums text-neutral-400">{pct(settings.time_spread)}</span></span>
-        <input type="range" min="0" max="1" step="0.05" bind:value={settings.time_spread} class={range} />
-      </label>
-      {#if draft?.used?.locations}
-        <label class={sliderRow} title="Prefer photos from different places over several from the same spot (uses the photos' coordinates).">
-          <span class="flex justify-between"><span>Spread over places</span><span class="tabular-nums text-neutral-400">{pct(settings.place_spread)}</span></span>
-          <input type="range" min="0" max="1" step="0.05" bind:value={settings.place_spread} class={range} />
-        </label>
-      {/if}
+    <aside class="w-64 shrink-0 space-y-5 overflow-y-auto border-r border-neutral-800 bg-neutral-900/60 p-4">
+      <section class="space-y-2.5">
+        <form
+          onsubmit={(e) => {
+            e.preventDefault();
+            applyQuery();
+          }}
+        >
+          <input
+            type="search"
+            bind:value={queryText}
+            onblur={applyQuery}
+            placeholder="Lean towards…, e.g. boats -people"
+            title="Photos matching this come first; others can still fill the draft. The same syntax as the main search: -term leaves out, | means either. Enter applies."
+            class="w-full rounded-md border bg-neutral-950 px-2.5 py-1.5 text-xs placeholder-neutral-500 outline-none focus:border-sky-600 {settings.query ? 'border-sky-700' : 'border-neutral-700'}"
+          />
+        </form>
+        {#if draft?.used?.query === false}
+          <p class="text-[11px] text-amber-300/80">The search is not used: the AI model is not loaded yet, or it has no words.</p>
+        {/if}
+        {#if settings.query}
+          <label class={sliderRow} title="How much the search counts against quality and the other settings. 0: not at all; 100%: its best matches clearly win; 200%: almost only matches.">
+            <span class="flex justify-between"><span>Search influence</span><span class="tabular-nums text-neutral-400">{pct(settings.query_weight)}</span></span>
+            <input type="range" min="0" max="2" step="0.1" bind:value={settings.query_weight} ondblclick={() => (settings.query_weight = 1)} class={range} />
+          </label>
+        {/if}
+      </section>
 
       <section class="space-y-2.5">
-        <h3 class="flex items-center text-xs font-semibold uppercase tracking-wider text-neutral-500">
-          Colour &amp; light
-          {#if lookCount}
-            <button class="ml-auto text-[11px] font-normal normal-case tracking-normal text-sky-400 hover:underline" onclick={() => (settings.look = { ...NO_LOOK })}>Clear</button>
-          {/if}
-        </h3>
-        {#if hues.length}
-          <div class="flex flex-wrap gap-1.5" role="group" aria-label="Lean towards a colour">
-            {#each hues as h (h.name)}
-              {@const on = settings.look.hue === h.name}
+        {@render heading('Draft')}
+        <div class={sliderRow}>
+          <span class="flex justify-between"><span>Photos</span><span class="tabular-nums text-neutral-400">{settings.n}</span></span>
+          <div class="mt-1.5 grid grid-cols-4 gap-1" role="group" aria-label="Number of photos">
+            {#each SIZES as size (size)}
               <button
-                class="h-6 w-6 rounded-full border-2 transition-transform {on ? 'scale-110 border-white' : 'border-transparent hover:scale-110'}"
-                style="background: {h.color}"
-                title="More {h.name}{on ? ' (click again to turn off)' : ''}"
-                aria-label="More {h.name}"
-                aria-pressed={on}
-                onclick={() => (settings.look.hue = on ? '' : h.name)}
-              ></button>
+                class="rounded py-0.5 text-xs tabular-nums {settings.n === size ? 'bg-sky-700 text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
+                aria-pressed={settings.n === size}
+                onclick={() => (settings.n = size)}>{size}</button
+              >
             {/each}
+          </div>
+          <input type="range" min="2" max="60" step="1" bind:value={settings.n} class={range} aria-label="Number of photos" />
+        </div>
+        <label class={sliderRow} title="Left: simply the best photos. Right: fewer similar ones within the draft, more different subjects.">
+          <span class="flex justify-between"><span>Best ↔ Most varied</span><span class="tabular-nums text-neutral-400">{pct(settings.variety)}</span></span>
+          <input type="range" min="0" max="1" step="0.05" bind:value={settings.variety} class={range} />
+        </label>
+        <label class="flex items-start gap-2 text-xs text-neutral-300">
+          <input type="checkbox" bind:checked={settings.include_rejects} class="mt-0.5" />
+          <span>Include rejected photos <span class="block text-neutral-500">Otherwise picks and unflagged photos only.</span></span>
+        </label>
+      </section>
+
+      <section class="space-y-2.5">
+        {@render heading('Spread')}
+        <label class={sliderRow} title="Prefer photos taken hours or days apart over several from the same moment.">
+          <span class="flex justify-between"><span>Over time</span><span class="tabular-nums text-neutral-400">{pct(settings.time_spread)}</span></span>
+          <input type="range" min="0" max="1" step="0.05" bind:value={settings.time_spread} class={range} />
+        </label>
+        {#if draft?.used?.locations}
+          <label class={sliderRow} title="Prefer photos from different places over several from the same spot (uses the photos' coordinates).">
+            <span class="flex justify-between"><span>Over places</span><span class="tabular-nums text-neutral-400">{pct(settings.place_spread)}</span></span>
+            <input type="range" min="0" max="1" step="0.05" bind:value={settings.place_spread} class={range} />
+          </label>
+        {/if}
+      </section>
+
+      <section class="space-y-2.5">
+        {@render heading('Lean', settings.unique || settings.like_locked || settings.surprise ? () => (settings = { ...settings, unique: 0, like_locked: 0, surprise: 0 }) : null)}
+        <label
+          class={sliderRow}
+          title="Compared with the whole library (not only these candidates; its own stack and duplicates do not count). Right: photos unlike anything else you have. Left: typical photos, like many others. Most varied is different: it spreads the draft itself."
+        >
+          <span class="flex justify-between">
+            <span>Common ↔ Unique</span>
+            <span class="tabular-nums text-neutral-400">{balance(settings.unique, 'more unique', 'more common')}</span>
+          </span>
+          <input type="range" min="-1" max="1" step="0.1" bind:value={settings.unique} ondblclick={() => (settings.unique = 0)} class={range} />
+        </label>
+        <label
+          class="{sliderRow} {locked.length ? '' : 'opacity-50'}"
+          title={locked.length
+            ? 'Left: the rest of the draft unlike the locked photos. Right: like them (each compared with its closest locked photo). Middle: no influence.'
+            : 'Lock photos in the draft (Lock, on a photo when you hover it) to steer the rest towards or away from them.'}
+        >
+          <span class="flex justify-between">
+            <span>Like the locked photos</span>
+            <span class="tabular-nums text-neutral-400">{!locked.length ? 'lock some first' : balance(settings.like_locked, 'more', 'less')}</span>
+          </span>
+          <input type="range" min="-1" max="1" step="0.1" bind:value={settings.like_locked} disabled={!locked.length} ondblclick={() => (settings.like_locked = 0)} class={range} />
+        </label>
+        <div class={sliderRow}>
+          <label class="block" title="Left: the same draft every time. Right: less obvious photos get a chance (never the weakest third). Shuffle draws again.">
+            <span class="flex justify-between">
+              <span>Surprise</span>
+              <span class="tabular-nums text-neutral-400">{settings.surprise ? pct(settings.surprise) : 'off'}</span>
+            </span>
+            <input type="range" min="0" max="1" step="0.05" bind:value={settings.surprise} class={range} />
+          </label>
+          {#if settings.surprise > 0}
+            <button
+              class="mt-1 rounded border border-neutral-700 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-800"
+              title="Another random draw with the same settings (locked photos stay)"
+              onclick={() => (settings.seed = Math.floor(Math.random() * 2 ** 31))}>Shuffle</button
+            >
+          {/if}
+        </div>
+      </section>
+
+      <section class="space-y-2.5">
+        {@render heading('Colour & light', lookCount ? () => (settings.look = { ...NO_LOOK }) : null)}
+        {#if hues.length}
+          <div class="flex items-center gap-2 text-xs">
+            <span class="w-14 shrink-0 text-neutral-400" title="The colour that most of the photo has">Main</span>
+            <div class="flex flex-wrap gap-1" role="group" aria-label="Lean towards a main colour">
+              {#each hues as h (h.name)}
+                {@const on = settings.look.hue === h.name}
+                <button
+                  class="h-5 w-5 rounded-full border-2 transition-transform {on ? 'scale-110 border-white' : 'border-transparent hover:scale-110'}"
+                  style="background: {h.color}"
+                  title="Mostly {h.name}{on ? ' (click again to turn off)' : ''}"
+                  aria-label="Mostly {h.name}"
+                  aria-pressed={on}
+                  onclick={() => (settings.look.hue = on ? '' : h.name)}
+                ></button>
+              {/each}
+            </div>
+          </div>
+          <div class="flex items-center gap-2 text-xs">
+            <span class="w-14 shrink-0 text-neutral-400" title="An intense colour that need not take up much of the photo: a red balloon in a blue sky">Accent</span>
+            <div class="flex flex-wrap gap-1" role="group" aria-label="Lean towards an accent colour">
+              {#each hues as h (h.name)}
+                {@const on = settings.look.accent === h.name}
+                <button
+                  class="h-5 w-5 rounded-full border-2 transition-transform {on ? 'scale-110 border-white' : 'border-transparent hover:scale-110'}"
+                  style="background: radial-gradient(circle, {h.color} 0 38%, #3f3f46 42%)"
+                  title="A {h.name} accent: an intense {h.name} detail, however small{on ? ' (click again to turn off)' : ''}"
+                  aria-label="A {h.name} accent"
+                  aria-pressed={on}
+                  onclick={() => (settings.look.accent = on ? '' : h.name)}
+                ></button>
+              {/each}
+            </div>
           </div>
         {/if}
         {#each LOOK_CHOICES as choice (choice.key)}
@@ -288,7 +444,8 @@
         {/each}
         {#if draft?.used?.colors_missing}
           <p class="text-[11px] text-amber-300/80">
-            The colours of {draft.used.colors_missing} photos are not analysed yet: run <em>Index now</em> in the Library (it is quick).
+            The colours of {draft.used.colors_missing} photos are not analysed yet:
+            <button class="text-sky-400 hover:underline" onclick={() => (view.settings = 'indexing')}>Index now</button> (it is quick).
           </p>
         {/if}
       </section>
@@ -335,16 +492,12 @@
         </section>
       {/if}
 
-      <label class="flex items-start gap-2 text-xs text-neutral-300">
-        <input type="checkbox" bind:checked={settings.include_rejects} class="mt-0.5" />
-        <span>Include rejected photos <span class="block text-neutral-500">Otherwise picks and unflagged photos only.</span></span>
-      </label>
-
-      {#if draft && !draft.used?.taste}
-        <p class="text-[11px] text-neutral-500">Tip: calibrate your taste in the Library for drafts closer to what you would pick.</p>
-      {/if}
-
       <div class="space-y-1 border-t border-neutral-800 pt-3 text-[11px] text-neutral-500">
+        {#if draft && !draft.used?.taste}
+          <p class="pb-1">
+            Tip: <button class="text-sky-400 hover:underline" onclick={() => (view.settings = 'taste')}>calibrate your taste</button> for drafts closer to what you would pick.
+          </p>
+        {/if}
         {#if locked.length}<p>{locked.length} locked</p>{/if}
         {#if removed.length}<p>{removed.length} removed from this draft</p>{/if}
         <button class="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-300 hover:bg-neutral-800" onclick={reset}>Reset draft</button>
@@ -358,17 +511,42 @@
         </p>
       {:else if draft}
         <div class="mx-auto max-w-6xl px-8 py-8">
+          <div class="mb-3 flex flex-wrap items-center gap-1 text-xs text-neutral-400" role="group" aria-label="Order">
+            <span class="mr-1">Order</span>
+            {#each ORDERS as [value, label, hint] (value)}
+              {#if (value !== 'manual' || manual.length) && ((value !== 'route' && value !== 'zigzag') || draft.used?.locations)}
+                <button
+                  class="rounded px-2 py-0.5 {order === value ? 'bg-sky-700 text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
+                  aria-pressed={order === value}
+                  title={hint}
+                  onclick={() => (order = value)}>{label}</button
+                >
+              {/if}
+            {/each}
+            <span class="ml-2 text-neutral-600">Drag photos to arrange them yourself; the export keeps the order.</span>
+          </div>
           <div bind:clientWidth={width}>
             {#each rows as row (row.start + '-' + row.end)}
               <div class="flex overflow-hidden" style="gap: {GAP}px; margin-bottom: {GAP}px; height: {row.height}px">
                 {#each row.items as it (it.id)}
                   {@const isLocked = locked.includes(it.id)}
                   <figure
-                    class="group relative shrink-0 overflow-hidden rounded-sm bg-neutral-900 bg-cover bg-center {alt?.id === it.id ? 'ring-2 ring-sky-500' : ''}"
+                    class="group relative shrink-0 cursor-grab overflow-hidden rounded-sm bg-neutral-900 bg-cover bg-center {alt?.id === it.id ? 'ring-2 ring-sky-500' : ''} {dragId === it.id ? 'opacity-40' : ''}"
                     style="width: {aspect(it) * row.height}px; background-image: url({it.thumb})"
+                    draggable="true"
+                    ondragstart={(e) => {
+                      dragId = it.id;
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    ondragover={(e) => dragOver(e, it.id)}
+                    ondrop={drop}
+                    ondragend={() => (dragId = dropAt = null)}
                   >
+                    {#if dropAt?.id === it.id && dragId !== it.id}
+                      <div class="pointer-events-none absolute inset-y-0 z-10 w-1 bg-sky-400 {dropAt.after ? 'right-0' : 'left-0'}"></div>
+                    {/if}
                     <button class="block h-full w-full" title="Open" onclick={() => (view.photo = it.id)}>
-                      <img src="/previews/{it.id}.jpg" alt="" loading="lazy" decoding="async" class="h-full w-full object-cover" onerror={(e) => (e.currentTarget.src = it.thumb)} />
+                      <img src="/previews/{it.id}.jpg" alt="" loading="lazy" decoding="async" draggable="false" class="h-full w-full object-cover" onerror={(e) => (e.currentTarget.src = it.thumb)} />
                     </button>
                     <div class="absolute left-1.5 top-1.5 flex gap-1 {isLocked ? '' : 'opacity-0 group-hover:opacity-100'}">
                       <button class="{action} {isLocked ? 'bg-sky-700 hover:bg-sky-600' : ''}" title={isLocked ? 'Unlock' : 'Keep this photo when the draft changes'} onclick={() => toggleLock(it.id)}>

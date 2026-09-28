@@ -211,21 +211,26 @@ def add_caption_files(
             files.append(side)
 
 
-def assign_targets(files: list[_File], folder: Path, structure: str) -> None:
+def assign_targets(files: list[_File], folder: Path, structure: str, numbered: list[int] | None = None) -> None:
     """Choose each file's destination path (see module docstring). ``folders``
-    mirrors each file's location under its source folder's name."""
+    mirrors each file's location under its source folder's name. ``numbered``: photo
+    ids in order; their files get the position as a prefix ("01_IMG_1234.jpg"), so the
+    copies keep the order (a Discover walk)."""
     if structure not in STRUCTURE:
         raise ExportError(f"structure must be one of {', '.join(STRUCTURE)}")
     claimed: set[Path] = set()
     by_photo: dict[int, list[_File]] = {}
     for f in files:
         by_photo.setdefault(f.photo_id, []).append(f)
-    for group in by_photo.values():
+    width = len(str(len(numbered))) if numbered else 0
+    position = {pid: f"{k + 1:0{max(2, width)}d}_" for k, pid in enumerate(numbered or [])}
+    for pid, group in by_photo.items():
+        prefix = position.get(pid, "")
         n = 0
         while True:
             suffix = f"-{n}" if n else ""
             targets = [
-                (folder / f.rel_dir if structure == "folders" else folder) / f"{f.src.stem}{suffix}{f.src.suffix}"
+                (folder / f.rel_dir if structure == "folders" else folder) / f"{prefix}{f.src.stem}{suffix}{f.src.suffix}"
                 for f in group
             ]
             fits = all(
@@ -265,6 +270,7 @@ def run_export(
     caption_text: str = "tags",
     underscores: bool = False,
     with_text: bool = False,
+    numbered: bool = False,
 ) -> dict:
     """Copy the files. Runs as a BackgroundJob; returns the summary. The export
     history goes to ``selections_path`` (the profile active when it started),
@@ -305,7 +311,7 @@ def run_export(
         conn.close()
 
     dest.mkdir(parents=True, exist_ok=True)
-    assign_targets(files, dest, structure)
+    assign_targets(files, dest, structure, list(dict.fromkeys(photo_ids)) if numbered else None)
     todo = [f for f in files if not f.target.exists()]
     for f in files:
         if f.target.exists():

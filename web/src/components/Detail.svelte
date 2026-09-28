@@ -143,6 +143,14 @@
             Find similar
           </button>
           <button
+            class="rounded border border-sky-800 px-3 py-1.5 text-xs text-sky-200 hover:bg-sky-950"
+            title="Walk from this photo to others related in one way each: subject, colour, shape, light…"
+            onclick={() => {
+              view.discover = { id: photo.id };
+              view.photo = null;
+            }}>Discover</button
+          >
+          <button
             class="rounded border border-neutral-700 px-3 py-1.5 text-xs hover:bg-neutral-800"
             title="Browse this photo's {dateMode} in the grouped grid"
             onclick={() => ontimeline(photo, 'date')}

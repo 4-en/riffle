@@ -103,7 +103,7 @@ macOS uses `~/Library/Application Support/riffle` and `~/Library/Caches/riffle`.
 The config is looked up in this order: `--config`, `$RIFFLE_CONFIG`, `./config.yaml`, then the user config (created on first run). In the standalone app, the first-run config defaults to the faster model (§13). `data_dir`, `selections`, and `vocabulary` override the default locations. Relative paths resolve against the config file's folder.
 
 ```yaml
-sources: [/Volumes/Photos/China]        # written by the UI's Library; comments elsewhere are kept
+sources: [/Volumes/Photos/China]        # written by Settings → Photo folders; comments elsewhere are kept
 exclude: ["**/.Trashes/**"]
 image_extensions: [.jpg, .jpeg, .png, .tif, .tiff, .heic]
 raw_extensions: [.cr2, .cr3, .nef, .arw, .raf, .dng, .orf, .rw2]
@@ -166,7 +166,7 @@ web/src/
                          # (flags, undo, selection), connection.svelte.js, justify.js
   components/            # TopBar, ViewBar, Sidebar, Filters, Section, Grid, Detail,
                          # ContextMenu, SelectionBar, Compare, Curate, TagDialog, ExportDialog,
-                         # Library, FolderBrowser, Calendar, MapView, Help, UnmatchedRaws
+                         # Settings (+ settings/ pages), FolderBrowser, Calendar, MapView, Help, UnmatchedRaws
 packaging/               # PyInstaller entry point (riffle_app.py) and riffle.spec
 .github/workflows/release.yml
 ```
@@ -341,6 +341,8 @@ One pass over each preview (`dupes.compute_phashes`) computes whatever is missin
   - contrast: RMS;
   - colourfulness: Hasler & Süsstrunk;
   - hues: a 24-bin histogram weighted by chroma, so greys don't count. 12 bins mixed red, orange, and yellow, and put sky blue under teal; 24 separated them.
+  - accents (`accents_of`, a JSON column, catalogue v9; also for Discover): up to three intense colours that need not cover much of the frame, the red balloon in a blue sky. Per hue (a 45° window), the pixels with chroma ≥ 0.25 and value ≥ 0.2: intensity is their 90th-percentile chroma, area their share of the frame. Strength = intensity, lowered below 1 % of the frame (specks) and above 10 % (down to a quarter at 30 %: a large area is palette, not accent). The hue covering the most of the frame (from 12 %) is the base colour and not an accent. Accents are at least 45° apart. 16 ms per preview; 33 s for 13,468 on 8 threads.
+    - First library: the candle → orange, a small blue flower → blue, the desk with blue objects → blue, a plain sky → none. With the first rule (the base only when it held half the colour over a quarter of the frame), skies filling a fifth of the frame were most of the "blue accents"; the largest-area rule and the large-area discount removed most of them (a few sky patches between trees and clouds remain).
 
 **Suggested keeper** (`quality.keeper_scores`, `GET /api/suggest`), among the photos being compared:
 
@@ -401,7 +403,7 @@ On the first library, every photo had an EXIF offset. 587 of 743 were placed fro
 
 ## 9. Taste model
 
-`taste.py`, trained on the user's flags on request (**Library → Your taste → Calibrate**, ~1.1 s including cross-validation).
+`taste.py`, trained on the user's flags on request (**Settings → Your taste → Calibrate**, ~1.1 s including cross-validation).
 
 - **Unit: scenes, not photos.** One sample per stack or single photo (mean embedding). A keeper scene contains a pick or an export; a rejected scene contains only rejects; unreviewed scenes are skipped.
   - Per photo it didn't work: AUC 0.74 against 0.73 for the untrained CLIP quality score. It didn't transfer between libraries, and it was worse than sharpness at choosing a frame within a stack.
@@ -412,12 +414,12 @@ On the first library, every photo had an EXIF offset. 587 of 743 were placed fro
   - the top 20 % of scenes hold 68 % of keeper scenes, the top 30 % hold 77 %;
   - trained on one library, it ranks the other at AUC 0.78 / 0.66;
   - nearest neighbours to the picks reached only 0.68.
-- **Offered only** with ≥ 20 keeper scenes, ≥ 50 rejected scenes, and cross-validated AUC ≥ 0.65; otherwise the Library explains why not.
+- **Offered only** with ≥ 20 keeper scenes, ≥ 50 rejected scenes, and cross-validated AUC ≥ 0.65; otherwise Settings → Your taste explains why not.
 - **Sort order only**: the bottom 30 % still held 3 of the 60 keeper scenes, so "likely rejects" never flags anything.
 - **Stacks on by default for these sorts**, since scenes are scored as a whole. In-sample, with Stacks the top fifth of tiles held 55 of 60 picks; without, 38 of 53.
 - **Not used for frames within a stack**: that stays with sharpness and the suggested keeper.
 - **Storage and training**: saved as `<model_id>.taste.npz` (derived) and loaded at startup (~7 ms); new photos are scored without retraining. An earlier version retrained after every flag change; an explicit button proved more predictable.
-- **API**: `GET /api/taste` reports status, the figures, and `changed_since` (flags changed since calibrating; the Library suggests recalibrating from 25).
+- **API**: `GET /api/taste` reports status, the figures, and `changed_since` (flags changed since calibrating; Settings suggests recalibrating from 25, with an amber dot in its nav).
 
 ## 10. Search and vocabulary
 
@@ -442,6 +444,9 @@ Text search encodes the query with the CLIP text encoder and ranks the filtered 
 A text search takes about 10 ms.
 
 **Your tags** (`custom_tags.py`; stored in selections v3, examples by content hash). A photo belongs when its similarity to its best-matching example reaches a fixed level per model: the stack threshold minus 0.05 (strict), 0.08 (normal), or 0.12 (loose). That is 0.87 / 0.84 / 0.80 for ViT-L-14.
+
+*Negatives* (28 Sep 2026; selections v7, `custom_tag_negatives`, by content hash, copied with a profile's tags): in the tag dialog, the 12 members nearest the edge (one per stack) are clickable; a clicked photo does not belong. A photo is then a member only if it is also more similar to its best example than to every negative (margin 0), so each negative carves out its own neighbourhood; a negative covers its stack and duplicate group; a negative in an example's stack, or as alike as stack members, is refused. Without negatives nothing changes. A linear classifier on top (for tags with many examples) was left for later.
+- *First library, the "Holo" tag* (12 examples of one anime character, Strict, 123 members): in round one, 10 of the 12 edge photos were other characters (mostly white-haired fox girls); marking them took the tag to 62, and all 51 photos removed besides them were other characters. Round two (10 more marked) took it to 47 (35 plus the examples), 5 removed besides them, one of them borderline. What remains is mostly the character, with several look-alikes still in: CLIP does not separate one character from similar ones well, as expected (§15, item 9). A margin of 0 removed nothing that clearly belonged, so it stays at 0.
 
 - **Best match, not the average**: varied examples each cover their own neighbourhood, and one example equals "find similar". The examples always belong.
 - **Tuned on the first library** with tags built from three seagull, fortress, and sheep photos. Members stayed on subject down to about 0.84; below 0.80 they became merely similar scenes (open sky, other waterfront buildings, plain shorelines). Sheep held a plateau of 61–67 photos between 0.85 and 0.75.
@@ -528,7 +533,7 @@ Mutating endpoints accept only JSON bodies, so other sites can't trigger them wi
 
 A single page without a router. View state lives in a Svelte store mirrored into the URL (search, tags, filters, grouping, sort, open photo), so views can be bookmarked.
 
-- **Top bar**: search; a "similar to" chip; the workflow (**Review stacks**, **Curate**, **Export**); then **Library** (with indexing progress) and **?** (help).
+- **Top bar**: search; a "similar to" chip; the workflow (**Review stacks**, **Curate**, **Export**); then **Settings** (a gear; indexing progress while it runs) and **?** (help).
 - **Toolbar above the grid**: result count; **Group** with a **Grid | Calendar/Map** switch (or **Broad · Medium · Fine** for Similar); **Sort**; thumbnail size **S · M · L** (minimum tile width 112 / 168 / 260 px, remembered per browser; Large may load the 1600 px preview via `srcset`, since a 320 px thumbnail cropped square looks soft at that size); **Stacks**; and, when grouped, the group count with **Jump to…** at the right end.
 - **Similar grouping** (`clusters.py`; `group=similar&level=`): hierarchical clustering (average linkage, cosine; cuts 0.45 / 0.35 / 0.25) of the photos the listing shows, so filters shape the themes. Above 6,000 photos a fixed sample is clustered and the rest assigned to the nearest centre. Clusters under 5 photos go to Other. Keys rank clusters by size; the photo → key map is a JSON object looked up per row in SQL (13 ms; a join against a JSON list took 470 ms). Cached per listing, level, and embedding file. Names (`clusters.names`): the kind of image when most members are not photographs; else the most distinctive phrase of a naming vocabulary (`defaults/cluster_names.yaml`: 483 things and 40 settings, i.e. light, style, sky, texture; not tags), i.e. the highest similarity to the cluster centre minus the library's mean similarity to that phrase. A thing within 0.035 behind a setting is named first ("birds in flight · a blue sky"); a second phrase within 0.01 joins; clusters that would share a name get their next phrase added. Without the model: the members' most common subject tag. The vocabulary's text vectors are cached per model (`<model_id>.names.npz`).
 - **Size cap** (`clusters.MAX_SHARE`: 25 / 12 / 6 % of the view for broad / medium / fine, at least 25 photos): a larger cluster is clustered again with the cut lowered by 0.8× (down to 0.12); what its parts leave over stays one group. CLIP keeps kinds of image close whatever they show: all 259 illustrations of the first library were one medium cluster, even with only illustrations in view. Capped, they split into 20 groups by subject (99 % grouped): figurines, swimwear, friends, armour, animal ears, a beach… Centring the view's embeddings instead (removing what all share) left 75 % unclustered at the same cuts.
@@ -561,7 +566,7 @@ A single page without a router. View state lives in a Svelte store mirrored into
   - Groups appear in date order, or trip order for places (by each group's first photo), or path order for folders.
 - **Overviews**: a year calendar (days with a cover and count), or a map with one cluster per place, region, or country. Clicking opens the group in the grid. The map draws bundled Natural Earth outlines (`world-atlas` 50m, loaded lazily) with d3-geo and d3-zoom; street-level detail was left out deliberately.
 - **Photo view**: preview, metadata, tags, location with source and accuracy, taste score, and flag buttons. Actions: Stack, Find similar, Show day, Show place, Copy path.
-- **Library**: photo folders, folder browser, **Index now** with progress, location history, profiles, taste model, and flag / export-history resets.
+- **Settings** (`Settings.svelte`, one component per page in `components/settings/`; 28 Sep 2026, replacing the Library dialog, which had grown into one long page of unrelated sections): a nav on the left, one page at a time. Pages: Photo folders (the folder browser behind *Add a folder…*, open on first run), Indexing (Index now, progress, log), Locations (location history), Profiles, Your taste, Flags & exports (the resets), Files (config, flags, derived data paths). While indexing runs, a status strip sits under the header and the nav marks Indexing. `view.settings` holds the page, so other views open one directly: first run → Photo folders, *Manage profiles…* → Profiles, Curate's notes → Indexing / Your taste. `Ctrl+,` opens it (the last page, remembered per browser), `1`–`7` switch pages.
 - **Profiles**: a switcher in the top bar once there are two or more, and "Profile: <name>" at the top of the sidebar outside the default profile.
 - **Help**: the workflow in steps and all shortcuts.
 
@@ -590,7 +595,9 @@ Then:
   - "Breathtaking" became Scenic. "Artistic" turned out to be what CLIP reads as abstract close-ups, so it is labelled Abstract & details.
 - **Colour and light** choices (§7.6) enter the same term at weight 1, using `curate.look_scores`. Hue affinity is the chroma-weighted share within ±30° of the swatch, with a triangular window. Photos not yet analysed get the median.
   - Checked with top-40 contact sheets per measure. "Soft" mostly finds empty skies, which the quality term keeps in check.
-- **A search** (the §10 syntax) adds its own term, `1.0 · (2 · pct − 1)`. It isn't averaged with the styles, so it stays strong beside them, and it scores rather than filters.
+- **Accent** swatches (a second row under the main colour) lean towards photos with an accent of that hue: the strongest accent within ±30°, by strength. First library, the OM-5 photos: red → the red car, red trainers, cola bottles on a café table, a red bus on a bridge; yellow → the pansy's centre, the yellow post box, Swedish flags, the underground train; green is weaker (green is everywhere).
+- **Uniqueness** (Common ↔ Unique, −1 … 1): `curate.uniqueness`, 1 − the mean CLIP similarity to a photo's 5 closest photos in the whole library, not counting its own stack or duplicate group (so a burst is judged against everything else). As a percentile among the candidates, `0.6 · slider · (2 · pct − 1)`. Different from Most varied, which spreads the draft itself. 1.3 s for 13,468 photos (chunked matmul); cached in memory and on disk (`<embeddings>/clusters/<model>-unique.<hash of ids and groups>.npy`) and warmed with the other caches. The reason says "unlike most of the library" (top 10 % of the library). First library: unique → a pigeon, the post box, chips at a café, the red car, a snake on the road; common → skies with a bird, sheep, lake shores. Its most unique photos also include short series (7 frames of a torn label) whose frames are one stack: unique as a whole, as intended.
+- **A search** (the §10 syntax) adds its own term, `1.0 · w · (2 · pct − 1)`, where `w` is the Search influence slider (0–200 %, 100 % by default; shown when there is a search). It isn't averaged with the styles, so it stays strong beside them, and it scores rather than filters.
   - On the Sweden trip with rejects (474 candidates): "boats" gave boats and harbours from different spots, "people -boats" gave people without boats, and "palace | church" gave palaces, churches, and towers.
 
 **Selection.** Greedy maximal marginal relevance: each step adds the candidate maximising `(1 − v)·q − v·max redundancy`, where `v` is Best ↔ Most varied. Redundancy to a chosen photo is the weighted mean of:
@@ -619,6 +626,14 @@ Per photo: the reason (e.g. "your pick · best of 14 similar shots · very moody
 - 40–300 ms per draft; the first request with a style encodes its prompts.
 - Sweden trip with defaults: 30 candidates; 12 photos over all 3 days and 5 places (7 places at variety 0.8).
 - With rejects (474 candidates) and Moody +1: an alley, the underground, and a crow at a café table came in, and 10 picks were kept.
+
+**Order** (above the draft; switching asks the server for nothing: `curate.orders` returns the draft's photos in every order): **Date**; **Best** (quality); **Alike** (a greedy chain from the first by date, each next the most similar remaining); **Colour** (the main hue, the chroma-weighted circular mean of the histogram, around the wheel from red; photos with little colour last, light to dark); **Light** (light to dark); **Route** and **Zigzag** (the shortest and the longest path through the photos' places, by map distance: greedy chains from every start, the best improved by 2-opt, 16 ms for 60 photos; photos without a place last; shown when the draft has places); **Yours**: drag a photo onto another to put it before or after it (a bar shows where); the dragged order is kept for photos still in the draft, new ones follow by date. The order and the dragged ids are saved with the draft; Curate from a walk starts in the walk's order. The export numbers the files in the shown order ("Number the files in draft order", as for walks), and the photo view steps in it.
+
+**Like the locked photos** (a slider, −1 … 1, neutral in the middle; needs locked photos): each candidate's closeness to its nearest locked photo (a varied set's average resembles none of them), as a percentile among the candidates, times 0.7 × the slider, added to its score; variety still keeps near-copies out. On the first library (Sweden, the palace and a seagull locked, 12 photos): towards them, the mean similarity to the nearest locked photo rose from 0.62 to 0.75, 7 of the 10 free photos changing (saturated already at 0.5); away, it fell to 0.57, 5 changing (less room: variety already avoids them).
+
+**Sidebar** (28 Sep 2026, regrouped): the search and its influence; *Draft* (size, Best ↔ Most varied, Include rejects); *Spread* (over time, over places); *Lean* (Common ↔ Unique, Like the locked photos, Surprise; Clear); *Colour & light* (main colour, accent, light, contrast, colour; Clear); *Style* (collapsed); then the counts and Reset. Double-click resets a −1 … 1 slider.
+
+**Surprise** (a slider, 0 = off): each candidate gets Gumbel noise on its score (so the picks are a sample favouring the best), scaled to the standard deviation of the candidates' quality (so full surprise means the same in any library), and none for the weakest third (surprise reshuffles the reasonable ones only). The noise is fixed per photo id and seed (a splitmix64 hash; drawing per position shifted it whenever a photo was removed, and a removal changed 5 of 6 photos): removing or locking still changes only its slot, and **Shuffle** draws a new seed, saved with the settings. On the first library (drafts of 12): half surprise keeps about 8 of 12, full about 6 (Sweden) to 8 (April), with 21–30 different photos over 6 draws; all picks stayed in (their bonus).
 
 ## 13. Standalone releases
 
@@ -665,6 +680,15 @@ A short qualitative note:
 - Tags: 30 photos each for the 10 largest tags; which are reliable?
 - Timing: full index and search latency.
 - Is a multilingual CLIP model worth adding for Chinese queries and signage?
+
+### Large libraries: first use of Similar and Discover (28 Sep 2026)
+
+With 12,000 photos (the user added 10k for testing) the first Similar grouping or Discover after a start took seconds. Measured on synthetic data of that size: clustering 4.5 s per level (the sampled path: average linkage on 6,000); Discover's library axes 5.8 s (they need the fine clustering); phrase profiles and named axes 0.2 s together; the layout fingerprints one thumbnail read per photo, all of them again whenever the embeddings changed.
+- **Fingerprints in indexing:** computed with the colours in `dupes.compute_phashes` (the preview is open anyway) and stored per photo (catalogue v8, `layout`), so new photos only add their own; photos indexed before fall back to the thumbnails (cached on disk).
+- **Clusters on disk:** `cached_cluster` keys `clusters.cluster` by the exact set of photos, the level, and the clustering settings (so tweaking them recomputes), in `<embeddings>/clusters/` (the 24 newest kept). Discover's axes reuse the fine clustering. After a restart, the first request reads them.
+- **Warming:** a background thread, whenever the embeddings change (at start, after an indexing run) and the library has 1,000 photos or more, builds the unfiltered library's clusters at every level and Discover's lens data, after the AI model has loaded.
+- **Indicators:** Discover opens at once (the start photo is picked inside it, "Finding a photo to start from…" with a spinner); the grid says "Grouping the photos by similarity…" while that runs.
+- On the first library (2,340 photos) a restart took the first Similar requests from 0.6–1.1 s to 0.1–0.8 s and the Discover start from 1.1 to 0.6 s; the rest is naming the clusters, not cached. At 12,000 the clustering (4.5 s per level) is the part now read from disk.
 
 ### 14.1 Experiment: penultimate-layer features for similarity (27 Sep 2026)
 
@@ -783,6 +807,57 @@ CLIP separates photos with and without text moderately (AUC 0.80) and illustrati
 **Long texts.** Two old maps (259 and 343 words) ran past 1024 new tokens, and the cut-off JSON was stored raw. The limit is now 2048, and a cut-off answer still yields the fields it got to (`captioning._json_object`).
 
 
+### 14.7 Discover, a walk by aspects of similarity (27 Sep 2026; kept 28 Sep 2026)
+
+A **Discover** button in the photo view opens a graph: the photo in the middle, branches to photos related in one way each, the way back on the left, the trail along the bottom (`discover.py`, `GET /api/discover/{id}`, `Discover.svelte`). Lenses:
+- **Echoes:** same subject elsewhere, same light and mood, colour echo, shape echo, shares a tag.
+- **Contrasts:** same subject in opposite light, complementary colours.
+- **Context:** the same day, and the closest photo as a baseline.
+
+Signals:
+- **What and how:** a phrase profile over the cluster-name vocabulary (z-scored per phrase, each photo's 12 strongest kept), split into things and settings.
+- **Colour and light:** `colors.py` (hue histogram, brightness, contrast, colourfulness).
+- **Layout:** a new fingerprint, a 12×12 z-scored luminance grid of the thumbnail (cached as `<model_id>.layout.npz`).
+- **Tags and time:** the user's own tags, and when photos were taken.
+
+A photo shows on one branch only; the trail and the centre's stack are excluded; jumps between photos and illustrations are penalised in the colour, light, and shape lenses. Short-term learning in the page: chosen lenses come first (and show a fourth photo after two picks); a drift (the decayed phrase change of each step) gives candidates moving the same way a bonus and is shown ("drifting towards night · blue").
+
+**On the first library** (contact sheets for 8 seeds): 2.8 s the first time (profiles and 2,300 layout fingerprints), then 30–50 ms per step.
+- **Good:** the colour echo (a blue-sky seagull → statues against the same blue; the orange figure → tan sandals, red sneakers), shape echoes (the palace across the water → flat horizons, a bird on a hill line), the same subject in opposite light (sheep → a sheep silhouetted at sunset), complementary colours (orange → blue harbours), the same day (a macro → the flowers minutes before and after).
+- **Weak, then changed:** the tag lens with the automatic vocabulary tags led nowhere ("outdoor", "livestock" on an illustration, "street vendors" on figurines): it now uses only the user's fixed and learned tags, preferring alike photos that are not near-copies. "The same place" matched everything placed at home by the location history: the lens is now the same day only. Colour echoes of greenery were random until the brightness had to match too.
+- **Still weak:** light-and-mood reasons use setting phrases that read oddly ("isometric perspective", "a photo with a date stamp").
+
+**Second round.** Round photos and a looser layout: each branch at a slightly irregular angle and distance (seeded by the centre, so it holds still), its other photos orbiting the first on the outer side. Branches now sample 3 photos from their best 12, weighted exp(−rank/3); a seed per step, kept in the trail, shows the same branches when going back, and **Shuffle** (R) draws again. Quality (the user: "half the images are missed shots or random stuff"): rejected photos are left out (a switch includes them); photos in the weakest 30% by Curate's quality mix (CLIP good/bad and sharp/blurry, exposure, taste) only show when picked; above that, a bonus of up to +0.15. On the first library 1,828 of 2,340 photos are rejected, so without rejects about 500 remain: the branches were visibly better (no misses left on the sheets), some thinner (one photo instead of three), and a few lenses had nothing left for some photos (every other palace shot was rejected).
+
+**Third round: axes, and distance by similarity.**
+- *Random masking of embedding dimensions* (the user's question): CLIP spreads concepts over all 768 dimensions, so a random half keeps 8.8 of 10 nearest neighbours (similarity correlation 0.97; a random tenth still keeps 6.9). It only adds noise, like the sampling already there. Not used.
+- *Principal axes* (16, named by the phrase whose z-scores correlate most with each end) were interpretable at the top (photo ↔ illustration, macro ↔ wide waterfront, palace interiors ↔ outdoor water, bee macros ↔ dusk silhouettes). But on a library of long photo series they mostly say "which series is this": names like "sheep → water caustics", "spaceship · person reading", and weak lenses. Replaced.
+- *Named axes* (`TEXT_AXES`, 14 pairs of opposite phrases: close-up ↔ wide view, night ↔ daylight, indoors ↔ outdoors, illustration ↔ photograph, people ↔ empty, city ↔ nature, calm ↔ busy, colourful ↔ muted, warm ↔ cool light, water ↔ dry land, motion ↔ stillness, historic ↔ modern, dramatic ↔ plain, sharp ↔ dreamy; a position is the similarity to one end minus the other, z-scored). Two lenses:
+  - **Shared traits:** 2 of the centre's distinctive axes (≥ 1 SD out), drawn with weight |position|; the same side and close on both, different overall.
+  - **Mirrored:** one strong axis flipped, the rest kept.
+  
+  Results: palace, "city → nature" → a forest path; "historic · wide view" → the old town and castles across the water; beetle, "muted → colourful" → bees on purple flowers, pansies; the night vending machine, "dramatic · night" → a dark night silhouette. Both get the photo/illustration penalty, except a mirror on the illustration axis.
+- *Graph:* a branch's distance from the centre follows its first photo's similarity (0.3 at the edge … 0.9 near), with a little jitter, never on top of the centre.
+- *The library's own axes, again (unnamed; the user: less synthetic than phrases).* PCA on one point per group of alike photos instead of every photo: the centres of the fine Similar clusters plus the unclustered photos, so a long series counts once. Measure: the largest share of one shooting day among the 30 photos at each end of axes 1–12, lower = more general. Every photo: 0.67 on average; one per stack: 0.59; cluster centres: 0.53; random directions: 0.40 (the library comes from few trips). Axes with a series at either end (share > 0.8; averaging the two ends let one-sided series axes through) are dropped: 8 of 12 remain. Two lenses on them, without names: **hidden traits** (alike on 2 of the centre's strong axes, different overall) and **mirrored, hidden trait** (one flipped, the rest kept). The mirror's closeness is relative to the typical distance: a fixed cut-off that suited the overlapping named axes let almost nothing through on independent ones.
+  - Results: plausible but loose jumps, hard to read without a reason. The beetle's hidden traits were sunny countryside (a village road, the car, a cat in grass); the sheep mirrored to a blue lake under clouds. Less synthetic than the named axes, as intended; also more random. Both kinds are kept for walking.
+- *At most 9 branches:* favoured lenses first, "closest" dropped first.
+- *The walk as a result:* photos can be taken out of the trail (× on hover; not the current one; they may show up in branches again). **Replay** plays the walk full-screen (cross-fades every 4 s, ← → Space, Esc), each step captioned with the lens and reason that led there (the trail remembers them). **Pick walk** flags it (with Undo in the notice, since Ctrl+Z is the grid's). **Export walk…** opens the export dialog over Discover (kind `walk`) with **Number the files in walk order**: `export.assign_targets(numbered=…)` prefixes every file of a photo (image, RAW, sidecars, `.txt`) with its position, `01_`, `02_`…, so the folder keeps the sequence.
+- *Curate walk…* opens Curate with the walk's photos locked (`view.curate = {locked}`; the draft's size at least the walk's length); Curate fills the rest from the current filters. Locked photos now stay in Curate's candidates even outside the filters (`build_pool`: `WHERE (filters) OR id IN locked`); before, a walk step outside them was silently dropped.
+- *Place:* first only positions that could be trusted (camera GPS, or the location history within 200 m: 1,516 of 1,926 placed photos); then, at the user's request, every position with its uncertainty (GPS ~20 m, estimates their accuracy): "same place" widens by the pair's mean uncertainty, "nearby" needs a distance beyond it (else the direction is noise), pairs uncertain beyond 1 km are not compared, uncertainty costs up to 0.4 (certain positions first), estimates are worded "about …", and only a step longer than its uncertainty sets the heading. The seagull, placed by an estimate, got "about 257 m west" where it had nothing before. **Same place** (within 150 m, looking different or at another time) and **Nearby** (150 m to 25 km, nearer first on a log scale). Momentum: a step between two located photos more than 150 m apart sets the walk's heading (the server returns it; the trail keeps it per step), and nearby places along it get up to +0.5 (cosine of the angle off it; "· keeps heading" within ~45°). Nearby branches sit at their real compass direction in the graph, north up (a small N marks it); the other branches share the free arcs. On the first library: the palace → "194 m south-west" → the old town (clock tower, an alley, the avenue); the sheep → "304 m south" → the other pastures.
+- *Discover in the top bar,* next to Curate: `GET /api/discover/start?<filters>` picks a random photo within the filters, weighted exp(3 × recency rank) (the newest about 20 times as likely as the oldest), never a reject or below the quality floor unless nothing else is left.
+- *Look:* the background is the last photo hovered (the centre until then), blurred 20 px (44 px hid too much), muted and darkened, cross-fading over 1.5 s; it drifts and zooms very slowly (40 s), and up to 3 soft glows sit on the photo's brightest areas (read from an 8×8 canvas of its thumbnail in the page), in their colours, pulsing slowly (screen blend). Only transform and opacity animate (GPU-composited; the blur is not redrawn per frame); nothing moves with "reduce motion". Labels are bent along an arc around each branch's first photo (SVG `textPath`), above or below it, whichever is further from the incoming edge (the curve's direction at the node, towards its control point); the arc is as wide as the longer line (shortened beyond ~150°). The branch's other photos go in the largest arc left free by the label and the edge, so text and circles never cross. Branches float a few pixels, each at its own pace. Hovering a photo grows it to a large circle (2.5× the branch photo, up to 270 px, the 1600 px preview) where it is; other branches it would cover are pushed away along the line between them (labels with them, kept on screen), its own branch's other photos move out, and a grown first photo widens its label arc. Positions and sizes animate over 0.25 s; it shrinks back 0.12 s after the pointer leaves.
+
+*Accents* (28 Sep 2026): two lenses on the centre's strongest accent (strength ≥ 0.35, §7.6). **Accent echo**: photos with an accent of the same hue (within ±30°), otherwise different; a louder accent than the centre's counts no more (else illustrations won). **Accent takes over**: photos whose colour is mostly that hue (the red balloon → a red sunset); left out when the hue is already the centre's main colour (the colour echo covers it). Both penalise a photo ↔ illustration jump by 0.6 instead of 0.25: on the 13,468-image library (11,300 illustrations, far more saturated), the branches from photos were first almost all illustrations. After: a street with red awnings → the red dress of a figurine, a red flower; the Riksdag arch's orange accent → sheep with orange ear tags; its "takes over" → a spider on tan, a gilded ceiling, yellow flowers.
+
+**Kept** (28 Sep 2026): after walking it, the user judged that it turned out well and fits the app. Documented in the README and the in-app guide.
+
+**The layout fingerprint in Curate (tried, not adopted).** A slider from contrasting to similar compositions (neutral in the middle), drafting 12 photos from two folders of the first library:
+- *Similar to the photos chosen so far* (mean layout correlation): Sweden became a visible series of horizontal water-and-sky views (mean pairwise correlation 0.00 → 0.28). But April mixes two composition families (centred close-ups, horizon views), and there it pulled in a near-copy and an unrelated dark field. Damping candidates redundant in content stopped the near-copies but left April unchanged.
+- *Similar to the first pick* (the anchor): hardly visible in either folder.
+- *Contrasting* (no composition twice: the highest correlation with any chosen photo): 3–4 of 12 photos swapped, a mild effect, since a varied draft rarely repeats a composition anyway.
+
+A 12×12 luminance grid is too crude to steer a selection across mixed material; it only works when one composition dominates. Not reliable enough to offer (the user's condition), so Curate is unchanged. Ordering a draft by flow (echoes between neighbours) was judged not worth it.
+
 ## 15. Candidates
 
 Roughly in order of value:
@@ -837,7 +912,7 @@ Distinctive animals should work; look-alikes (two black labradors) will be confu
   - a page of unnamed clusters to name, merge, or split;
   - face chips in the photo view;
   - optionally, a Curate term that spreads a draft over people.
-- **Privacy:** face vectors are biometric data. Everything stays local, the step is opt-in in the Library, and a "forget all face data" action deletes the vectors and names.
+- **Privacy:** face vectors are biometric data. Everything stays local, the step is opt-in in Settings, and a "forget all face data" action deletes the vectors and names.
 - **Cost:** roughly 10–30 ms per photo on a CPU for detection and embedding (a couple of minutes per 2,000 photos), far less on a GPU. Adds ONNX Runtime (or OpenCV), which §4 currently avoids.
 
 **First step when picked up:** a feasibility check on the first library. How many usable faces are there (size, angle), and do the clusters make sense? That shows whether trip photos contain enough repeat individuals to be worth it.
@@ -854,3 +929,4 @@ Location-history questions still open: how accurate is the history on photos tha
 6. Location history: referenced in place (not copied), placed at place / region / country level, with route-interpolated positions used but marked.
 7. Taste model: calibrated on request, not retrained in the background.
 8. Standalone builds: zipped folders, not single files; CPU inference with the faster model.
+9. Discover (§14.7) is kept as a feature, next to Curate: tried on a branch, judged a good fit after walking it.

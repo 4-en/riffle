@@ -56,10 +56,11 @@ export const view = $state({
   exporting: false, // export dialog open: true (picks) | {ids, fresh} (a Curate draft) (not in the URL)
   curate: false, // Curate view open (not in the URL)
   captioning: null, // Captions & tags view: {ids} (not in the URL)
+  discover: null, // Discover view, starting from {id} (not in the URL)
   help: false, // how-to guide open (not in the URL)
   photo: null, // open detail photo id
   raws: false, // unmatched RAWs list open
-  library: false, // folders / indexing dialog open (not mirrored to the URL)
+  settings: null, // Settings open at a page ('folders', 'indexing', 'taste'…; 'last': the last one) (not in the URL)
 });
 
 export function readUrl() {

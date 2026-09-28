@@ -394,7 +394,7 @@ def test_selections_migrate_from_v5(tmp_path):
     old.commit()
     old.close()
     conn = selections.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == selections.VERSION
     assert conn.execute("SELECT text FROM captions").fetchone()[0] == "kept"
     assert conn.execute("SELECT COUNT(*) FROM photo_text").fetchone()[0] == 0
 

@@ -22,7 +22,7 @@ DEFAULT = "default"
 PARTS = {
     "flags": ["flags"],
     "exported": ["exported"],
-    "tags": ["custom_tags", "custom_tag_examples"],
+    "tags": ["custom_tags", "custom_tag_examples", "custom_tag_negatives"],
     "captions": ["captions", "fixed_tags", "photo_text"],
 }
 
@@ -136,6 +136,7 @@ def create(cfg: Config, name: str, copy_from: str | None = None, parts: set[str]
     conn = selections.connect(path)
     try:
         if copy_from is not None and parts:
+            selections.ensure(path_for(cfg, copy_from))  # an older file gains the newer tables first
             conn.execute("ATTACH DATABASE ? AS src", (str(path_for(cfg, copy_from)),))
             with conn:
                 for part in parts:
