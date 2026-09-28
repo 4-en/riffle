@@ -804,7 +804,7 @@ CLIP separates photos with and without text moderately (AUC 0.80) and illustrati
 **Long texts.** Two old maps (259 and 343 words) ran past 1024 new tokens, and the cut-off JSON was stored raw. The limit is now 2048, and a cut-off answer still yields the fields it got to (`captioning._json_object`).
 
 
-### 14.7 Experiment: Discover, a walk by aspects of similarity (27 Sep 2026, branch)
+### 14.7 Discover, a walk by aspects of similarity (27 Sep 2026; kept 28 Sep 2026)
 
 A **Discover** button in the photo view opens a graph: the photo in the middle, branches to photos related in one way each, the way back on the left, the trail along the bottom (`discover.py`, `GET /api/discover/{id}`, `Discover.svelte`). Lenses:
 - **Echoes:** same subject elsewhere, same light and mood, colour echo, shape echo, shares a tag.
@@ -846,7 +846,7 @@ A photo shows on one branch only; the trail and the centre's stack are excluded;
 
 *Accents* (28 Sep 2026): two lenses on the centre's strongest accent (strength ≥ 0.35, §7.6). **Accent echo**: photos with an accent of the same hue (within ±30°), otherwise different; a louder accent than the centre's counts no more (else illustrations won). **Accent takes over**: photos whose colour is mostly that hue (the red balloon → a red sunset); left out when the hue is already the centre's main colour (the colour echo covers it). Both penalise a photo ↔ illustration jump by 0.6 instead of 0.25: on the 13,468-image library (11,300 illustrations, far more saturated), the branches from photos were first almost all illustrations. After: a street with red awnings → the red dress of a figurine, a red flower; the Riksdag arch's orange accent → sheep with orange ear tags; its "takes over" → a spider on tan, a gilded ceiling, yellow flowers.
 
-Undecided whether it stays; judged by walking it.
+**Kept** (28 Sep 2026): after walking it, the user judged that it turned out well and fits the app. Documented in the README and the in-app guide.
 
 **The layout fingerprint in Curate (tried, not adopted).** A slider from contrasting to similar compositions (neutral in the middle), drafting 12 photos from two folders of the first library:
 - *Similar to the photos chosen so far* (mean layout correlation): Sweden became a visible series of horizontal water-and-sky views (mean pairwise correlation 0.00 → 0.28). But April mixes two composition families (centred close-ups, horizon views), and there it pulled in a near-copy and an unrelated dark field. Damping candidates redundant in content stopped the near-copies but left April unchanged.
@@ -926,3 +926,4 @@ Location-history questions still open: how accurate is the history on photos tha
 6. Location history: referenced in place (not copied), placed at place / region / country level, with route-interpolated positions used but marked.
 7. Taste model: calibrated on request, not retrained in the background.
 8. Standalone builds: zipped folders, not single files; CPU inference with the faster model.
+9. Discover (§14.7) is kept as a feature, next to Curate: tried on a branch, judged a good fit after walking it.

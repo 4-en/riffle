@@ -16,6 +16,13 @@
       ['Esc', 'Close the draft'],
       ['← / → (photo view)', 'Step through the draft'],
     ]],
+    ['Discover', [
+      ['1–9', 'Follow a branch'],
+      ['Backspace', 'Back one step'],
+      ['R', 'Other photos for the same branches'],
+      ['← → · Space (replay)', 'Step · pause the replay'],
+      ['Esc', 'Close'],
+    ]],
     ['Grid', [
       ['Right-click', 'Menu: flag, compare, similar, show day / place, copy path, its tags'],
       ['Click · Ctrl/Shift+click · drag', 'Select one · add / range · box'],
@@ -78,6 +85,12 @@
           and press <em>Curate</em>: a draft of good but varied photos, steered from the left panel (how many, a search to lean towards, best ↔ varied, spread over
           time and places, colours, light and contrast, and styles like moody or colourful). Remove a photo (the next one takes its place; it is not
           rejected), lock the ones to keep, or pick an alternative. <em>Mark as picks</em> or <em>Export</em> when it's right.
+        </li>
+        <li>
+          <strong class="text-neutral-100">Discover (optional).</strong> <em>Discover</em> (top bar, or on a photo) puts a photo in the
+          middle, with branches to photos related to it in one way each: the same subject elsewhere, the same light, a colour or
+          accent echo, a similar composition, the same place, a place nearby. Click one to walk on; the trail along the bottom leads
+          back. Replay the walk, pick or export it, or open it in Curate.
         </li>
         <li>
           <strong class="text-neutral-100">Caption (optional).</strong> Select photos and click <em>Caption…</em>: write a caption and

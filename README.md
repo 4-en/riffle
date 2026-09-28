@@ -16,7 +16,8 @@ You search and browse by image content, cull by picking and rejecting photos, co
 - **Culling**: pick or reject one photo at a time in the loupe or many at once in the grid, with undo.
 - **Stacks**: bursts and near-identical shots are grouped automatically and compared side by side, with sharpness, clipping warnings, and a suggested keeper.
 - **Taste model**: once you have flagged enough, Riffle can sort by what you tend to keep. It only orders photos; it never flags them.
-- **Curate**: drafts a small, varied selection (photo book, exhibition) from the current filters, steered by size, variety, time and place spread, search, colour, and style.
+- **Curate**: drafts a small, varied selection (photo book, exhibition) from the current filters, steered by size, variety, time and place spread, uniqueness, search, colour, and style.
+- **Discover**: a walk through the library from one photo to others related in one way each (subject, light, colour, composition, place, time), with the path kept for a slideshow, export, or Curate.
 - **Export** of picks, or of any selection, as images, images + RAWs, or RAWs only. Copies only; originals are never touched.
 - **Location from your phone**: a Google Timeline, Records.json, or GPX export places photos without GPS, and can add the position to exported copies.
 - Duplicate detection (perceptual hash), RAW matching by file name, EXIF metadata.
@@ -111,8 +112,10 @@ Filter down to a trip, a timeframe, or a place, then press **Curate** for a draf
 - **Quality**: your taste model (once calibrated), the CLIP quality score, exposure, and a bonus for picks.
 - **Size**: 6, 12, 24, 48, or anything from 2 to 60.
 - **Best ↔ Most varied**, **Spread over time**, **Spread over places** (uses coordinates when there are any).
-- **Search**: leans the draft towards a text search, with the same syntax as the main search. It scores rather than filters, so other photos can still fill the draft. A search on the main page carries over when you open Curate.
-- **Colour & light**: colour swatches (red, orange, yellow, green, teal, blue, purple, pink) and Dark / Bright, Soft / Punchy, Muted / Vivid. These use per-photo pixel statistics computed during indexing. A library indexed before this feature needs one **Index now**, about 30 s per 2,000 photos.
+- **Search**: leans the draft towards a text search, with the same syntax as the main search. It scores rather than filters, so other photos can still fill the draft; **Search influence** sets how much. A search on the main page carries over when you open Curate.
+- **Common ↔ Unique**: towards photos unlike anything else in the library (their own stack does not count), or towards typical ones. Most varied is different: it only spreads the draft itself.
+- **Like the locked photos**: the rest of the draft towards or away from the photos you locked. **Surprise** gives less obvious photos a chance; **Shuffle** draws again.
+- **Colour & light**: swatches for the main colour and for an accent colour (an intense colour that may cover only a small part, like a red balloon in a blue sky), and Dark / Bright, Soft / Punchy, Muted / Vivid. These use per-photo pixel statistics computed during indexing. A library indexed before this feature needs one **Index now**, about 30 s per 2,000 photos.
 - **Style**: sliders for Scenic, Moody, Calm, Colourful, Golden light, People, and Abstract & details. They are CLIP prompt pairs under `styles:` in `vocabulary.yaml`, which you can edit or extend.
 
 The draft is laid out as one block in capture order: rows of equal height that fill the width, without cropping. On hover, each photo shows why it was chosen and three actions:
@@ -121,7 +124,19 @@ The draft is laid out as one block in capture order: rows of equal height that f
 - **Lock** keeps it when the settings change.
 - **Alternatives** offers other frames from its stack and similar photos.
 
-**Mark as picks** flags the draft (undo with Ctrl+Z); **Export** copies exactly these photos. The draft is remembered per filter set in the browser, and **Reset draft** starts over.
+**Order** shows the same draft by date, quality, similarity (alike photos next to each other), colour, light, or place (the shortest route, or a zigzag across the map); drag photos to arrange them yourself. **Mark as picks** flags the draft (undo with Ctrl+Z); **Export** copies exactly these photos, numbered in the shown order if you like. The draft is remembered per filter set in the browser, and **Reset draft** starts over.
+
+## Discover
+
+**Discover** in the top bar starts at a random photo (newer ones more likely), **Discover** in the photo view at that photo. It sits in the middle, with up to nine branches to photos related to it in one way each:
+
+- **Echoes**: the same subject elsewhere, the same light and mood, a colour echo, an accent echo, a similar composition, a tag of yours.
+- **Contrasts**: the same subject in opposite light, complementary colours, one trait mirrored (city → nature, night → daylight…).
+- **Context**: the same day, the same place, nearby places (placed at their compass direction, north up; a walk that keeps going one way keeps its heading).
+
+Click a photo to walk on. The trail along the bottom leads back (Backspace goes one step); **Shuffle** (R) shows other photos for the same branches. Branches you follow often come first, and the walk's drift ("drifting towards night · blue") nudges the next steps; **Reset learning** forgets both. Rejected photos and the weakest ones are left out unless you include rejects; **Within the current filters** limits the walk to them.
+
+The walk is the result: **Replay** plays it as a slideshow, **Pick walk** flags it, **Export walk…** copies it with the files numbered in walk order, and **Curate walk…** opens Curate with its photos locked in.
 
 ## Your tags
 
@@ -236,6 +251,7 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag and advance |
 | Compare | click or `1`–`9` keep · `A` keep suggested · `Enter` pick kept, reject rest (with nothing kept, press twice to reject all) · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag focused · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
 | Curate | `Esc` close · `←` / `→` step through the draft in the photo view |
+| Discover | `1`–`9` follow a branch · `Backspace` back · `R` shuffle · `Esc` close · replay: `←` / `→` step, `Space` pause |
 
 ## Files
 
