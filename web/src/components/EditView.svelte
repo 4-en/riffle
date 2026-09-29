@@ -3,10 +3,12 @@
   // with. Brush: paint over something, then Heal (spots, dust), Remove (objects,
   // people; LaMa) or Replace (with a prompt; Stable Diffusion, 1-4 candidates). Crop:
   // quarter turns, straightening, a crop, a flip. View: the result, hold \ for the
-  // original. Every step is in the photo's edit list (turn off, delete, restore the
+  // original. Find (BatchEdit): find things by name in all the photos, then remove or
+  // replace them, or refine one photo's mask with the brush. Every step is in the photo's edit list (turn off, delete, restore the
   // original); the original file is never touched unless the edits are baked in.
   import { untrack } from 'svelte';
   import { view } from '../lib/state.svelte.js';
+  import BatchEdit from './BatchEdit.svelte';
   import {
     fetchEditingTools, chooseEditModel, fetchEdits, setGeometry, runEditTool, fetchEditJob,
     keepCandidate, toggleEdit, deleteEdit, restoreOriginal, bakeEdits,
@@ -23,7 +25,12 @@
   let tools = $state([]);
   let error = $state('');
   let notice = $state('');
-  let mode = $state('brush'); // brush | crop | view
+  let mode = $state(untrack(() => view.editing.mode ?? 'brush')); // brush | find | crop | view
+  // Find keeps its masks and results while another mode is used.
+  let findOpened = $state(false);
+  $effect(() => {
+    if (mode === 'find') findOpened = true;
+  });
   let showOriginal = $state(false);
   let running = $state(null); // the edit job's status while a tool runs
   let candidates = $state(null); // {token, urls, chosen}
@@ -53,6 +60,7 @@
     untrack(() => {
       info = null;
       candidates = null;
+      natW = natH = 0; // (a mask to paint waits for this photo's image)
       clearMask();
       load();
     });
@@ -107,7 +115,54 @@
       canvas.height = natH;
       hasMask = false;
     }
+    if (canvas && natW && mode === 'brush' && pendingMask?.id === id) untrack(drawPending);
   });
+
+  // ---- from Find: a photo's found mask, to correct with the brush ------------------------
+  let pendingMask = $state(null); // {id, url}
+  function refine(pid, url) {
+    pendingMask = { id: pid, url };
+    candidates = null;
+    mode = 'brush';
+    index = ids.indexOf(pid);
+  }
+  async function drawPending() {
+    const { url } = pendingMask;
+    pendingMask = null;
+    const img = new Image();
+    img.src = url;
+    try {
+      await img.decode();
+    } catch {
+      error = 'The found mask is gone: find again';
+      return;
+    }
+    // White on black → the brush's red, its alpha the mask.
+    const off = document.createElement('canvas');
+    off.width = canvas.width;
+    off.height = canvas.height;
+    const octx = off.getContext('2d');
+    octx.drawImage(img, 0, 0, off.width, off.height);
+    const d = octx.getImageData(0, 0, off.width, off.height);
+    for (let i = 0; i < d.data.length; i += 4) {
+      const on = d.data[i] > 127;
+      d.data[i] = 255;
+      d.data[i + 1] = 40;
+      d.data[i + 2] = 40;
+      d.data[i + 3] = on ? 255 : 0;
+    }
+    canvas.getContext('2d').putImageData(d, 0, 0);
+    hasMask = true;
+    notice = 'The found mask: paint or erase to correct it, then choose a tool.';
+  }
+  function show(pid) {
+    index = ids.indexOf(pid);
+    mode = 'view';
+  }
+  function batchChanged(changedIds) {
+    onchange();
+    if (changedIds.includes(id)) load();
+  }
 
   function clearMask() {
     if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
@@ -336,6 +391,7 @@
       mode = 'view';
       showOriginal = true;
     } else if (e.key === 'b') mode = 'brush';
+    else if (e.key === 'f') mode = 'find';
     else if (e.key === 'c') mode = 'crop';
     else if (e.key === 'v') mode = 'view';
     else if (e.key === '[') brush = Math.max(4, brush - 6);
@@ -360,6 +416,11 @@
     <span class="truncate text-xs text-neutral-400">{info?.rel_path ?? ''}</span>
     <div class="flex items-center gap-1 rounded bg-neutral-800/60 p-0.5" role="group" aria-label="Mode">
       <button class={modeBtn('brush')} title="Paint over what to heal, remove or replace (B)" onclick={() => (mode = 'brush')}>Brush</button>
+      <button
+        class={modeBtn('find')}
+        title="Find things by name in {ids.length === 1 ? 'this photo' : `all ${ids.length} photos`}, then remove or replace them (F)"
+        onclick={() => (mode = 'find')}>Find</button
+      >
       <button class={modeBtn('crop')} title="Turn, straighten, crop (C)" onclick={() => (mode = 'crop')}>Crop</button>
       <button class={modeBtn('view')} title="The result; hold \ for the original (V)" onclick={() => (mode = 'view')}>View</button>
     </div>
@@ -371,7 +432,13 @@
     <p class="px-4 py-1.5 text-xs {error ? 'bg-red-950/60 text-red-300' : 'bg-emerald-950/60 text-emerald-200'}">{error || notice}</p>
   {/if}
 
-  <div class="flex min-h-0 flex-1">
+  {#if findOpened}
+    <div class="{mode === 'find' ? 'flex' : 'hidden'} min-h-0 flex-1 flex-col">
+      <BatchEdit {ids} onchange={batchChanged} onrefine={refine} onshow={show} />
+    </div>
+  {/if}
+
+  <div class="{mode === 'find' ? 'hidden' : 'flex'} min-h-0 flex-1">
     {#if ids.length > 1}
       <nav class="w-24 shrink-0 space-y-1.5 overflow-y-auto border-r border-neutral-800 p-2" aria-label="Photos">
         {#each ids as pid, k (pid)}
@@ -469,7 +536,7 @@
 
         <section class="space-y-2">
           <h3 class="font-semibold uppercase tracking-wider text-neutral-500">Then</h3>
-          {#each tools.filter((t) => t.key !== 'upscale') as t (t.key)}
+          {#each tools.filter((t) => t.kind !== 'upscale' && t.kind !== 'segment') as t (t.key)}
             <div class="rounded border px-2.5 py-2 {tool === t.key ? 'border-sky-700 bg-sky-950/30' : 'border-neutral-800'}">
               <label class="flex items-start gap-2">
                 <input type="radio" bind:group={tool} value={t.key} class="mt-0.5" />

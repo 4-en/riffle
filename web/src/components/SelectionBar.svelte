@@ -34,6 +34,11 @@
       >
       <button
         class="{btn} text-neutral-200 hover:bg-neutral-800"
+        title="Find something by name in these photos, then remove or replace it"
+        onclick={() => (view.editing = { ids: [...selection], mode: 'find' })}>Find & replace…</button
+      >
+      <button
+        class="{btn} text-neutral-200 hover:bg-neutral-800"
         title="Learn a tag from these photos: photos like them get it"
         onclick={() => (view.tagDialog = { mode: 'create', photoIds: [...selection] })}>Learn tag…</button
       >

@@ -149,6 +149,21 @@ class BakeIn(BaseModel):
     backup: bool = True
 
 
+class BatchFindIn(BaseModel):
+    ids: list[int]
+    text: str  # what to find: "people", "cars, bicycles"
+    threshold: float = 0.3  # the detector's confidence
+    grow: float = 0.01  # the masks grown by this × the long side
+
+
+class BatchApplyIn(BaseModel):
+    token: str
+    ids: list[int]  # the photos (of those found) to change
+    tool: str = "remove"  # remove (from the surroundings) | inpaint (with a prompt)
+    prompt: str = ""
+    negative: str = ""
+
+
 class EditModelIn(BaseModel):
     model: str  # a catalogue key, a Hub repo ("org/model" or "org/model:file"), or a path
 
@@ -600,6 +615,101 @@ def create_app(
                 "seed": seed}
 
     edit_job = BackgroundJob(cfg, run_edit_tool)
+
+    # Finding things in many photos, then removing or replacing them (editing.retouch_regions).
+    # One run's masks at a time: token -> {text, items: {photo id: {...}}}.
+    batches: dict[str, dict] = {}
+
+    def batch_dir(token: str) -> Path:
+        return cfg.data_dir / "batch" / token
+
+    def run_batch(cfg_, progress=None, report=print, phase: str = "find", token: str = "", body: dict | None = None):
+        """In the background. ``find``: mask what ``text`` names in each photo (at preview
+        size) and draw it for review. ``apply``: fill the kept masks, one edit step each."""
+        from PIL import Image
+
+        from . import edits, editing, segment
+
+        body = body or {}
+        folder = batch_dir(token)
+        if phase == "find":
+            import shutil
+
+            shutil.rmtree(cfg.data_dir / "batch", ignore_errors=True)  # (the previous run's)
+            folder.mkdir(parents=True)
+            batches.clear()
+            batch = batches[token] = {"text": body["text"], "items": {}}
+            report("loading the find model")
+            loaded = editing.model_for("segment", cfg.editing.get("segment"))
+            report(f"finding {body['text']}")
+            conn = db.connect_readonly(cfg.db_path)
+            try:
+                for pid in progress(body["ids"], total=len(body["ids"]), desc="finding") if progress else body["ids"]:
+                    item = batch["items"][pid] = {"id": pid, "found": 0}
+                    try:
+                        r, path = photo_file(conn, pid)
+                        small = edits.render(path, edits.list_edits(edits_home(), r["sha256"]), max_edge=1600, geometry=False)
+                        found = segment.find(loaded, small, body["text"], body.get("threshold", 0.3), editing._device())
+                    except Exception as e:  # noqa: BLE001 - shown on the photo
+                        item["error"] = str(getattr(e, "detail", "") or e)
+                        continue
+                    if not found:
+                        continue
+                    mask = segment.combined(found, small.size, body.get("grow", 0.01))
+                    mask.save(folder / f"{pid}.mask.png")
+                    red = Image.new("RGB", small.size, (230, 30, 30))
+                    Image.composite(Image.blend(small, red, 0.55), small, mask).save(folder / f"{pid}.jpg", quality=85)
+                    item.update(found=len(found), labels=sorted({f.label for f in found if f.label}),
+                                coverage=round(float((np.asarray(mask) > 0).mean()), 4),
+                                overlay=f"/api/batch/{token}/{pid}.jpg", mask=f"/api/batch/{token}/{pid}.mask.png")
+            finally:
+                conn.close()
+            n = sum(1 for i in batch["items"].values() if i["found"])
+            report(f"found in {n} of {len(body['ids'])} photos")
+            return {"token": token, "phase": "find", "items": list(batch["items"].values())}
+
+        batch = batches.get(token)
+        if batch is None:
+            raise ValueError("these masks are gone: find again")
+        tool = body["tool"]
+        choice = cfg.editing.get(tool)
+        label, spec = editing.resolve(tool, choice)
+        report(f"loading {label}")
+        editing.model_for(tool, choice)
+        seed = int(time.time()) % 1_000_000
+        done = []
+        conn = db.connect_readonly(cfg.db_path)
+        try:
+            for pid in progress(body["ids"], total=len(body["ids"]), desc="changing") if progress else body["ids"]:
+                item = batch["items"].get(pid)
+                if not item or not item["found"]:
+                    continue
+                try:
+                    r, path = photo_file(conn, pid)
+                    edit_list = edits.list_edits(edits_home(), r["sha256"])
+                    base = edits.render(path, edit_list, geometry=False)
+                    mask = Image.open(folder / f"{pid}.mask.png")
+                    res = editing.retouch_regions(tool, base, mask, choice, prompt=body.get("prompt", ""),
+                                                  negative=body.get("negative", ""), seed=seed)
+                    if res is None:
+                        continue
+                    params = {"model": label, "spec": spec, "prompt": body.get("prompt", ""), "negative": body.get("negative", ""),
+                              "seed": seed, "steps": editing.STEPS.get(tool, 30), "strength": 0.99, "find": batch["text"],
+                              "bbox": list(res.bbox), "size": list(base.size), "tool": tool}
+                    edit_id = edits.add_edit(edits_home(), r["sha256"], tool, params, res.mask, res.patch,
+                                             source=r["source"], rel_path=r["rel_path"])
+                    edits_changed(pid)
+                    item.update(edit_id=edit_id, applied=True)
+                    done.append(pid)
+                except Exception as e:  # noqa: BLE001 - shown on the photo
+                    log.exception("batch edit of photo %s", pid)
+                    item["error"] = str(getattr(e, "detail", "") or e)
+        finally:
+            conn.close()
+        report(f"changed {len(done)} photos")
+        return {"token": token, "phase": "apply", "items": [batch["items"][p] for p in body["ids"] if p in batch["items"]]}
+
+    batch_job = BackgroundJob(cfg, run_batch)
     import_job = BackgroundJob(cfg, lambda cfg_, progress=None, report=print: import_sidecars(progress, report), queue=True)
 
     @asynccontextmanager
@@ -3049,6 +3159,66 @@ def create_app(
         if not edit_job.start(photo_id=photo_id, token=token, body=body.model_dump()):
             raise HTTPException(409, "another edit is running")
         return {"token": token}
+
+    @app.post("/api/batch/find", dependencies=[Depends(require_json)])
+    def batch_find(body: BatchFindIn):
+        """Find what ``text`` names in these photos (in the background: /api/batch/job)."""
+        import secrets
+
+        from . import editing
+
+        if not body.text.strip():
+            raise HTTPException(400, "say what to find")
+        if not body.ids:
+            raise HTTPException(400, "no photos")
+        ok = editing.availability("segment", cfg.editing.get("segment"))
+        if not ok["available"]:
+            raise HTTPException(409, ok["reason"])
+        token = secrets.token_hex(6)
+        if not batch_job.start(phase="find", token=token, body=body.model_dump()):
+            raise HTTPException(409, "another batch is running")
+        return {"token": token}
+
+    @app.post("/api/batch/apply", dependencies=[Depends(require_json)])
+    def batch_apply(body: BatchApplyIn):
+        """Remove or replace what was found in these photos: one edit step each."""
+        from . import editing
+
+        if body.tool not in ("remove", "inpaint"):
+            raise HTTPException(400, "tool must be remove or inpaint")
+        if body.tool == "inpaint" and not body.prompt.strip():
+            raise HTTPException(400, "say what should be there instead")
+        if body.token not in batches:
+            raise HTTPException(404, "these masks are gone: find again")
+        ok = editing.availability(body.tool, cfg.editing.get(body.tool))
+        if not ok["available"]:
+            raise HTTPException(409, ok["reason"])
+        if not batch_job.start(phase="apply", token=body.token, body=body.model_dump()):
+            raise HTTPException(409, "another batch is running")
+        return {"ok": True}
+
+    @app.get("/api/batch/job")
+    def batch_status():
+        return batch_job.status()
+
+    @app.get("/api/batch/{token}/{photo_id}.mask.png")
+    def batch_mask(token: str, photo_id: int):
+        """A photo's found mask (white on black, the size of the editor's base image)."""
+        from fastapi.responses import FileResponse
+
+        path = batch_dir(token) / f"{photo_id}.mask.png"
+        if not re.fullmatch(r"[0-9a-f]+", token) or not path.exists():
+            raise HTTPException(404, "no such mask")
+        return FileResponse(path, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/batch/{token}/{photo_id}.jpg")
+    def batch_overlay(token: str, photo_id: int):
+        from fastapi.responses import FileResponse
+
+        path = batch_dir(token) / f"{photo_id}.jpg"
+        if not re.fullmatch(r"[0-9a-f]+", token) or not path.exists():
+            raise HTTPException(404, "no such mask")
+        return FileResponse(path, headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/edits/candidates/{token}/{index}.jpg")
     def edit_candidate(token: str, index: int):

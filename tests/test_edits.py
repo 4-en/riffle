@@ -335,3 +335,70 @@ def test_prompt_edit_whole_photo_or_painted_area(client, indexed, conn, monkeypa
     assert w < 640 and h < 480 and x <= 400 and x + w >= 480  # around the painted area (×2 to the photo)
     assert pipe.calls[0][1] == (1184, 896)  # the context (at least 1024 px) is all of this small photo
 
+
+
+def test_retouch_regions_does_each_area_on_its_own():
+    """Things far apart are filled one by one (each with its own context) into one patch."""
+    from riffle import editing
+
+    a = np.full((600, 900, 3), 120, np.uint8)
+    a[50:90, 60:100] = (250, 0, 0)  # a red square top left…
+    a[480:530, 780:830] = (0, 0, 250)  # …and a blue one bottom right
+    image = Image.fromarray(a)
+    mask = Image.new("L", image.size, 0)
+    mask.paste(255, (55, 45, 105, 95))
+    mask.paste(255, (775, 475, 835, 535))
+    res = editing.retouch_regions("heal", image, mask)
+    x, y, w, h = res.bbox
+    assert x <= 55 and y <= 45 and x + w >= 835 and y + h >= 535  # one patch over both
+    out = image.copy()
+    out.paste(res.patch, (x, y), res.mask)
+    o = np.asarray(out).astype(int)
+    assert abs(o[70, 80] - 120).max() < 25 and abs(o[505, 805] - 120).max() < 25  # both filled from around them
+    assert (o[300, 450] == 120).all()  # between them, untouched
+    assert editing.retouch_regions("heal", image, Image.new("L", image.size, 0)) is None
+
+
+def test_find_and_remove_in_many_photos(client, indexed, conn, monkeypatch):
+    from riffle import editing, segment
+
+    first, second = photo(conn, "IMG_0003.png")["id"], photo(conn, "IMG_0001.jpg")["id"]
+    first_sha = photo(conn, "IMG_0003.png")["sha256"]
+    monkeypatch.setattr(editing, "availability", lambda tool, choice=None: {"available": True, "reason": "", "spec": "fake"})
+    monkeypatch.setattr(editing, "model_for", lambda tool, choice: ("fake", None))
+    calls = []
+
+    def fake_find(loaded, image, text, threshold=0.3, device="cpu"):
+        calls.append((text, image.size))
+        if len(calls) > 1:
+            return []  # nothing in the second photo
+        m = np.zeros((image.height, image.width), bool)
+        m[40:80, 40:80] = True
+        return [segment.Found(m, (40, 40, 80, 80), 0.9, "thing")]
+
+    monkeypatch.setattr(segment, "find", fake_find)
+    monkeypatch.setattr(editing, "_fill", lambda loaded, crop, mask: Image.composite(Image.new("RGB", crop.size, "white"), crop, mask))
+    c = client
+    assert c.post("/api/batch/find", json={"ids": [first], "text": " "}).status_code == 400
+    token = c.post("/api/batch/find", json={"ids": [first, second], "text": "things"}).json()["token"]
+    found = wait(c, "/api/batch/job")["result"]["items"]
+    assert [(i["id"], i["found"]) for i in found] == [(first, 1), (second, 0)]
+    assert c.get(found[0]["overlay"]).status_code == 200 and calls[0][0] == "things"
+    # The mask the editor paints for Refine: the size of its base image.
+    mask = Image.open(io.BytesIO(c.get(found[0]["mask"]).content))
+    base = Image.open(io.BytesIO(c.get(f"/api/edits/{first}/base.jpg").content))
+    assert mask.size == base.size and mask.getpixel((60, 60)) == 255
+
+    assert c.post("/api/batch/apply", json={"token": "nope", "ids": [first]}).status_code == 404
+    assert c.post("/api/batch/apply", json={"token": token, "ids": [first], "tool": "inpaint"}).status_code == 400  # no prompt
+    before = (indexed.previews_dir / f"{first}.jpg").read_bytes()
+    assert c.post("/api/batch/apply", json={"token": token, "ids": [first, second], "tool": "remove"}).status_code == 200
+    done = {i["id"]: i for i in wait(c, "/api/batch/job")["result"]["items"]}
+    assert done[first]["applied"] and not done[second].get("applied")
+    steps = edits.list_edits(indexed.selections_path, first_sha)
+    assert [e.kind for e in steps] == ["remove"] and steps[0].params["find"] == "things"
+    assert (indexed.previews_dir / f"{first}.jpg").read_bytes() != before
+    assert not c.get(f"/api/edits/{second}").json()["edited"]
+    # Undo is deleting the step.
+    assert c.delete(f"/api/edits/item/{done[first]['edit_id']}").json()["ok"]
+    assert not c.get(f"/api/edits/{first}").json()["edited"]

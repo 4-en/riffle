@@ -187,6 +187,10 @@ export const setGeometry = (id, geometry) => send('POST', `/api/edits/${id}/geom
 /** Start a tool on a painted mask (a PNG data URL); poll fetchEditJob for its candidates. */
 export const runEditTool = (id, body) => send('POST', `/api/edits/${id}/run`, body);
 export const fetchEditJob = () => get('/api/edits/job');
+/** Find & replace across photos: find (poll fetchBatchJob for the masks), then apply. */
+export const batchFind = (body) => send('POST', '/api/batch/find', body);
+export const batchApply = (body) => send('POST', '/api/batch/apply', body);
+export const fetchBatchJob = () => get('/api/batch/job');
 export const keepCandidate = (id, token, index) => send('POST', `/api/edits/${id}/keep`, { token, index });
 export const toggleEdit = (editId, enabled) => send('POST', `/api/edits/item/${editId}`, { enabled });
 export const deleteEdit = (editId) => send('DELETE', `/api/edits/item/${editId}`);

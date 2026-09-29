@@ -76,7 +76,7 @@ class Tool:
     key: str
     label: str
     description: str
-    kind: str  # opencv | fill (LaMa-like) | diffusion | instruct | upscale
+    kind: str  # opencv | fill (LaMa-like) | diffusion | instruct | upscale | segment
     models: tuple[ModelChoice, ...]
     prompt: bool = False
     mask_optional: bool = False  # runs on the whole photo when nothing is painted
@@ -106,6 +106,13 @@ TOOLS = {
               ModelChoice("qwen-full", "Qwen-Image 2.1 (full)", QWEN_BASE,
                           "Unquantised (bf16); offloaded to system memory on a 24 GB GPU, so slower.", 33, True)),
              prompt=True, mask_optional=True),
+        Tool("segment", "Find", "Find things by name and mask them, for removing or replacing them in many photos.", "segment",
+             (ModelChoice("gdino-sam2", "Grounding DINO + SAM 2.1",
+                          "IDEA-Research/grounding-dino-base+facebook/sam2.1-hiera-large",
+                          "Finds what the words name, then cuts it out precisely.", 3.7),
+              ModelChoice("gdino-sam2-small", "Grounding DINO tiny + SAM 2.1 small",
+                          "IDEA-Research/grounding-dino-tiny+facebook/sam2.1-hiera-small",
+                          "Smaller and faster; misses more.", 0.9))),
         Tool("upscale", "Upscale", "Enlarge on export (×2 or ×4).", "upscale",
              (ModelChoice("realesrgan", "Real-ESRGAN ×4", "lllyasviel/Annotators:RealESRGAN_x4plus.pth",
                           "A good general upscaler for photos.", 0.07),)),
@@ -143,6 +150,8 @@ def availability(tool: str, choice: str | None = None) -> dict:
     reason = ""
     if t.kind == "opencv" and not _has("cv2"):
         reason = "needs OpenCV: pip install opencv-python-headless"
+    elif t.kind == "segment" and not (_has("torch") and _has("transformers")):
+        reason = 'needs the edit extra: pip install -e ".[edit]"'
     elif t.kind in ("fill", "upscale") and not (_has("torch") and _has("spandrel")):
         reason = 'needs the edit extra: pip install -e ".[edit]"'
     elif t.kind in ("diffusion", "instruct"):
@@ -269,6 +278,10 @@ def _load(tool: str, spec: str):
                 return ("torchscript", torch.jit.load(str(path), map_location=_device()).eval())
     if t.kind == "instruct":
         return _load_instruct(spec)
+    if t.kind == "segment":
+        from . import segment
+
+        return segment.load(spec, _device())
     # diffusion
     import torch
     from diffusers import AutoPipelineForInpainting
@@ -423,6 +436,37 @@ def retouch(
     soft = hard.filter(ImageFilter.GaussianBlur(feather / 2))
     soft_box = soft.crop((bx, by, bx + bw, by + bh))
     return [Result(f.crop((bx, by, bx + bw, by + bh)), soft_box, box) for f in filled]
+
+
+def retouch_regions(
+    tool: str, image: Image.Image, mask: Image.Image, choice: str | None = None, *, prompt: str = "",
+    negative: str = "", seed: int = 0, steps: int | None = None, strength: float = 0.99, progress=None,
+) -> Result | None:
+    """``retouch`` for a mask of many separate things (people across a street): each area
+    (parts close together count as one) is done on its own, with its own context, so a
+    small one keeps its resolution; the results make one patch over them all."""
+    import cv2
+
+    image = image.convert("RGB")
+    m = (np.asarray(mask.convert("L").resize(image.size, Image.Resampling.NEAREST)) > 127).astype(np.uint8)
+    if not m.any():
+        return None
+    near = max(3, round(max(image.size) * 0.02))  # closer than this: one area
+    joined = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * near + 1, 2 * near + 1)))
+    n, labels = cv2.connectedComponents(joined)
+    work = image.copy()
+    soft = np.zeros((image.height, image.width), np.uint8)
+    areas = range(1, n)
+    for k in progress(areas, total=n - 1, desc="areas") if progress else areas:
+        part = Image.fromarray(((labels == k) & (m > 0)).astype(np.uint8) * 255)
+        res = retouch(tool, work, part, choice, prompt=prompt, negative=negative, seed=seed + k, candidates=1,
+                      steps=steps or STEPS.get(tool, 30), strength=strength)[0]
+        x, y, w, h = res.bbox
+        work.paste(res.patch, (x, y), res.mask)
+        soft[y : y + h, x : x + w] = np.maximum(soft[y : y + h, x : x + w], np.asarray(res.mask))
+    ys, xs = np.nonzero(soft)
+    x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+    return Result(work.crop((x0, y0, x1, y1)), Image.fromarray(soft[y0:y1, x0:x1]), (x0, y0, x1 - x0, y1 - y0))
 
 
 def _fill(loaded, crop: Image.Image, mask: Image.Image) -> Image.Image:
