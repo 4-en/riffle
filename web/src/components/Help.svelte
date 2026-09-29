@@ -11,7 +11,7 @@
       ['O', 'Calendar or map overview (with a grouping)'],
       ['Ctrl+Z', 'Undo the last flag change'],
       ['Esc', 'Close the current view / clear the selection'],
-      ['Ctrl+,', 'Settings (1–7 switch pages)'],
+      ['Ctrl+,', 'Settings (1–8 switch pages)'],
     ]],
     ['Curate', [
       ['Esc', 'Close the draft'],

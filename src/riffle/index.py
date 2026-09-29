@@ -39,11 +39,15 @@ def run_index(cfg: Config, progress=progress, report: Callable[[str], None] = pr
 
 
 def _index_steps(conn, cfg: Config, progress, report: Callable[[str], None]) -> None:
-    r = scan(conn, cfg, progress=progress)
+    from .profiles import indexed_roots
+
+    r = scan(conn, cfg, progress=progress, roots=indexed_roots(cfg))  # every profile's folders
     report(
         f"scan: {len(r.images)} images ({r.added} new, {r.changed} changed, {r.moved} moved, "
-        f"{r.unchanged} unchanged, {r.missing} missing, {r.errors} errors)"
+        f"{r.unchanged} unchanged, {r.missing} missing, {r.hidden} in no profile's folders, {r.errors} errors)"
     )
+    for folder, n in r.offline:
+        report(f"offline: {folder} ({n} photos kept as they were; connect it and index again, or remove it in Settings)")
     if r.metadata_refreshed:
         report(f"metadata: re-read EXIF for {r.metadata_refreshed} photos")
 
@@ -107,3 +111,20 @@ def run_tag(cfg: Config) -> None:
     _tag(conn, cfg, Clip(cfg.model, text_only=True))
     conn.close()
     print(f"done in {time.perf_counter() - t0:.1f}s")
+
+
+def remove_missing(conn, cfg: Config) -> int:
+    """Delete the photos that are in no profile's folders any more ('hidden') or whose
+    files are gone ('missing'): their catalogue rows (tags, locations and the rest go
+    with them), thumbnails and previews. Their embeddings go at the next index run.
+    Returns how many.
+    Your flags, tags and captions are kept (they are keyed by content), so a photo
+    added again later gets them back."""
+    ids = [r[0] for r in conn.execute("SELECT id FROM photos WHERE status IN ('missing', 'hidden')")]
+    for pid in ids:
+        for d in (cfg.thumbs_dir, cfg.previews_dir):
+            (d / f"{pid}.jpg").unlink(missing_ok=True)
+    with conn:
+        conn.executemany("DELETE FROM embedded WHERE photo_id = ?", [(i,) for i in ids])
+        conn.executemany("DELETE FROM photos WHERE id = ?", [(i,) for i in ids])
+    return len(ids)

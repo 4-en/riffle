@@ -160,6 +160,7 @@ def fake_clip():
 def fake_index(cfg, progress=None, report=print):
     """The full pipeline with the fake encoder (same signature as run_index)."""
     from riffle.dupes import compute_phashes, group_duplicates
+    from riffle.profiles import indexed_roots
     from riffle.embed import embed_photos, load_embeddings
     from riffle.raws import match_raws
     from riffle.scan import scan
@@ -170,7 +171,7 @@ def fake_index(cfg, progress=None, report=print):
     clip = FakeClip()
     conn = db.connect(cfg.db_path)
     try:
-        result = scan(conn, cfg, progress=progress)
+        result = scan(conn, cfg, progress=progress, roots=indexed_roots(cfg))  # every profile's folders, as run_index
         match_raws(conn, cfg, result.raws)
         build_thumbnails(conn, cfg, workers=2, progress=progress)
         embed_photos(conn, cfg, clip=clip, progress=progress)

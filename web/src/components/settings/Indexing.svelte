@@ -12,7 +12,8 @@
     <p class="mt-1 text-xs text-neutral-400">
       Finds new and changed photos in your folders and computes what Riffle needs: thumbnails, the AI model's view of each photo,
       tags, duplicates and stacks, sharpness, colours, and locations. A run only fills in what is missing, so it is quick when
-      little has changed. It also runs after adding a folder.
+      little has changed. It covers every profile's folders, so switching profiles never waits for it, and it runs by itself after
+      adding a folder no profile had.
     </p>
   </div>
   <button

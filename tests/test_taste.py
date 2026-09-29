@@ -27,8 +27,8 @@ def make_library(cfg, n_scenes=120, keeper_share=0.3, signal=True, seed=0):
         members = []
         for k in range(size):
             cur = conn.execute(
-                "INSERT INTO photos (rel_path, source, sha256, status) VALUES (?, 'src', ?, 'ok')",
-                (f"lib{seed}/s{s}_{k}.jpg", f"sha{seed}_{s}_{k}"),
+                "INSERT INTO photos (rel_path, source, sha256, status) VALUES (?, ?, ?, 'ok')",
+                (f"lib{seed}/s{s}_{k}.jpg", str(cfg.sources[0]), f"sha{seed}_{s}_{k}"),  # in the library's folder
             )
             members.append(cur.lastrowid)
             v = base + 0.05 * rng.normal(size=DIM)
@@ -129,3 +129,40 @@ def test_taste_sort_is_refused_while_the_model_is_off(cfg):
         assert not c.post("/api/taste/calibrate", json={}).json()["enabled"]
         res = c.get("/api/photos", params={"sort": "taste"})
         assert res.status_code == 409 and "Needs more flagged photos" in res.json()["detail"]
+
+
+def test_recalibrated_by_itself_when_flags_changed(cfg):
+    """A calibrated model is brought up to date at startup when flags changed since; a
+    recalibration that does not pass the check keeps the previous model."""
+    import time
+
+    from riffle import selections
+
+    conn, E, ids, picks = make_library(cfg)
+    with TestClient(create_app(cfg, text_encoder=FakeClip().encode_text)) as c:
+        first = c.post("/api/taste/calibrate", json={}).json()
+    time.sleep(0.01)
+    selections.set_flags(conn, cfg.selections_path, [(picks[:3], "reject")])  # while the app was not running
+
+    def settle(c):
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            status = c.get("/api/taste").json()
+            if status["changed_since"] == 0:
+                return status
+            time.sleep(0.05)
+        return c.get("/api/taste").json()
+
+    with TestClient(create_app(cfg, text_encoder=FakeClip().encode_text)) as c:
+        status = settle(c)
+        assert status["enabled"] and status["changed_since"] == 0
+        assert status["calibrated_at"] > first["calibrated_at"]
+    # Now turn nearly every reject into a pick: too few rejects for a model to pass its
+    # check, so the old one stays.
+    rejected = [r[0] for r in conn.execute("SELECT p.id FROM photos p JOIN sel.flags f ON f.sha256 = p.sha256 WHERE f.flag = 'reject'")]
+    time.sleep(0.01)
+    selections.set_flags(conn, cfg.selections_path, [(rejected[:-5], "pick")])
+    with TestClient(create_app(cfg, text_encoder=FakeClip().encode_text)) as c:
+        time.sleep(1.0)
+        status = c.get("/api/taste").json()
+        assert status["enabled"] and status["changed_since"] > 0  # kept, and still worth a look

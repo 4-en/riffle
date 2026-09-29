@@ -137,6 +137,34 @@
   }
 
   const maxSharp = $derived(Math.max(0, ...members.map((m) => m.sharpness ?? 0)));
+
+  // Resolution and file size: shown only when the photos here differ (an edited copy, a
+  // re-export, a phone and a camera shot), since it is not visible in the photos.
+  const mp = (m) => ((m.width ?? 0) * (m.height ?? 0)) / 1e6;
+  const format = (m) => (m.rel_path.split('.').pop() ?? '').toUpperCase().replace('JPEG', 'JPG');
+  const bytesPerMp = (m) => (m.size_bytes && mp(m) ? m.size_bytes / mp(m) : 0);
+  const differ = (vals, tolerance) => vals.length > 1 && Math.max(...vals) > Math.min(...vals) * (1 + tolerance);
+  const showSize = $derived(
+    differ(members.map(mp).filter(Boolean), 0.02) ||
+      differ(members.map((m) => m.size_bytes ?? 0).filter(Boolean), 0.1) ||
+      new Set(members.map(format)).size > 1,
+  );
+  const maxMp = $derived(Math.max(0, ...members.map(mp)));
+  // Least compressed: the most data per pixel, among photos of the same format and resolution.
+  const leastCompressed = $derived.by(() => {
+    const best = new Set();
+    const groups = new Map();
+    for (const m of members) {
+      const k = `${format(m)}|${Math.round(mp(m) * 10)}`;
+      groups.set(k, [...(groups.get(k) ?? []), m]);
+    }
+    for (const g of groups.values()) {
+      if (g.length < 2 || !differ(g.map(bytesPerMp).filter(Boolean), 0.1)) continue;
+      best.add(g.reduce((a, b) => (bytesPerMp(b) > bytesPerMp(a) ? b : a)).id);
+    }
+    return best;
+  });
+  const megabytes = (b) => (b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.round(b / 1e3)} kB`);
   const cols = $derived(members.length <= 2 ? members.length || 1 : members.length <= 4 ? 2 : members.length <= 9 ? 3 : 4);
   const rows = $derived(Math.ceil(members.length / cols));
   const fit = $derived(rows <= 3); // few photos: fill the screen; many: scroll
@@ -294,6 +322,17 @@
             {/if}
             {#if m.clip_shadows > 0.05}
               <span class="text-sky-300" title="Share of the frame near-black">▼ {(m.clip_shadows * 100).toFixed(0)}% crushed</span>
+            {/if}
+            {#if showSize}
+              <span
+                class="shrink-0 tabular-nums"
+                title="{m.width} × {m.height} pixels{m.size_bytes ? `, ${megabytes(m.size_bytes)} (${megabytes(bytesPerMp(m))} per megapixel)` : ''}"
+              >
+                <span class={mp(m) === maxMp && differ(members.map(mp).filter(Boolean), 0.02) ? 'text-emerald-300' : ''}>{mp(m).toFixed(1)} MP</span>
+                {#if m.size_bytes}· {megabytes(m.size_bytes)}{/if} · {format(m)}
+                {#if mp(m) === maxMp && differ(members.map(mp).filter(Boolean), 0.02)}<span class="text-emerald-300">largest</span>{/if}
+                {#if leastCompressed.has(m.id)}<span class="text-emerald-300">least compressed</span>{/if}
+              </span>
             {/if}
             <span class="ml-auto truncate">{m.rel_path}</span>
           </div>

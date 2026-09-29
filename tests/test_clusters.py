@@ -216,7 +216,7 @@ def test_similar_map_api(indexed, conn, monkeypatch):
         m = c.get("/api/similar/map", params={"dupes": "all"}).json()
         assert len(m["points"]) == 4 and all(0 <= x <= 1 and 0 <= y <= 1 for _, x, y, _ in m["points"])
         assert sorted(g["count"] for g in m["groups"]) == [2, 2] and all(g["label"] for g in m["groups"])
-        assert (indexed.embeddings_dir / f"{indexed.model.model_id}.map.npz").exists()  # cached
+        assert list(indexed.embeddings_dir.glob(f"{indexed.model.model_id}.map.*.npz"))  # cached (per profile library)
         where = {pid: (x, y) for pid, x, y, _ in m["points"]}
         narrowed = c.get("/api/similar/map", params={"dupes": "all", "orientation": "portrait"}).json()
         assert 0 < len(narrowed["points"]) < 4
@@ -297,3 +297,21 @@ def test_clusters_are_cached_on_disk(indexed, conn, monkeypatch):
     with TestClient(create_app(indexed, text_encoder=FakeClip().encode_text)) as c:
         again = c.get("/api/groups", params={"group": "similar", "dupes": "all"}).json()["groups"]
     assert [(g["key"], g["count"]) for g in again] == [(g["key"], g["count"]) for g in first]
+
+
+def test_layout_of_a_large_library_uses_a_sample(monkeypatch):
+    """Above LAYOUT_DIRECT, t-SNE runs on a sample and the others are placed by it:
+    every photo gets a place, and photos alike land near each other."""
+    from riffle import clusters
+
+    monkeypatch.setattr(clusters, "LAYOUT_DIRECT", 60)
+    rng = np.random.default_rng(0)
+    centres = np.eye(8)[:3]
+    E = np.concatenate([c + 0.05 * rng.normal(size=(50, 8)) for c in centres])
+    E /= np.linalg.norm(E, axis=1, keepdims=True)
+    Y = clusters.layout(E)
+    assert Y.shape == (150, 2) and np.isfinite(Y).all() and Y.min() >= 0 and Y.max() <= 1
+    group = np.repeat(np.arange(3), 50)
+    inside = np.mean([np.linalg.norm(Y[group == g] - Y[group == g].mean(axis=0), axis=1).mean() for g in range(3)])
+    between = np.mean([np.linalg.norm(Y[group == a].mean(axis=0) - Y[group == b].mean(axis=0)) for a in range(3) for b in range(a + 1, 3)])
+    assert between > 3 * inside  # the three groups stay apart

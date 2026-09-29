@@ -273,6 +273,12 @@ CREATE TABLE photo_text (             -- v6: text read from the photo (OCR)
   - New profiles start empty or copy chosen tables (flags, exported, custom tags, captions and fixed tags) with `ATTACH` + `INSERT … SELECT`.
   - Switching is refused while indexing or an export runs, and an export records history in the file it started with.
   - Deleted profiles move to `profiles/deleted/`. Curate drafts are keyed per profile.
+- **Folders per profile** (28 Sep 2026; selections v8 `folders` and `profile_settings`): the default profile's folders are `sources` in config.yaml (so `riffle index` and existing setups are unchanged); other profiles keep theirs in their file (a file from before v8 gets the config's folders once, so upgrading changes nothing). New profiles start with none, or copy them (`PARTS["folders"]`).
+  - **The scope** (`library.py`): `Library(folders, roots).sql()` is `status = 'ok'` and `source IN (…)` for folders that are indexed roots, or a path-prefix match (`substr`, not `LIKE`) for a folder inside another profile's. `PhotoFilter.where` starts from it (`resolved_filter` sets `flt.library`), and so do the totals, Discover's tag rarity, and the location counts.
+  - **The embeddings**: `get_index()` returns a `ScopedIndex`, the base index limited to the library's ids, rebuilt when the embeddings, the profile's folders or the catalogue (an index run) change. Everything comparing photos uses it, so clusters, the map (`<model>.map.<library key>.npz`), Discover, uniqueness, your tags and taste are per library. Caches keyed by the id set split per profile by themselves.
+  - **Adding** a folder is instant when it lies within an indexed root; otherwise it starts indexing. Removing starts indexing only when no profile has the folder any more (its photos become `hidden`).
+  - First library, a "Photos" profile with the three photo folders (1,926 of 13,468 images): 83 Similar groups by photographic subject (meadows, the archipelago, birds in flight, old town streets, sheep, ferries…) instead of a mix with 11,000 illustrations; 10–90 ms per request, 2 ms per switch; the 13,468-photo default's first Similar grouping after a switch 1.5 s (its naming, as before).
+  - `tests/test_library_scope.py` checks each endpoint family with two profiles on different folders.
 - Keyed by content hash, so flags survive deleting the cache, re-indexing, moving, and renaming. Exact copies share a flag; editing a file drops it.
 - Unflagged photos have no row. Export history is independent of the flag.
 - Catalogue connections `ATTACH` this file as `sel`, so filters and listings join flags in SQL (`selections.flag_expr`).
@@ -284,12 +290,16 @@ CREATE TABLE photo_text (             -- v6: text read from the photo (OCR)
 
 ### 7.1 Scan
 
-1. Walk the sources, skipping excludes, `._*` files, and the cache folder.
+1. Walk every profile's folders (`profiles.indexed_roots`: nested ones within the outermost, so a file is catalogued once), skipping excludes, `._*` files, and the cache folder.
 2. Record path, size, mtime, and SHA-256.
 3. Read EXIF with Pillow: capture time and offset, make/model, lens, GPS, orientation, focal length (and its 35 mm equivalent), aperture, exposure time, ISO.
 4. Record unreadable files as `status = error` and continue.
 
 When extraction gains fields (`META_VERSION`), unchanged files are re-read header-only; nothing else is recomputed. Capture times are stored as written by the camera.
+
+A folder that cannot be reached is *offline* (28 Sep 2026): missing, or empty although photos are catalogued in it (an unmounted drive's mount point). Its photos are left as they were (visible, with all derived data) and the run reports it ("offline: … photos kept as they were"); they still take part in move detection, so a folder moved elsewhere and added from its new place keeps its ids. Before, an unplugged drive made its photos `missing` and dropped their embeddings. Settings → Photo folders shows it as offline, the photo view says the original is not reachable, and an export reports the photos it could not copy (`unreachable`). **Forget…** (`DELETE /api/sources` with `forget`, `scan.forget_folder`) is for a folder that was deleted or moved: it leaves every profile and its photos become `missing`.
+
+A photo no longer found in a reachable folder becomes `missing` when its folder was walked (the file is gone) or `hidden` when no profile has its folder any more. Hidden photos keep their thumbnails, previews and embeddings; found again with the same size and modification time (a folder added back), they are `ok` at once, without reading the file. Settings → Files → Clean up (`index.remove_missing`) deletes both kinds.
 
 ### 7.2 RAW matching
 
@@ -301,7 +311,7 @@ EXIF orientation applied, converted to 8-bit sRGB (using the embedded ICC profil
 
 ### 7.4 Embeddings
 
-Previews are embedded in batches, L2-normalised, and written as `<model_id>.npy` with an aligned id array. Incremental runs embed new or changed photos only (tracked in `embedded`) and rewrite both files, which takes well under a second at this size.
+Previews are embedded in batches, L2-normalised, and written as `<model_id>.npy` with an aligned id array. Incremental runs embed new or changed photos only (tracked in `embedded`) and rewrite both files, which takes well under a second at this size. Vectors of `hidden` photos are kept (re-embedding the 11,000-image illustration folder of the first library would take a long GPU run); those of deleted files and cleaned-up photos go.
 
 ### 7.5 Tags
 
@@ -327,6 +337,8 @@ Known limitations:
 One pass over each preview (`dupes.compute_phashes`) computes whatever is missing. Adding a measure doesn't redo the others. It runs in a thread pool (up to 8 threads; decoding and most of the measuring release the GIL): 18.7 s for all 2,132 photos of the first library, 8.8 ms per photo. It used to take about 190 s, 69 % of it in clipping (below).
 
 - **pHash**: all pairs are compared by Hamming distance (NumPy, in chunks), and pairs within `phash_max_distance` are merged into groups (union–find). The grid shows one tile per group. pHash misses reframed bursts; stacks catch them.
+  - *CLIP must agree* (29 Sep 2026): a pair counts only if its CLIP similarity reaches `stacks.min_similarity` (fitted to the model). With 95,000 images, 64-bit hashes matched unrelated flat, low-detail images (fish crops, illustrations): 29 % of the grouped pairs were less than 0.9 alike, groups chained up to 48 images, and 41 groups spanned folders, so stacks (which merge the duplicate groups) mixed an anime profile's images with a fish dataset. With CLIP's agreement: 1,976 → 1,456 groups, 11 spanning folders (copies of one image in both anime folders).
+  - Stacks are built over every photo, so the stack review, a stack's photos, the photo view's duplicates and stack, and the counts on tiles show only the profile's photos; a stack with a single photo in the profile is none there.
 - **Sharpness** (`quality.py`): Laplacian variance per 50 px tile of an 800 px greyscale copy; the score is the mean of the sharpest 5 % of tiles.
   - Downsampling first keeps sensor noise from counting as detail.
   - Scoring the in-focus region keeps shallow depth of field from scoring low, which the whole-frame variance did on the first library.
@@ -403,7 +415,7 @@ On the first library, every photo had an EXIF offset. 587 of 743 were placed fro
 
 ## 9. Taste model
 
-`taste.py`, trained on the user's flags on request (**Settings → Your taste → Calibrate**, ~1.1 s including cross-validation).
+`taste.py`, trained on the user's flags, first on request (**Settings → Your taste → Calibrate**, ~1.1 s including cross-validation), then by itself at startup and on a profile switch when flags or exports changed since (29 Sep 2026: it is that cheap); a recalibration that fails the check keeps the previous model (`TasteStore.recalibrate_if_stale`). Removing a flag deletes its row, so it does not count as a change until the next one.
 
 - **Unit: scenes, not photos.** One sample per stack or single photo (mean embedding). A keeper scene contains a pick or an export; a rejected scene contains only rejects; unreviewed scenes are skipped.
   - Per photo it didn't work: AUC 0.74 against 0.73 for the untrained CLIP quality score. It didn't transfer between libraries, and it was worse than sharpness at choosing a frame within a stack.
@@ -443,7 +455,12 @@ Text search encodes the query with the CLIP text encoder and ranks the filtered 
 
 A text search takes about 10 ms.
 
-**Your tags** (`custom_tags.py`; stored in selections v3, examples by content hash). A photo belongs when its similarity to its best-matching example reaches a fixed level per model: the stack threshold minus 0.05 (strict), 0.08 (normal), or 0.12 (loose). That is 0.87 / 0.84 / 0.80 for ViT-L-14.
+**Your tags** (`custom_tags.py`; stored in selections v3, examples by content hash). With fewer than four examples, a photo belongs when its similarity to its best-matching example reaches a fixed level per model: the stack threshold minus 0.05 (strict), 0.08 (normal), or 0.12 (loose). That is 0.87 / 0.84 / 0.80 for ViT-L-14.
+
+*A classifier from four examples on (29 Sep 2026).* The rule could only draw circles around the examples: on an illustration library (11,600 images, an anime profile), "kemonomimi" (43 examples, 17 marked) had precision 0.72 / recall 0.28 at Strict, and marking photos carved out true members too. Evaluation: the WD tagger's "animal_ears" / "holo" predictions as the answer key (checked by eye on contact sheets: the rule's extra members really had none; its misses really had cat, fox or wolf ears). WD-tagger features would have been far better for illustrations (character precision 1.00 / recall 0.79 from 10 examples), but were ruled out: core features must work on every photo's CLIP embedding, and photography is the main use.
+  - *The classifier:* logistic regression (C = 1) of the examples against the marked photos and 2,000 random library photos (weight 0.3: some are members), class-balanced. Average precision on the user's tags: 0.62 vs 0.46 (kemonomimi), 0.69 vs 0.27 (Holo). 0.4 s for 11,600 photos, 0.7 s for 95,000.
+  - *The cut:* relative to the median score of the examples held out of training (5-fold), a user-set factor (`custom_tags.cut`, selections v9; Strict 1.0, Normal 0.75, Loose 0.5; 0.2–1.3). No automatic cut suited both tags: kemonomimi (15 % of the library) was best near 0.5 (precision 0.72 / recall 0.45), Holo (0.25 %) near 1.0–1.2 (0.58 / 0.74 … 0.90 / 0.47). Also tried and dropped: percentiles of the held-out scores (too strict for common traits), positive-unlabelled calibration (unstable: every photo in or none), holding out alike examples together (helped the common trait, hurt the character). So the dialog has a slider with the live count, and the photos on both sides of the cut (12 each, one per stack, previews at 160 px): the least sure members to mark, the closest non-members to add as examples. The rule uses the same scale (margin 0.05 + (1 − cut) × 0.14).
+  - *A limit:* a linear classifier also learns the examples' style when the examples share one; varied examples, and marking look-alikes of that style, counter it.
 
 *Negatives* (28 Sep 2026; selections v7, `custom_tag_negatives`, by content hash, copied with a profile's tags): in the tag dialog, the 12 members nearest the edge (one per stack) are clickable; a clicked photo does not belong. A photo is then a member only if it is also more similar to its best example than to every negative (margin 0), so each negative carves out its own neighbourhood; a negative covers its stack and duplicate group; a negative in an example's stack, or as alike as stack members, is refused. Without negatives nothing changes. A linear classifier on top (for tags with many examples) was left for later.
 - *First library, the "Holo" tag* (12 examples of one anime character, Strict, 123 members): in round one, 10 of the 12 edge photos were other characters (mostly white-haired fox girls); marking them took the tag to 62, and all 51 photos removed besides them were other characters. Round two (10 more marked) took it to 47 (35 plus the examples), 5 removed besides them, one of them borderline. What remains is mostly the character, with several look-alikes still in: CLIP does not separate one character from similar ones well, as expected (§15, item 9). A margin of 0 removed nothing that clearly belonged, so it stays at 0.
@@ -566,11 +583,18 @@ A single page without a router. View state lives in a Svelte store mirrored into
   - Groups appear in date order, or trip order for places (by each group's first photo), or path order for folders.
 - **Overviews**: a year calendar (days with a cover and count), or a map with one cluster per place, region, or country. Clicking opens the group in the grid. The map draws bundled Natural Earth outlines (`world-atlas` 50m, loaded lazily) with d3-geo and d3-zoom; street-level detail was left out deliberately.
 - **Photo view**: preview, metadata, tags, location with source and accuracy, taste score, and flag buttons. Actions: Stack, Find similar, Show day, Show place, Copy path.
-- **Settings** (`Settings.svelte`, one component per page in `components/settings/`; 28 Sep 2026, replacing the Library dialog, which had grown into one long page of unrelated sections): a nav on the left, one page at a time. Pages: Photo folders (the folder browser behind *Add a folder…*, open on first run), Indexing (Index now, progress, log), Locations (location history), Profiles, Your taste, Flags & exports (the resets), Files (config, flags, derived data paths). While indexing runs, a status strip sits under the header and the nav marks Indexing. `view.settings` holds the page, so other views open one directly: first run → Photo folders, *Manage profiles…* → Profiles, Curate's notes → Indexing / Your taste. `Ctrl+,` opens it (the last page, remembered per browser), `1`–`7` switch pages.
+- **Settings** (`Settings.svelte`, one component per page in `components/settings/`; 28 Sep 2026, replacing the Library dialog, which had grown into one long page of unrelated sections): a nav on the left, one page at a time. Pages: Photo folders (the folder browser behind *Add a folder…*, open on first run), Indexing (Index now, progress, log), AI model (below), Locations (location history), Profiles, Your taste, Flags & exports (the resets), Files (config, flags, derived data paths). While indexing runs, a status strip sits under the header and the nav marks Indexing. `view.settings` holds the page, so other views open one directly: first run → Photo folders, *Manage profiles…* → Profiles, Curate's notes → Indexing / Your taste. `Ctrl+,` opens it (the last page, remembered per browser), `1`–`8` switch pages.
 - **Profiles**: a switcher in the top bar once there are two or more, and "Profile: <name>" at the top of the sidebar outside the default profile.
 - **Help**: the workflow in steps and all shortcuts.
 
 Tailwind only; no component library.
+
+### 11.3 Choosing the AI model (29 Sep 2026)
+
+**Settings → AI model** (`models.py`, `settings/Model.svelte`, `GET /api/models`, `POST /api/model`): a catalogue of the three general models (ViT-B-16 / ViT-L-14 / ViT-H-14, DFN) and two for nature (BioCLIP 2.5, ViT-H-14; BioCLIP 2, ViT-L-14; OpenCLIP `hf-hub:` models, loaded with `pretrained=None`), each with how many of the library's photos it has embedded; plus any other OpenCLIP model by name.
+- *Switching* is an index run with a copy of the config set to the new model (`prepare_model`): it embeds and tags every photo with it (only what it lacks), while the app keeps the current model. Then `switch_model` writes `model:` and `stacks.min_similarity` to `config.yaml` (`config.set_model`, keeping comments and other keys), reloads the text encoder and the taste model, clears the caches that do not follow the embeddings, and makes open tabs reload. The server reads the model id at use (`mid()`) instead of once at start. Refused while another index, export or captioning run is going.
+- *Stack similarity per model:* the catalogue's tuned values (0.92 ViT-L, 0.90 ViT-B); for other models fitted to the library's camera bursts (same camera, at most 2 s apart): on the first library the tuned values sat at the 17th and 19th percentile of those pairs' similarity, so the 18th is used (at least 50 pairs; otherwise the current value stays). pHash duplicate groups were tried first and were useless: on illustrations and a training set they hold unrelated images (1st percentile 0.43).
+- *Tried on "Apr 2026"* (743 photos, from ViT-L): BioCLIP 2.5 prepared in 27 s (its weights were in the download cache), stack similarity fitted to 0.812; switching back to ViT-L 2.5 s. Searches: "mallard duck" found the brown females as well (ViT-L: drakes only), "Anas platyrhynchos" worked with both; everyday queries were weaker ("magpie" returned figurines), as the catalogue says.
 
 ## 12. Curate
 
@@ -690,6 +714,12 @@ With 12,000 photos (the user added 10k for testing) the first Similar grouping o
 - **Indicators:** Discover opens at once (the start photo is picked inside it, "Finding a photo to start from…" with a spinner); the grid says "Grouping the photos by similarity…" while that runs.
 - On the first library (2,340 photos) a restart took the first Similar requests from 0.6–1.1 s to 0.1–0.8 s and the Discover start from 1.1 to 0.6 s; the rest is naming the clusters, not cached. At 12,000 the clustering (4.5 s per level) is the part now read from disk.
 
+
+**At 81,000 photos (a fish training set as a stress test, 28 Sep 2026).** Every Similar level took about 55 s, on every switch, and the map 149 s; the clustering itself was cached on disk and took 0.1 s to name.
+- *The cause:* the listing looked up each photo's cluster in the clusters CTE. First as `json_extract` on a JSON object, which SQLite re-parsed per photo (0.5 s at 13,000 photos, 24 s at 80,000); then as a correlated subquery on a materialised CTE, fast in a plain query (0.04 s) but not indexed inside the cover query's window function (54 s). Now `similar_clusters` joins the clusters (`LEFT JOIN clusters sc`, `SIMILAR_KEY = "sc.k"`): 0.14 s. Each level 1.3–1.5 s the first time, 0.5–0.7 s again; the map 0.6 s.
+- *Computed once per library and saved:* clustering 5 / 5 / 15 s (broad / medium / fine; above 6,000 photos a sample is clustered). The map layout (t-SNE) took 158 s; above `LAYOUT_DIRECT` = 15,000 photos t-SNE now runs on a sample and the rest is placed by their 5 most similar sampled photos (weighted sharply, a small offset): 26 s, the same groups as coherent (contact sheet of both, coloured by cluster). Warm-up prepares it in the background.
+- *The map in the page* (`SimilarMap.svelte`, `lib/maplod.js`): the points were a deep `$state` proxy (now `$state.raw`), and every frame drew all 80,000 and, zoomed in, requested a thumbnail for every one on screen, never released. Now a 128 × 128 grid finds the photos on screen, one photo is drawn per screen spot (a power-of-two bucket grid, a fixed rank per photo, so nothing flickers while panning; the cluster in focus preferred), thumbnails appear once at most 800 tiles fit, and only the 1,500 most recently drawn thumbnails are kept. On the fish set: 7,800 dots zoomed out (6 ms to choose), 534 thumbnails at 8× (0.2 ms); hovering looks only at the drawn photos. The status line says "zoom in for more" while photos are left out.
+  - *Revised after use:* at the deepest zoom some photos stayed hidden (near-identical photos sit on one spot of the layout, so one tile-sized spot held several), and hovering a cluster swapped which photo represented a spot, so photos popped in and out. Now tiles sit at the centres of their spots (never overlapping); when at most 800 photos are on screen, every one is drawn, those sharing a spot moved to the nearest free spot around it (a small mosaic in place); hovering never changes what is drawn, it only greys out the others (as dots, the hovered cluster's spots are added on top). Checked on the fish set at 8×, 16× and 40× around three spots: no overlapping tiles, everything in the window drawn at 40×, the same photos with and without hovering. The maximum zoom went from 40× to 100×.
 ### 14.1 Experiment: penultimate-layer features for similarity (27 Sep 2026)
 
 Question: would image features from deeper inside CLIP serve "find similar" and your tags (§10) better than the final, text-aligned embedding? Compared on the first library (2,132 photos, ViT-L-14 DFN-2B, previews), each variant also mean-centred:
@@ -730,6 +760,18 @@ Most of the small gain comes from mean-centring (subtracting the library's avera
 Not adopted: it would mean re-embedding every photo and keeping a second matrix, since text search still needs the final one.
 
 **Open:** more nuanced concepts could favour deeper features, which this benchmark could not test: one particular person, pet, or character among others of its kind. That needs a labelled set with such identities. See §15.
+
+**Answered (29 Sep 2026): no, not for a character or a detail trait either.** On the anime profile (11,612 illustrations; the WD tagger's predictions as the answer key, as in §10), with the learned-tag classifier on each variant (average precision; the user's examples and marks | from 10 examples):
+
+| | "animal ears" (15 % of the images) | one character (29 images) |
+|---|---|---|
+| final (now) | 0.63 / 0.56 | 0.76 / 0.70 |
+| pre-proj (centred) | 0.63 / 0.56 | 0.79 / 0.72 |
+| pen CLS (centred) | 0.58 / 0.48 | 0.75 / 0.70 |
+| pen mean (centred) | 0.57 / 0.50 | 0.67 / 0.62 |
+| final, centred | 0.63 / 0.56 | 0.76 / 0.70 |
+
+The penultimate block is worse on the trait and no better on the character; the features before the projection match the final embedding (+0.03 on the character, one tag: noise). Other learners on the final embedding (a linear SVM, a small neural network, nearest examples, label spreading over a similarity graph, the tag's name as a text query) were no better than the logistic regression either (§10). What limits learned tags is how much of a detail one whole-image embedding holds; embedding crops would be the next thing to try.
 
 ### 14.2 Experiment: clustering and a 2D map (27 Sep 2026)
 
@@ -927,6 +969,6 @@ Location-history questions still open: how accurate is the history on photos tha
 4. Default model: `ViT-L-14-quickgelu` / `dfn2b` since 26 Sep 2026 (about 81 % ImageNet zero-shot), replacing `ViT-B-16` / `laion2b_s34b_b88k` (70 %). Alternatives: `ViT-B-16` / `dfn2b` (76 %, the standalone default) and `ViT-H-14-quickgelu` / `dfn5b` (83 %). The 1,146-photo library embeds in under a minute on the RTX 3090.
 5. Flags: one global pick/reject per photo, in a separate database keyed by content hash.
 6. Location history: referenced in place (not copied), placed at place / region / country level, with route-interpolated positions used but marked.
-7. Taste model: calibrated on request, not retrained in the background.
+7. Taste model: first calibrated on request; after that recalibrated at startup and on a profile switch when flags changed (replaced only by a model that passes the check). Not retrained while the app runs.
 8. Standalone builds: zipped folders, not single files; CPU inference with the faster model.
 9. Discover (§14.7) is kept as a feature, next to Curate: tried on a branch, judged a good fit after walking it.

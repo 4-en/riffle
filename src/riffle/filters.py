@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Query
 
+from .library import Library
 from .selections import EXPORTED_EXPR, FLAG_EXPR
 
 # EXIF dates are stored as written ("2024:05:01 10:00:00"); compare as "2024-05-01".
@@ -108,12 +109,15 @@ class PhotoFilter:
     exposure: list[str] = field(default_factory=list)  # EXPOSURE keys, OR-combined
     ftags: list[str] = field(default_factory=list)  # fixed tags (selections DB): must have all
     exclude_ftags: list[str] = field(default_factory=list)  # ...and none of these
+    # The profile's photos (set by the server; library.py). None: every photo that is 'ok'.
+    library: Library | None = None
 
     def where(self, model_id: str, exclude: frozenset[str] = frozenset()) -> tuple[str, list]:
-        """SQL condition over ``photos p`` (only status 'ok'). Facets named in
-        ``exclude`` are left out, for counting that facet's own options."""
-        clauses = ["p.status = 'ok'"]
-        params: list = []
+        """SQL condition over ``photos p`` (only status 'ok', in the profile's library).
+        Facets named in ``exclude`` are left out, for counting that facet's own options."""
+        base, params = (self.library or Library.all()).sql("p")
+        clauses = [base]
+        params = list(params)
 
         if self.tags and "tags" not in exclude:
             marks = ",".join("?" * len(self.tags))

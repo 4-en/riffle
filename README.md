@@ -62,7 +62,7 @@ venv/bin/riffle paths      # show where config, flags, and derived data live
 
 `riffle` uses port 8000, or a free port if that is taken. Running it again while it runs opens another tab. It stops by itself 30 seconds after the last tab is closed; it never stops in its first minute or during indexing or export. `riffle serve` runs until stopped. Global options: `--config PATH`, `-v` for debug logging.
 
-Open **Settings** (top right, or Ctrl+,) → **Photo folders** to add folders; **Indexing** runs and follows the index. Settings opens by itself on first start. Folders are saved to `sources` in `config.yaml`.
+Open **Settings** (top right, or Ctrl+,) → **Photo folders** to add folders; **Indexing** runs and follows the index. Settings opens by itself on first start. The default profile's folders are saved to `sources` in `config.yaml`; each other profile keeps its own list (see [Profiles](#profiles)).
 
 The folder browser can list any directory the server can read, so keep the server bound to `127.0.0.1` (the default).
 
@@ -102,7 +102,7 @@ Stacks link photos at most `stacks.max_gap_seconds` apart that are at least `sta
 
 Once calibrated, **Sort → Likely keepers first** shows promising photos first, and **Likely rejects first** helps clear out misses. It rates scenes (a burst counts once), so this sort also turns on Stacks. Picking the best frame within a burst is left to sharpness and the suggested keeper.
 
-That page shows how well it works for you and how many flags changed since the last calibration. The model is stored in the cache folder and never flags anything by itself.
+Once calibrated, it keeps itself up to date: when Riffle starts (and when you switch profiles), it recalibrates if flags changed since, and keeps the previous model if the new one would not pass the check. That page shows how well it works for you and how many flags changed since the last calibration. The model is stored in the cache folder and never flags anything by itself.
 
 ## Curate
 
@@ -140,10 +140,11 @@ The walk is the result: **Replay** plays it as a slideshow, **Pick walk** flags 
 
 ## Your tags
 
-Tags taught by example: select one or more photos, right-click → **Learn a tag from N photos…** (or **Learn tag…** in the selection bar), and name it. A photo gets the tag when it is close enough to any one of the examples, so varied examples (the same dog on a beach, in snow, indoors) each count. With a single example, the tag holds that photo's closest matches, like "find similar".
+Tags taught by example: select one or more photos, right-click → **Learn a tag from N photos…** (or **Learn tag…** in the selection bar), and name it. With one to three examples, a photo gets the tag when it is close enough to any one of them; with a single example, the tag holds that photo's closest matches, like "find similar".
 
-- **Strict · Normal · Loose** sets how close is close enough. The dialog shows the photo count for each, and the photos at the edge of the tag.
-- **Click an edge photo that doesn't belong** to mark it: it leaves the tag, together with the photos that are more like it than like any example (and its stack), and the next edge photos show. A few rounds sharpen a tag that spills over into look-alikes. **↺** on a marked photo takes it back.
+- **From four examples on**, the tag learns what the examples share (a small classifier on the AI model's view of the photos), rather than taking every photo close to one of them. Varied examples (the same subject in different light, places, styles) teach it best.
+- **The slider** sets how like the examples a photo must be, from *More, broader* to *Fewer, surer*, with the photo count as you move it; **Strict · Normal · Loose** are points on it. No setting suits every tag: a common trait usually wants it further left, one particular person or character further right.
+- **The photos either side of the edge** show below it, large: *just inside* (click the ones that don't belong: the tag learns from them) and *just outside* (click the ones that do: they become examples). A few rounds sharpen a tag. **↺** on a marked photo takes it back.
 - **Your tags** in the sidebar work like the other tags: click to include, Alt+click or **−** to exclude, **✎** to rename, change strictness, remove examples, or delete.
 - To add examples, select photos, right-click, and pick the tag under **Add to a tag**.
 - Tags are stored with your flags in `selections.sqlite3`, by file content, so they survive re-indexing, moved files, and model changes.
@@ -168,9 +169,12 @@ Select photos and click **Caption…** in the selection bar (or right-click → 
 
 ## Profiles
 
-A profile is a separate set of your own data: picks and rejects, export history, your tags, and the taste model. Use one per project, e.g. a photo book next to your general culling. The photos, their index, and the settings are shared.
+A profile is a separate set of your own data: its photo folders, picks and rejects, export history, your tags, captions, and the taste model. Use one per project, e.g. a photo book next to your general culling, or one for photographs and one for illustrations. Settings are shared.
 
-- **Settings → Profiles** lists them with their counts. A new profile starts empty, or copies any of flags, export history, and your tags from the current one (e.g. keep your tags but start the picks from scratch).
+- **Folders per profile.** A profile shows only its own folders, and everything that looks at "the library" follows: the grid, search, tag counts, Similar and its map, Discover, Curate's uniqueness, and the taste model. Indexing covers every profile's folders once and they share the index, so adding a folder another profile already has (**Settings → Photo folders → From your other profiles**) is instant.
+- **External drives and network folders:** a folder that cannot be reached (unplugged, not mounted, or an empty mount point) is shown as *offline*. Its photos stay as they are, with their thumbnails, previews and AI data, until it is back; opening or exporting an original then says it cannot be reached. If you deleted or moved the folder instead, **Forget…** next to it in Settings → Photo folders removes it from every profile and drops its photos' data (add the new place as a folder: moved photos are recognised by content and keep their flags and tags).
+- **Removing a folder** from a profile only hides it there. A folder no profile shows keeps its thumbnails and AI data, so adding it back is instant; **Settings → Files → Clean up** deletes that data.
+- **Settings → Profiles** lists them with their counts. A new profile starts empty (no folders yet), or copies any of its photo folders, flags, export history, your tags, and captions from the current one (e.g. keep your tags but start the picks from scratch).
 - Once there is more than one, the top bar shows the active profile with a menu to switch; other open tabs follow.
 - Switching waits until indexing or an export has finished; an export records its history in the profile it started in.
 - Each profile is one SQLite file. The default is `selections.sqlite3`; the others are in `profiles/` next to it. Deleting one moves its file to `profiles/deleted/`.
@@ -211,15 +215,19 @@ Matching relies on the camera clock, so a camera set to the wrong time places ph
 
 ## Model
 
-The CLIP model drives search, tags, stacks, Curate, and the quality hint. Set it under `model:` in `config.yaml`:
+The CLIP model drives search, tags, stacks, Curate, and the quality hint. Choose it in **Settings → AI model**, or set it under `model:` in `config.yaml`:
 
 | | `name` / `pretrained` | Notes |
 |---|---|---|
 | Default | `ViT-L-14-quickgelu` / `dfn2b` | Good search and tags. Fast on a GPU, slow to index on a laptop CPU. |
 | Faster | `ViT-B-16` / `dfn2b` | About 4× faster to index, 0.6 GB. Somewhat looser results. The default of the downloadable builds. |
 | Max quality | `ViT-H-14-quickgelu` / `dfn5b` | Best results. About 2.5× slower than the default, ~4 GB of memory. |
+| Nature: BioCLIP 2.5 | `hf-hub:imageomics/bioclip-2.5-vith14` (no `pretrained`) | Plants, animals, fungi: tells species apart (female mallards next to the drakes) and finds them by common or scientific name. Weaker on everyday scenes, styles and the quality hint. 3.9 GB. |
+| Nature: BioCLIP 2 | `hf-hub:imageomics/bioclip-2` | The same focus, smaller (1.7 GB). |
 
-Each model keeps its own embeddings and tags, so you can switch back and forth. The first `riffle index` after switching embeds every photo once. Similarity values differ between models, so also set `stacks.min_similarity`: 0.92 for ViT-L-14, about 0.90 for ViT-B-16.
+Any other model OpenCLIP can load works too (Settings → AI model → *Another OpenCLIP model*), including Hugging Face repositories in OpenCLIP's format (`hf-hub:<repo>`).
+
+Each model keeps its own embeddings and tags, so you can switch back and forth. Switching in Settings reads every photo with the new model first, in the background, while the current one stays in use; a model used before switches at once. Similarity values differ between models, so switching also sets `stacks.min_similarity`: 0.92 for ViT-L-14, 0.90 for ViT-B-16, and for other models a value fitted to your camera bursts (photos taken within two seconds of each other). When editing `config.yaml` by hand, run `riffle index` and set it yourself.
 
 ## Tags
 
@@ -247,7 +255,7 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 
 | Where | Keys |
 |---|---|
-| Anywhere | `?` help · `Ctrl+,` settings (`1`–`7` switch pages) · `/` search · `O` calendar / map · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
+| Anywhere | `?` help · `Ctrl+,` settings (`1`–`8` switch pages) · `/` search · `O` calendar / map · `Ctrl+Z` undo the last flag change · `Esc` close / clear selection |
 | Grid | click select · `Ctrl`/`Shift`+click add / range · drag to select · arrows move (`Shift` extends) · `Ctrl+A` select all · `Enter` or double-click open · `P` / `X` / `U` flag · `C` compare selection · `S` stacks · `H` hide rejected · `R` review stacks · right-click for a menu |
 | Loupe | `←` / `→` previous / next · `P` / `X` / `U` flag and advance |
 | Compare | click or `1`–`9` keep · `A` keep suggested · `Enter` pick kept, reject rest (with nothing kept, press twice to reject all) · `Shift+X` reject all · `Shift+U` unflag all · `P` / `X` / `U` flag focused · arrows focus · `Z` zoom · `N` / `B` next / back (review) |
@@ -262,7 +270,7 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 |---|---|---|
 | `config.yaml`, `vocabulary.yaml` | `~/.config/riffle/` | Created on first run from `src/riffle/defaults/` |
 | `selections.sqlite3` (flags, export history, your tags) | `~/.local/share/riffle/` | Your data: back it up. Other profiles: `profiles/*.sqlite3` next to it |
-| Catalogue, thumbnails, previews, embeddings | `~/.cache/riffle/` | Derived; safe to delete, `riffle index` rebuilds it |
+| Catalogue, thumbnails, previews, embeddings | `~/.cache/riffle/` | Derived; safe to delete, `riffle index` rebuilds it (every profile's folders) |
 | `riffle.log` (downloadable builds only) | `~/.cache/riffle/` | The previous run's log is `riffle.log.1` |
 | CLIP model weights | `~/.cache/huggingface/` | Downloaded once |
 

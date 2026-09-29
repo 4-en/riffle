@@ -36,8 +36,9 @@ class Clip:
 
         self.torch = torch
         self.device = pick_device(mcfg.device)
+        # "hf-hub:<repo>" models (BioCLIP…) carry their weights: no separate pretrained name.
         model, _, preprocess = open_clip.create_model_and_transforms(
-            mcfg.name, pretrained=mcfg.pretrained, device=self.device
+            mcfg.name, pretrained=mcfg.pretrained or None, device=self.device
         )
         model.eval()
         if text_only and hasattr(model, "visual"):
@@ -102,12 +103,18 @@ def embed_photos(conn: sqlite3.Connection, cfg: Config, clip: Clip | None = None
         r["id"]: r["sha256"]
         for r in conn.execute("SELECT id, sha256 FROM photos WHERE status = 'ok'")
     }
+    # Photos in no profile's folders ('hidden') keep their vectors: added back, they need
+    # no embedding again. A clean-up (deleted rows), a deleted file or new content drops them.
+    kept_rows = {
+        r["id"]: r["sha256"]
+        for r in conn.execute("SELECT id, sha256 FROM photos WHERE status IN ('ok', 'hidden')")
+    }
     done = {
         r["photo_id"]: r["sha256"]
         for r in conn.execute("SELECT photo_id, sha256 FROM embedded WHERE model_id = ?", (model_id,))
     }
     keep = np.array(
-        [pid in current and done.get(int(pid)) == current[int(pid)] for pid in ids], dtype=bool
+        [pid in kept_rows and done.get(int(pid)) == kept_rows[int(pid)] for pid in ids], dtype=bool
     )
     kept_ids = set(int(i) for i in ids[keep])
     todo = [
@@ -151,7 +158,7 @@ def embed_photos(conn: sqlite3.Connection, cfg: Config, clip: Clip | None = None
     conn.execute("DELETE FROM embedded WHERE model_id = ?", (model_id,))
     conn.executemany(
         "INSERT INTO embedded (photo_id, model_id, sha256) VALUES (?, ?, ?)",
-        [(int(pid), model_id, current[int(pid)]) for pid in all_ids],
+        [(int(pid), model_id, kept_rows[int(pid)]) for pid in all_ids],
     )
     conn.commit()
     return len(new_ids)

@@ -5,6 +5,12 @@
   // dots become thumbnails. Click a photo to open it, a cluster name to open that
   // group in the grid. Box or lasso selects photos for the selection bar.
   // Hovering a photo or a name greys out the other clusters.
+  //
+  // Large libraries (80,000 photos): only one photo is drawn per spot on the screen (a
+  // few pixels zoomed out, a tile zoomed in), chosen by a fixed rank per photo so it
+  // stays put while panning; zooming in brings out more. A grid over the layout finds
+  // the photos on screen without visiting the others; thumbnails load only for the
+  // drawn tiles, and only the most recently drawn ones are kept.
   import { untrack } from 'svelte';
   import { select } from 'd3-selection';
   import { zoom as d3zoom, zoomIdentity } from 'd3-zoom';
@@ -12,6 +18,7 @@
   import { fetchSimilarMap } from '../lib/api.js';
   import { selection } from '../lib/culling.svelte.js';
   import { mapSelect, inside } from '../lib/mapselect.svelte.js';
+  import { buildGrid, pointsToDraw } from '../lib/maplod.js';
   import MapTools from './MapTools.svelte';
   import SelectionBar from './SelectionBar.svelte';
 
@@ -20,7 +27,9 @@
   let width = $state(800);
   let height = $state(600);
   let canvas;
-  let data = $state(null); // {points: [[id, x, y, key]], groups: [{key, label, count, x, y}], other}
+  // {points: [[id, x, y, key]], groups: [{key, label, count, x, y}], other}. Raw: a deep
+  // proxy over 80,000 points made every redraw crawl.
+  let data = $state.raw(null);
   let loading = $state(true);
   let error = $state('');
   let transform = $state(zoomIdentity);
@@ -83,7 +92,21 @@
   // Tiles grow more slowly than the spacing, so zooming in spreads them out.
   const tileSize = (k) => Math.min(140, 7 * Math.pow(k, 0.75));
 
-  const images = new Map(); // id -> Image (loaded on demand)
+  // ---- level of detail -------------------------------------------------------------
+  const MAX_THUMBS = 800; // thumbnails only once no more than this many tiles are on screen
+  const MAX_IMAGES = 1500; // loaded thumbnails kept (least recently drawn dropped first)
+  let grid = null; // lib/maplod.js
+  $effect(() => {
+    data;
+    untrack(() => (grid = data ? buildGrid(data.points) : null));
+  });
+  const lod = (px, all = 0, only = undefined) =>
+    pointsToDraw(grid, data.points, { k: transform.k, tx: transform.x, ty: transform.y, ...frame, width, height }, px, all, only);
+
+  const images = new Map(); // id -> Image (loaded on demand; insertion order = least recently drawn first)
+  let drawn = []; // [{id, key, x, y}] on screen, for hovering
+  let shown = $state(0); // how many photos are drawn
+  let complete = $state(true); // every photo on screen is drawn (else: zoom in for more)
   let frameRequest = 0;
   function redraw() {
     cancelAnimationFrame(frameRequest);
@@ -91,34 +114,60 @@
   }
 
   function draw() {
-    if (!canvas || !data) return;
+    if (!canvas || !data || !grid) return;
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+    }
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
     const s = tileSize(transform.k);
-    // With a cluster in focus, the others are drawn first, greyed out, and it goes on top.
-    if (focus === undefined) {
-      for (const [id, x, y, key] of data.points) drawPoint(ctx, s, id, x, y, key, false);
-    } else {
-      for (const [id, x, y, key] of data.points) if (key !== focus) drawPoint(ctx, s, id, x, y, key, true);
-      for (const [id, x, y, key] of data.points) if (key === focus) drawPoint(ctx, s, id, x, y, key, false);
+    // Thumbnails when they are large enough and few enough: every photo on screen when at
+    // most MAX_THUMBS are (alike ones side by side), else one per tile. Otherwise dots.
+    let list = s >= THUMB_FROM ? lod(s + 2, MAX_THUMBS) : null;
+    const thumbs = list !== null && list.length <= MAX_THUMBS;
+    const dot = Math.max(3, s * 0.7);
+    if (!thumbs) list = lod(dot);
+    const pts = data.points;
+    drawn = [];
+    // Hovering a cluster changes nothing about which photos are drawn: the others are
+    // drawn greyed out first and it goes on top; as dots, all its spots are added on top.
+    for (const pass of focus === undefined ? [null] : [false, true]) {
+      for (const [i, x, y] of list) {
+        const [id, , , key] = pts[i];
+        if (pass !== null && (key === focus) !== pass) continue;
+        drawPoint(ctx, s, id, x, y, key, pass === false, thumbs);
+      }
+    }
+    if (focus !== undefined && !thumbs) {
+      for (const [i, x, y] of lod(dot, 0, focus)) drawPoint(ctx, s, pts[i][0], x, y, focus, false, false);
+    }
+    complete = list.complete;
+    shown = list.length;
+    while (images.size > MAX_IMAGES) {
+      const [oldest, img] = images.entries().next().value;
+      img.onload = null;
+      img.src = ''; // cancel a pending load
+      images.delete(oldest);
     }
   }
 
-  function drawPoint(ctx, s, id, x, y, key, faded) {
+  function drawPoint(ctx, s, id, x, y, key, faded, thumbs) {
     const [sx, sy] = at(x, y);
     if (sx < -s || sy < -s || sx > width + s || sy > height + s) return;
-    if (s >= THUMB_FROM) {
+    drawn.push({ id, key, x: sx, y: sy });
+    if (thumbs) {
       let img = images.get(id);
       if (!img) {
         img = new Image();
         img.onload = redraw;
         img.src = `/thumbs/${id}.jpg`;
-        images.set(id, img);
+      } else {
+        images.delete(id); // (re-inserted: most recently drawn)
       }
+      images.set(id, img);
       if (img.complete && img.naturalWidth) {
         const r = img.naturalWidth / img.naturalHeight;
         const w = r >= 1 ? s : s * r;
@@ -162,7 +211,7 @@
   let zoomer;
   $effect(() => {
     zoomer = d3zoom()
-      .scaleExtent([0.5, 40])
+      .scaleExtent([0.5, 100]) // far enough to spread even a pile of near-identical photos
       .filter(picker.zoomFilter)
       .on('zoom', (e) => (transform = e.transform));
     select(canvas).call(zoomer);
@@ -172,22 +221,21 @@
     if (canvas && zoomer) select(canvas).call(zoomer.transform, zoomIdentity);
   }
 
-  // The photo under the pointer (the nearest within its tile).
+  // The drawn photo under the pointer (the nearest within its tile).
   function pick(e) {
     if (!data) return null;
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
     const reach = Math.max(6, tileSize(transform.k) / 2 + 2);
     let best = null, bestD = reach * reach;
-    for (const [id, x, y, key] of data.points) {
-      const [sx, sy] = at(x, y);
-      const d = (sx - mx) ** 2 + (sy - my) ** 2;
+    for (const p of drawn) {
+      const d = (p.x - mx) ** 2 + (p.y - my) ** 2;
       if (d < bestD) {
         bestD = d;
-        best = { id, key, x: sx, y: sy };
+        best = p;
       }
     }
-    return best;
+    return best && (best.id !== hover?.id ? { ...best } : hover);
   }
   const groupLabel = (key) => data?.groups.find((g) => g.key === key)?.label ?? 'Other';
 </script>
@@ -250,7 +298,11 @@
       {#if data.other}
         · <button class="text-sky-400 hover:underline" onclick={() => onopen('similar', '')}>{data.other} in Other</button>
       {/if}
-      · zoom in for thumbnails
+      {#if !complete}
+        · showing {shown.toLocaleString()}: zoom in for more
+      {:else}
+        · zoom in for thumbnails
+      {/if}
     </div>
   {/if}
 

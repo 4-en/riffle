@@ -286,6 +286,12 @@
               ? `, captions and tags for ${r.captioned}${r.without_caption ? ` (${r.without_caption} had none)` : ''}`
               : ''}.
           </p>
+          {#if r.unreachable}
+            <p class="mt-1 text-amber-300">
+              {r.unreachable} photo{r.unreachable === 1 ? ' was' : 's were'} not copied: {r.unreachable === 1 ? 'its file' : 'their files'} cannot
+              be reached (deleted, or on a drive that is not connected). Connect it and export again; the copied ones are skipped.
+            </p>
+          {/if}
           <p class="mt-1 flex items-center gap-2 break-all font-mono text-[11px] text-emerald-300/80">
             {r.folder}
             <button class="shrink-0 rounded border border-emerald-800 px-1.5 font-sans hover:bg-emerald-900" onclick={copyPath}>{copied ? 'Copied' : 'Copy path'}</button>

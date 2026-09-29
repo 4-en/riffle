@@ -18,7 +18,7 @@ def match_raws(conn: sqlite3.Connection, cfg: Config, raws: list[FoundFile]) -> 
     """Rebuild the raws table. Returns (matched, unmatched)."""
     # (folder a RAW may live in, stem) -> candidate photo ids, best first.
     lookup: dict[tuple[str, str], list[tuple[int, int]]] = {}
-    rows = conn.execute("SELECT id, source, rel_path FROM photos WHERE status != 'missing'")
+    rows = conn.execute("SELECT id, source, rel_path FROM photos WHERE status NOT IN ('missing', 'hidden')")
     for r in rows:
         path = Path(r["source"]) / r["rel_path"]
         stem = path.stem

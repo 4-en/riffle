@@ -52,6 +52,8 @@ class ScanResult:
     changed: int = 0
     moved: int = 0
     missing: int = 0
+    hidden: int = 0  # in no profile's folders any more (kept for when one adds them back)
+    offline: list[tuple[Path, int]] = field(default_factory=list)  # (folder, its photos): unreachable, left as they were
     errors: int = 0
     unchanged: int = 0
     metadata_refreshed: int = 0
@@ -61,10 +63,11 @@ def _excluded(path_posix: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path_posix, p) for p in patterns)
 
 
-def walk_sources(cfg: Config) -> tuple[list[FoundFile], list[FoundFile]]:
+def walk_sources(cfg: Config, roots: list[Path] | None = None) -> tuple[list[FoundFile], list[FoundFile]]:
+    """Every image and RAW under ``roots`` (default: the config's ``sources``)."""
     images: list[FoundFile] = []
     raws: list[FoundFile] = []
-    for source in cfg.sources:
+    for source in cfg.sources if roots is None else roots:
         if not source.is_dir():
             log.warning("Source folder not found: %s", source)
             continue
@@ -238,26 +241,50 @@ def _write(conn, f: FoundFile, sha, meta, error, photo_id=None) -> int:
     return photo_id
 
 
-def scan(conn: sqlite3.Connection, cfg: Config, workers: int = 8, progress=None) -> ScanResult:
-    images, raws = walk_sources(cfg)
+def scan(conn: sqlite3.Connection, cfg: Config, workers: int = 8, progress=None, roots: list[Path] | None = None) -> ScanResult:
+    """Catalogue the files under ``roots`` (every profile's folders: profiles.indexed_roots;
+    default the config's). A photo no longer found becomes 'missing' when its folder was
+    walked (the file is gone), or 'hidden' when no profile has its folder any more;
+    hidden photos keep their derived data (embeddings too), and found again unchanged
+    (a folder added back) they are 'ok' at once, without reading the file.
+
+    A folder that cannot be reached (an external drive unplugged, a network share not
+    mounted) is *offline*: missing, or empty although photos were catalogued in it (an
+    empty mount point). Its photos are left as they were (visible, with all their
+    data) and it is reported in ``offline``; a photo of it found elsewhere still counts
+    as moved. Settings removes such a folder for good when it was deleted or moved
+    (``forget_folder``)."""
+    walked = [Path(r) for r in (cfg.sources if roots is None else roots)]
+    images, raws = walk_sources(cfg, roots)
     result = ScanResult(images=images, raws=raws)
 
     existing = {
         (r["source"], r["rel_path"]): r
         for r in conn.execute("SELECT id, source, rel_path, sha256, size_bytes, mtime, status, meta_version FROM photos")
     }
+    found_per_root = {str(r): 0 for r in walked}
+    for f in images:
+        found_per_root[f.source] = found_per_root.get(f.source, 0) + 1
+    ok_per_source: dict[str, int] = {}
+    for (src, _), row in existing.items():
+        if row["status"] == "ok":
+            ok_per_source[src] = ok_per_source.get(src, 0) + 1
+    offline: list[Path] = []
+    for r in walked:
+        catalogued = sum(n for src, n in ok_per_source.items() if Path(src) == r or Path(src).is_relative_to(r))
+        if catalogued and (not r.is_dir() or not found_per_root.get(str(r))):
+            offline.append(r)
+            result.offline.append((r, catalogued))
+            log.warning("Folder offline, its %d photos are kept as they were: %s", catalogued, r)
     seen = {(f.source, f.rel_path) for f in images}
 
     todo: list[tuple[FoundFile, sqlite3.Row | None]] = []
     stale_meta: list[tuple[FoundFile, int]] = []
     for f in images:
         row = existing.get((f.source, f.rel_path))
-        if (
-            row is not None
-            and row["status"] != "missing"
-            and row["size_bytes"] == f.size
-            and row["mtime"] == f.mtime
-        ):
+        if row is not None and row["size_bytes"] == f.size and row["mtime"] == f.mtime and row["status"] in ("ok", "missing", "hidden", "error"):
+            if row["status"] in ("missing", "hidden"):  # back (its folder added again): the same file, no need to read it
+                conn.execute("UPDATE photos SET status = CASE WHEN error IS NULL THEN 'ok' ELSE 'error' END WHERE id = ?", (row["id"],))
             result.unchanged += 1
             if row["status"] == "ok" and row["meta_version"] < META_VERSION:
                 stale_meta.append((f, row["id"]))
@@ -297,9 +324,16 @@ def scan(conn: sqlite3.Connection, cfg: Config, workers: int = 8, progress=None)
 
     for rows in vanished.values():
         for row in rows:
-            if row["status"] != "missing":
-                conn.execute("UPDATE photos SET status = 'missing' WHERE id = ?", (row["id"],))
-                result.missing += 1
+            src = Path(row["source"])
+            if any(src == r or src.is_relative_to(r) for r in offline):
+                continue  # its folder is offline: not gone, just not reachable now
+            status = "missing" if any(src == r or src.is_relative_to(r) for r in walked) else "hidden"
+            if row["status"] != status:
+                conn.execute("UPDATE photos SET status = ? WHERE id = ?", (status, row["id"]))
+                if status == "missing":
+                    result.missing += 1
+                else:
+                    result.hidden += 1
     conn.commit()
     return result
 
@@ -326,3 +360,15 @@ def _refresh_metadata(conn, items: list[tuple[FoundFile, int]], workers: int, pr
                     f"UPDATE photos SET {sets}, meta_version = ? WHERE id = ?",
                     [*(meta.get(c) for c in META_COLS), META_VERSION, photo_id],
                 )
+
+
+def forget_folder(conn: sqlite3.Connection, folder: Path) -> int:
+    """The photos catalogued in ``folder`` are gone for good (deleted, or moved and added
+    from their new place): mark them 'missing', so indexing drops their embeddings and a
+    clean-up their other data. Returns how many."""
+    folder = Path(folder)
+    rows = conn.execute("SELECT id, source, rel_path FROM photos WHERE status != 'missing'").fetchall()
+    gone = [r["id"] for r in rows if (Path(r["source"]) / r["rel_path"]).is_relative_to(folder)]
+    with conn:
+        conn.executemany("UPDATE photos SET status = 'missing' WHERE id = ?", [(i,) for i in gone])
+    return len(gone)

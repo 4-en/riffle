@@ -129,13 +129,14 @@ export function fetchAlternatives(view, body) {
 }
 
 /** Custom tags (taught by example photos). */
-export const createCustomTag = (name, photoIds, strictness, negatives = []) =>
-  send('POST', '/api/custom-tags', { name, photo_ids: photoIds, strictness, negatives });
+/** cut: how like its examples a photo must be (1.0 Strict, 0.75 Normal, 0.5 Loose; custom_tags.py). */
+export const createCustomTag = (name, photoIds, cut, negatives = []) =>
+  send('POST', '/api/custom-tags', { name, photo_ids: photoIds, cut, negatives });
 export const editCustomTag = (id, changes) => send('POST', `/api/custom-tags/${id}`, changes);
 export const deleteCustomTag = (id) => send('DELETE', `/api/custom-tags/${id}`);
 /** {counts: {strict, normal, loose}, edge: items, examples, left_out} for these examples and negatives. */
-export const previewCustomTag = (photoIds, strictness, negatives = []) =>
-  send('POST', '/api/custom-tags/preview', { photo_ids: photoIds, strictness, negatives });
+export const previewCustomTag = (photoIds, cut, negatives = []) =>
+  send('POST', '/api/custom-tags/preview', { photo_ids: photoIds, cut, negatives });
 
 /** Captions and fixed tags: {id: {caption, method, edited, tags}}. */
 export async function fetchCaptions(ids) {
@@ -164,7 +165,14 @@ export const deleteProfile = (slug) => send('DELETE', `/api/profiles/${slug}`);
 
 export const fetchSources = () => get('/api/sources');
 export const addSource = (path) => send('POST', '/api/sources', { path });
-export const removeSource = (path) => send('DELETE', '/api/sources', { path });
+/** forget: the folder was deleted or moved: off every profile, its photos' data dropped. */
+export const removeSource = (path, forget = false) => send('DELETE', '/api/sources', { path, forget });
+/** Delete the indexed data of photos in no profile's folders (or whose files are gone). */
+export const cleanUp = () => send('POST', '/api/cleanup', {});
 export const browse = (path, files = null) => get('/api/fs', { path, files });
 export const fetchIndexStatus = () => get('/api/index');
 export const startIndex = () => send('POST', '/api/index');
+/** The AI models (models.py): {models: [{key, label, name, pretrained, group, description, size_gb, speed, in_use, embedded}], photos, device, preparing}. */
+export const fetchModels = () => get('/api/models');
+/** Switch model: the photos are embedded with it first (an index run), then it is used. */
+export const chooseModel = (name, pretrained = '') => send('POST', '/api/model', { name, pretrained });
