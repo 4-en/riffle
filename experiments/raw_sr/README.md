@@ -1,0 +1,148 @@
+# RAW to upscaled linear DNG (proof of concept)
+
+A standalone experiment, not part of Riffle: take one Bayer RAW, correct its lens, cut
+out the crop set on its JPEG, upscale only that ×2, and write a linear DNG that a RAW
+developer (darktable) opens like the original.
+
+## Use
+
+```sh
+venv/bin/pip install rawpy tifffile lensfunpy     # not in Riffle's dependencies
+venv/bin/python experiments/raw_sr/raw_to_dng.py IN.ORF -o OUT.dng --model swin2sr \
+    [--crop 0.3,0.1,0.4,0.3 --angle 3 | --riffle]
+venv/bin/python experiments/raw_sr/compare.py IN.ORF OUT.dng [MORE.dng …] --out DIR --crop 0.6,0.2,260
+```
+
+- `raw_to_dng.py`:
+  - `--model swin2sr | swinir | realesrgan | lanczos | none` (none: scale 1)
+  - `--crop x,y,w,h` (fractions of the JPEG's frame after turning and straightening),
+    `--angle` (degrees clockwise), `--rot90`, `--flip`: a crop as Riffle's editor stores it;
+    `--riffle` reads the photo's own from Riffle's edit list (read only); `--jpeg` if the
+    JPEG is not beside the RAW
+  - `--no-lens` (no corrections), `--chroma N` (colour smoothing, default 3; 0 off),
+    `--demosaic AHD | AAHD | DHT | DCB | PPG | VNG`, `--median N`
+- `compare.py`: renders the RAW and each DNG with `darktable-cli` (a throwaway config and
+  an in-memory library, default processing); prints each rendering's mean colour, and its
+  pixel-by-pixel ΔE from the RAW's once the two are matched (SIFT); writes 100 % crops of
+  the same place side by side (`crops.png`).
+
+## How it works
+
+1. **Read**: LibRaw (rawpy) demosaics to linear camera RGB, 16 bit, black level off, scaled
+   to the white level, no white balance or gamma, in the sensor's orientation.
+2. **Lens**: lensfun (by the lens in the EXIF) corrects vignetting and lateral chromatic
+   aberration; then the image is turned upright.
+3. **Geometry from the JPEG**: with the camera's JPEG beside the RAW, a radial model (scale,
+   rotation, offset, two distortion terms) is fitted to SIFT matches between the two. That
+   is the camera's own distortion correction, and it maps the JPEG's pixels to the RAW's.
+   The crop (Riffle's geometry: quarter turns, straightening, crop, flip) is chained with
+   it, and the crop plus a 32 px margin is resampled once (Lanczos) out of the linear RAW.
+   Without a JPEG, lensfun corrects the distortion as well.
+4. **Colour smoothing**: a 3 px median over the colour differences (YCrCb), against the
+   speckle LibRaw's demosaicing leaves at fine edges.
+5. **Upscale**: white-balanced and gamma-encoded (2.2) for the model, in 256 px tiles
+   overlapping by 24 px, back to linear camera RGB; the margin is trimmed.
+6. **Write**: DNG 1.4, LinearRaw, `ColorMatrix1` (LibRaw's XYZ D65 → camera), `AsShotNeutral`
+   (camera white balance), black 0, white 65535, make and model, Orientation 1; then an EXIF
+   IFD with the RAW's exposure, date, lens and maker note. (tifffile does not write the
+   ExifIFD tag: a placeholder, 34666, is renamed afterwards. ORF files start with `IIRO`,
+   so the RAW's IFDs are read directly.)
+
+## Findings (OM-5 Mark II `.orf`, 20 MP, ISO 200, M.Zuiko 12–100 mm at 12 mm, RTX 3090)
+
+- **Colour and metadata work.** darktable opens the DNG as a RAW from the camera's white
+  balance; unscaled and uncorrected, its rendering lines up with the ORF's to 0.55 px, mean
+  colour within 1.6 ΔE, pixel ΔE median 3.8. exiv2 reads camera, exposure, lens (standard
+  EXIF and the decoded Olympus maker note) and date.
+- **darktable does not correct the ORF's lens by default** (the DNG and the ORF render with
+  the same geometry). The camera's JPEG is distortion-corrected.
+- **lensfun's distortion profile disagreed with the camera.** Against the camera's JPEG,
+  with a fit on the centre, the uncorrected RAW drifts inward (−32 px at 35–60 % of the
+  half diagonal, −59 px at 60–80 %), lensfun's correction outward (+17, +39, +57 px): it
+  corrects about 1.6 times as much. Correcting in the sensor's orientation instead of
+  upright made no difference; counting straight line segments on a building shot at 12 mm
+  did not tell which is right. So the JPEG's geometry is used whenever there is a JPEG.
+- **The fitted camera geometry fits**: 3,081 of 3,095 matches, residual 0.5 px in the
+  centre and 0.7 px in the corners. The DNG rendered by darktable drifts 1 px at most from
+  the JPEG across the frame.
+- **The crop lands exactly**: a crop of 40 × 30 % of the frame, straightened 3°, upscaled
+  ×2, matches Riffle's crop of the JPEG (`edits.apply_geometry`) at scale 2.0035 (the RAW
+  is 0.15 % larger than the JPEG), rotation 0.000°, offset under 1 px, 0.76 px residual.
+- **Cropping first pays**: that crop (12 % of the frame) took 30 s to upscale with Swin2SR
+  and is 60 MB, against 219 s and 493 MB for the whole frame.
+- **Speckle**: LibRaw's AHD (and DHT, DCB, AAHD, median passes) leaves coloured speckle at
+  leaf edges against the sky that darktable's own rendering of the ORF does not have, and
+  upscaling sharpens it. The colour-only median removes most of it without losing detail.
+- **Models** (whole frame ×2, 7824 × 10480):
+
+  | Model | Time | Result |
+  |---|---|---|
+  | Lanczos | 2 s | the baseline: softer, faithful |
+  | Swin2SR classical ×2 | 219 s | faithful, somewhat crisper than Lanczos |
+  | SwinIR-M classical ×2 | 224 s | about the same as Swin2SR |
+  | Real-ESRGAN ×2plus | 28 s | cleanest look, but smoothed and redraws leaf texture; mean colour off by 3.2 ΔE |
+
+- **Size**: uncompressed. darktable did not open a deflate-compressed 16-bit DNG (the DNG
+  spec allows deflate for floating point only); lossless JPEG would need `imagecodecs`,
+  float16 + deflate is the other option. Neither was tried.
+
+## Open
+
+1. A better demosaic (LibRaw lacks RCD and AMaZE, which darktable uses), or getting the
+   demosaiced image from darktable itself. A model that takes the Bayer data directly
+   (below) would replace it.
+2. RAWs without a JPEG: lensfun's distortion profile (see above) or the correction data in
+   the maker note, which darktable can use for Olympus.
+3. fp16 inference; smaller files.
+4. In Riffle: an export option "RAWs as ×2 linear DNG, with the photo's crop".
+
+## Plan: a Bayer → ×2 RGB model, trained on this camera
+
+Today the image is demosaiced (LibRaw), then upscaled by a model trained on display
+images. A model that takes the Bayer data and returns RGB at twice the size does both at
+once, from the most accurate input there is, and learns this sensor's noise and colour.
+
+**Why RGB out, not a ×2 Bayer RAW.** Upscaling and demosaicing are the same problem:
+estimating values the sensor did not record. A model that outputs a ×2 Bayer image
+estimates full colour internally, keeps one channel per pixel, and leaves a demosaicer to
+estimate the other two again. And a mosaic cannot be warped (rotating or undistorting it
+mixes its colours), so with RAW out the crop could only be an axis-aligned cut; with RGB
+out, the camera-geometry fit and the exact crop apply to the ×2 result as now. (RAW-to-RAW
+is what most open research does: the NTIRE 2024 and 2025 RAW super-resolution challenges,
+[BSRAW](https://arxiv.org/abs/2312.15487); Adobe's "Super Resolution" is Bayer → ×2 linear DNG.)
+
+**Training data from the ORFs themselves** (1,533 in the library):
+- Target: the Bayer data binned 2×2 (R, the mean of the two greens, B): full-colour pixels
+  at half resolution with no demosaicing in them, in linear camera RGB.
+- Input: the target scaled down ×2 again, sampled back into the RGGB pattern, with this
+  sensor's noise added (shot and read noise, estimated from flat areas or from dark frames
+  with the lens cap on), and random blur, since a downscaled image is crisper per pixel
+  than a native one, where the lens spreads detail over pixels. This gap between
+  synthetic and real input is the main risk.
+- Patches of 128–256 px, highlights clipped as the sensor clips them.
+
+**Real pairs from High Res Shot.** On a tripod, the same static scene shot normally and in
+High Res Shot (80 MP, about ×2 linear; handheld 50 MP, about ×1.6), aligned: real input
+and target with this lens's and sensor's detail. A few dozen scenes are enough to fine-tune
+the synthetically trained model, and to measure honestly whether it recovers detail or
+invents it, which cannot be judged from a single image.
+
+**Model.** Swin2SR classical ×2 (already used here), its first convolution replaced to take
+the packed Bayer input (4 channels, R, G, G, B, at half resolution), so its pretrained
+layers are kept; fine-tuned rather than trained from scratch. L1 loss on gamma-encoded
+values (so shadows count), fp16 training on the RTX 3090. A run: hours to a day or two.
+
+**Steps.**
+1. Data pipeline: binning, mosaicking, the noise model (estimated from the ORFs), patches;
+   a held-out set of photos never trained on.
+2. Fine-tune Swin2SR on the synthetic pairs; compare on the held-out photos, rendered in
+   darktable, against the current pipeline (LibRaw, colour smoothing, Swin2SR) and Lanczos.
+3. Shoot a handful of High Res Shot pairs; test on real detail, then fine-tune on them.
+4. In `raw_to_dng.py`: the model replaces demosaicing, colour smoothing and upscaling. The
+   Bayer crop keeps to the 2×2 grid, with a margin; the camera-geometry fit, lens
+   corrections and the exact crop are applied to the ×2 RGB afterwards.
+
+**Expectations.** Against the current pipeline, mostly cleaner fine edges and colour and no
+demosaicing speckle, not a different class of image. A single RAW holds real new detail
+for perhaps ×1.3–1.5; beyond that a faithful model stays soft and a less faithful one
+invents detail. The High Res Shot pairs show where that limit lies for this camera and lens.
