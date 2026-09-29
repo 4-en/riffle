@@ -127,3 +127,20 @@ def test_duplicates_need_clips_agreement(indexed, conn):
     save_embeddings(indexed, E, ids)
     group_duplicates(conn, indexed)
     assert photo(conn, "IMG_0002.jpg")["dupe_group"] == photo(conn, "IMG_0002_edit.png")["dupe_group"] is not None
+
+
+def test_duplicate_grouping_is_skipped_when_nothing_changed(indexed, conn):
+    """Comparing every pair of hashes takes a while in a large library: an index run with
+    no new hashes or embeddings leaves the groups as they are."""
+    from riffle.dupes import group_duplicates
+
+    a = photo(conn, "IMG_0002.jpg")["id"]
+    groups = group_duplicates(conn, indexed)
+    conn.execute("UPDATE photos SET dupe_group = 12345 WHERE id = ?", (a,))  # a marker, left alone if skipped
+    conn.commit()
+    assert group_duplicates(conn, indexed) >= groups
+    assert photo(conn, "IMG_0002.jpg")["dupe_group"] == 12345
+    conn.execute("UPDATE photos SET phash = '0000000000000000' WHERE id = ?", (a,))  # a hash changed
+    conn.commit()
+    group_duplicates(conn, indexed)
+    assert photo(conn, "IMG_0002.jpg")["dupe_group"] != 12345

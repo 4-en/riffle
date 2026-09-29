@@ -713,3 +713,25 @@ def store_generated(
         return n
     finally:
         conn.close()
+
+
+# ---- moving a photo's data to new content ---------------------------------------------
+
+# Every table keyed by a photo's content hash: when the file's content changes on purpose
+# (edits baked in), its rows move to the new hash.
+SHA_TABLES = ("flags", "exported", "custom_tag_examples", "custom_tag_negatives", "captions", "fixed_tags", "photo_text")
+
+
+def migrate_sha(path: str | Path, old: str, new: str) -> int:
+    """Move everything recorded for content ``old`` to ``new`` (rows already there for
+    ``new`` win). Returns how many rows moved."""
+    conn = connect(path)
+    try:
+        moved = 0
+        with conn:
+            for table in SHA_TABLES:
+                moved += conn.execute(f"UPDATE OR IGNORE {table} SET sha256 = ? WHERE sha256 = ?", (new, old)).rowcount
+                conn.execute(f"DELETE FROM {table} WHERE sha256 = ?", (old,))
+        return moved
+    finally:
+        conn.close()

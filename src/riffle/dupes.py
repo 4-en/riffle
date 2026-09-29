@@ -80,9 +80,10 @@ _POPCOUNT = np.array([bin(i).count("1") for i in range(256)], dtype=np.uint8)
 
 def hamming(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Hamming distances between two arrays of uint64 hashes, shape (len(a), len(b))."""
-    ab = a.astype(">u8").view(np.uint8).reshape(len(a), 8)
-    bb = b.astype(">u8").view(np.uint8).reshape(len(b), 8)
-    return _POPCOUNT[ab[:, None, :] ^ bb[None, :, :]].sum(axis=2, dtype=np.uint16)
+    x = a.astype(np.uint64)[:, None] ^ b.astype(np.uint64)[None, :]
+    if hasattr(np, "bitwise_count"):  # numpy 2: a popcount per 64-bit word
+        return np.bitwise_count(x)
+    return _POPCOUNT[x.astype(">u8").view(np.uint8).reshape(*x.shape, 8)].sum(axis=2, dtype=np.uint16)
 
 
 def group_pairs(n: int, pairs: np.ndarray) -> list[int]:
@@ -102,7 +103,7 @@ def group_pairs(n: int, pairs: np.ndarray) -> list[int]:
     return [find(i) for i in range(n)]
 
 
-def group_duplicates(conn: sqlite3.Connection, cfg: Config, chunk: int = 2048) -> int:
+def group_duplicates(conn: sqlite3.Connection, cfg: Config, chunk: int = 1024) -> int:
     """Assign dupe_group (lowest photo id of the group) or NULL. Returns number of groups.
 
     A pair is a duplicate when its perceptual hashes are close and, when both photos are
@@ -111,23 +112,42 @@ def group_duplicates(conn: sqlite3.Connection, cfg: Config, chunk: int = 2048) -
     in a large library (95,000 images: 29 % of the pairs less than 0.9 alike, groups
     chained across folders up to 48 images); with CLIP's agreement, groups spanning
     folders fell from 41 to 11 (copies of one image in two folders)."""
+    import hashlib
+
     rows = conn.execute(
         "SELECT id, phash FROM photos WHERE status = 'ok' AND phash IS NOT NULL ORDER BY id"
     ).fetchall()
-    conn.execute("UPDATE photos SET dupe_group = NULL")
-    if len(rows) < 2:
-        conn.commit()
-        return 0
+    # Nothing to redo when the hashes, the embeddings and the thresholds are as last time
+    # (comparing every pair takes a while in a large library).
+    model_id = cfg.model.model_id
+    sig = hashlib.sha1()
+    sig.update(f"{model_id} {cfg.stacks.min_similarity} {cfg.phash_max_distance}\n".encode())
+    sig.update(",".join(f"{r['id']}:{r['phash']}" for r in rows).encode())
+    sig.update(",".join(f"{r[0]}:{r[1]}" for r in conn.execute(
+        "SELECT photo_id, sha256 FROM embedded WHERE model_id = ? ORDER BY photo_id", (model_id,))).encode())
+    from .embed import embedding_paths
+
+    for path in embedding_paths(cfg, model_id):
+        if path.exists():
+            st = path.stat()
+            sig.update(f"{path.name} {st.st_size} {st.st_mtime_ns}\n".encode())
+    sig = sig.hexdigest()
+    last = conn.execute("SELECT value FROM meta WHERE key = 'dupes'").fetchone()
+    if last is not None and last[0] == sig:
+        return conn.execute(
+            "SELECT COUNT(DISTINCT dupe_group) FROM photos WHERE status = 'ok' AND dupe_group IS NOT NULL"
+        ).fetchone()[0]
+
     ids = np.array([r["id"] for r in rows], dtype=np.int64)
     hashes = np.array([int(r["phash"], 16) for r in rows], dtype=np.uint64)
 
-    pairs = []
+    # Each hash against those after it (half of all pairs).
+    pairs = [np.zeros((0, 2), np.int64)]
     for start in range(0, len(hashes), chunk):
-        d = hamming(hashes[start : start + chunk], hashes)
+        d = hamming(hashes[start : start + chunk], hashes[start:])
         i, j = np.nonzero(d <= cfg.phash_max_distance)
-        i = i + start
         mask = i < j
-        pairs.append(np.stack([i[mask], j[mask]], axis=1))
+        pairs.append(np.stack([i[mask] + start, j[mask] + start], axis=1))
     pairs = np.concatenate(pairs)
     if len(pairs):
         from .embed import load_embeddings
@@ -149,7 +169,12 @@ def group_duplicates(conn: sqlite3.Connection, cfg: Config, chunk: int = 2048) -
     sizes: dict[int, int] = {}
     for r in roots:
         sizes[r] = sizes.get(r, 0) + 1
-    updates = [(int(ids[r]), int(ids[k])) for k, r in enumerate(roots) if sizes[r] > 1]
-    conn.executemany("UPDATE photos SET dupe_group = ? WHERE id = ?", updates)
-    conn.commit()
+    groups = {int(ids[k]): int(ids[r]) for k, r in enumerate(roots) if sizes[r] > 1}
+    # Written at the end, and only what changed: the catalogue stays writable meanwhile.
+    before = {r[0]: r[1] for r in conn.execute("SELECT id, dupe_group FROM photos WHERE dupe_group IS NOT NULL")}
+    updates = [(g, pid) for pid, g in groups.items() if before.get(pid) != g]
+    updates += [(None, pid) for pid in before if pid not in groups]
+    with conn:
+        conn.executemany("UPDATE photos SET dupe_group = ? WHERE id = ?", updates)
+        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('dupes', ?)", (sig,))
     return sum(1 for s in sizes.values() if s > 1)

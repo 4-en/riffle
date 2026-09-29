@@ -288,7 +288,7 @@
           >
             <img
               src={item.thumb}
-              srcset={large ? `${item.thumb} 320w, /previews/${item.id}.jpg 1600w` : undefined}
+              srcset={large ? `${item.thumb} 320w, /previews/${item.id}.jpg${item.thumb.includes('?') ? item.thumb.slice(item.thumb.indexOf('?')) : ''} 1600w` : undefined}
               sizes={large ? `${Math.round(tile * 1.5)}px` : undefined}
               alt={item.rel_path}
               loading="lazy"
@@ -306,6 +306,9 @@
               {/if}
               {#if item.has_raw}
                 <span class="rounded bg-black/70 px-1 text-[10px] font-semibold tracking-wide text-amber-300">RAW</span>
+              {/if}
+              {#if item.edited}
+                <span class="rounded bg-black/70 px-1 text-[10px] text-violet-200" title="Edited (the original is kept)">✎</span>
               {/if}
               {#if item.dupe_count > 1 && view.collapse !== 'stacks'}
                 <span class="rounded bg-black/70 px-1 text-[10px] font-semibold text-neutral-200">×{item.dupe_count}</span>

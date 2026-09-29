@@ -38,6 +38,9 @@
   let withCaptions = $state(setting('withCaptions', false));
   let captionFormat = $state(setting('captionFormat', 'embed')); // embed | xmp | txt | jsonl
   let captionText = $state(setting('captionText', 'tags')); // for txt: tags | caption | both
+  // Edited photos (edits.py) are exported with their edits unless originals is on; upscale 2 | 4 enlarges every image.
+  let originals = $state(false);
+  let upscale = $state(0);
   let underscores = $state(setting('underscores', false));
   let withText = $state(setting('withText', false)); // for txt: the text read from the photo too
   // Picks in the chosen scope that were not exported before.
@@ -80,6 +83,8 @@
         underscores,
         with_text: withText,
         numbered: (kind === 'walk' || kind === 'curate') && numbered,
+        originals,
+        upscale,
         ...(draft ? { photo_ids: draft.ids } : {}),
       });
       while (status.running) {
@@ -170,6 +175,26 @@
         <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Layout</legend>
         <label class={radio}><input type="radio" bind:group={structure} value="flat" class="mt-0.5" /> All files in one folder</label>
         <label class={radio}><input type="radio" bind:group={structure} value="folders" class="mt-0.5" /> Keep the source folders</label>
+      </fieldset>
+
+      <fieldset disabled={running} class="space-y-1">
+        <legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Edits and size</legend>
+        <label class={radio}>
+          <input type="checkbox" bind:checked={originals} class="mt-0.5" />
+          <span>
+            Export edited photos as their originals, without the edits
+            <span class="block text-xs text-neutral-500">Otherwise they are written with their edits. RAW files are always copied as they are (edits do not apply to them).</span>
+          </span>
+        </label>
+        <label class="{radio} items-center">
+          <span class="shrink-0">Upscale</span>
+          <select bind:value={upscale} class="rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-xs">
+            <option value={0}>No</option>
+            <option value={2}>×2</option>
+            <option value={4}>×4</option>
+          </select>
+          <span class="text-xs text-neutral-500">With an AI upscaler (Real-ESRGAN; set in the editor). Slow: seconds per photo on a GPU.</span>
+        </label>
       </fieldset>
 
       {#if hasHistory}

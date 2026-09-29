@@ -3,7 +3,7 @@
 // EXIF filters, keyed by their API query parameter. Arrays are OR-combined values,
 // except fixed tags (ftags: photos must have all; exclude_ftags: none of them).
 const FILTER_ARRAYS = ['camera', 'lens', 'orientation', 'flag', 'country', 'region', 'place', 'loc_source', 'folder', 'ftags', 'exclude_ftags'];
-const FILTER_SCALARS = ['date_from', 'date_to', 'focal_min', 'focal_max', 'aperture_min', 'aperture_max', 'iso_min', 'iso_max', 'mp_min', 'mp_max', 'gps', 'exported'];
+const FILTER_SCALARS = ['date_from', 'date_to', 'focal_min', 'focal_max', 'aperture_min', 'aperture_max', 'iso_min', 'iso_max', 'mp_min', 'mp_max', 'gps', 'exported', 'edited'];
 
 export function emptyFilters() {
   return Object.fromEntries([...FILTER_ARRAYS.map((k) => [k, []]), ...FILTER_SCALARS.map((k) => [k, ''])]);
@@ -56,6 +56,7 @@ export const view = $state({
   exporting: false, // export dialog open: true (picks) | {ids, fresh} (a Curate draft) (not in the URL)
   curate: false, // Curate view open (not in the URL)
   captioning: null, // Captions & tags view: {ids} (not in the URL)
+  editing: null, // the editor: {ids, start} (not in the URL)
   discover: null, // Discover view, starting from {id} (not in the URL)
   help: false, // how-to guide open (not in the URL)
   photo: null, // open detail photo id

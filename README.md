@@ -18,6 +18,7 @@ You search and browse by image content, cull by picking and rejecting photos, co
 - **Taste model**: once you have flagged enough, Riffle can sort by what you tend to keep. It only orders photos; it never flags them.
 - **Curate**: drafts a small, varied selection (photo book, exhibition) from the current filters, steered by size, variety, time and place spread, uniqueness, search, colour, and style.
 - **Discover**: a walk through the library from one photo to others related in one way each (subject, light, colour, composition, place, time), with the path kept for a slideshow, export, or Curate.
+- **Editing** (experimental): crop and straighten, heal, remove things or people, replace with a prompt, and upscale on export, without ever changing your files (unless you bake edits in).
 - **Export** of picks, or of any selection, as images, images + RAWs, or RAWs only. Copies only; originals are never touched.
 - **Location from your phone**: a Google Timeline, Records.json, or GPX export places photos without GPS, and can add the position to exported copies.
 - Duplicate detection (perceptual hash), RAW matching by file name, EXIF metadata.
@@ -166,6 +167,24 @@ Select photos and click **Caption…** in the selection bar (or right-click → 
 - **Fixed tags** in the sidebar filter like the other tags. Search puts photos whose tag, caption, or read text (or its translation) contains the search words first, after file and folder name matches (the **Names** switch turns all of these off). Chinese or Japanese words match anywhere in the text: `北京` finds `欢迎来到北京`.
 - **Export** (off by default): the caption and tags into the copies' XMP (`dc:description`, `dc:subject`, which photo apps read; a sidecar where that is not possible), as `.xmp` sidecars, as a `.txt` with the image's name (tags, the caption, or both; optionally with spaces instead of `_`), or as one `metadata.jsonl` (Hugging Face imagefolder, with the read text as `ocr_text` and `ocr_translation`). **Text in the photo and its translation** adds the read text to the others as well: after the caption in the XMP description, or on their own lines in the `.txt`.
 - Stored in `selections.sqlite3` by file content, per profile.
+
+## Editing (experimental)
+
+Select photos and click **Edit…** (or **✎ Edit…** in the photo view). Edits never change your files: each photo keeps an edit list on top of its untouched original, and the library, search, and exports show the edited version.
+
+- **Brush**, then **Heal** (spots, dust, small blemishes; OpenCV, instant), **Remove** (objects and people, filled with what would be behind them; LaMa), or **Replace** (describe what should be there; Stable Diffusion XL inpainting, 1–4 candidates to choose from).
+- **Edit with a prompt** (Qwen-Image 2.1): say what to change ("remove the tray at the bottom right", "make it golden hour"). With nothing painted it edits the whole photo; with an area painted only that area changes, and the rest stays pixel for pixel. The model works at about 1 megapixel, in the aspect ratio of its own closest to the photo's; the photo's own fine detail is put back wherever the edit left it unchanged. Results vary with the wording and the seed, so ask for 2–4 candidates.
+- **Crop**: quarter turns, straightening, a crop with aspect presets, a flip.
+- **View**: the result; hold `\` for the original (also in the photo view).
+- **Steps**: every edit can be turned off or deleted; **Restore original** turns them all off.
+- **Bake into file…** writes the edits into the file itself, after a warning. The original is kept in `originals-backup/` in your data folder unless you switch that off; your flags, tags and captions move with it to the new file content.
+- **Export** writes edited photos with their edits, or as originals; **Upscale ×2 / ×4** enlarges every exported image (Real-ESRGAN). RAW files are never edited.
+
+Each tool offers recommended models and accepts another: a Hugging Face repository, a file in one (`org/repo:file.pt`), or a local path (Settings are stored under `editing:` in `config.yaml`). Heal and Crop work out of the box; the AI tools need `pip install -e ".[edit]"`, and Replace and Edit with a prompt an NVIDIA GPU. Models download on first use (LaMa 0.2 GB, SDXL inpainting 6.9 GB, Real-ESRGAN 67 MB, Qwen-Image 2.1 about 23 GB).
+
+Qwen-Image 2.1 needs a diffusers newer than 0.40 (until one is released: `pip install git+https://github.com/huggingface/diffusers`). By default it uses a 4-bit GGUF of the official weights with the official text encoder, which waits in system memory while the image model runs (about 18 GB of RAM): about a minute per candidate on an RTX 3090. The Q8_0 file, the full model, or any GGUF or safetensors transformer file can be chosen instead.
+
+Edits are shared by all profiles and stored with your data (`edits.sqlite3` and `edits/` next to `selections.sqlite3`), by file content like the flags.
 
 ## Profiles
 

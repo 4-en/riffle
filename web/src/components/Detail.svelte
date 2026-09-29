@@ -8,6 +8,7 @@
   let { id, hasPrev, hasNext, onstep, ontimeline, onflag } = $props();
 
   let photo = $state(null);
+  let showOriginal = $state(false); // an edited photo's original, while \ is held
   const flag = $derived(photo ? flagOf(photo) : null);
   // The grouping level each "Show" button uses: the current one of that kind, or the finest.
   const dateMode = $derived(DATE_GROUPS.includes(view.group) ? view.group : 'day');
@@ -63,6 +64,11 @@
   });
 </script>
 
+<svelte:window
+  onkeydown={(e) => e.key === '\\' && photo?.edited && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) && (showOriginal = true)}
+  onkeyup={(e) => e.key === '\\' && (showOriginal = false)}
+/>
+
 <div class="fixed inset-0 z-20 flex bg-black/80 backdrop-blur-sm" role="dialog" aria-modal="true">
   <button class="absolute inset-0 cursor-default" aria-label="Close" onclick={close}></button>
 
@@ -70,10 +76,15 @@
   <div class="relative flex min-w-0 flex-1 items-center justify-center p-4">
     {#if photo?.id === id}
       <img
-        src={photo.preview}
+        src={showOriginal && photo.original_preview ? photo.original_preview : photo.preview}
         alt={photo.rel_path}
         class="relative max-h-full max-w-full object-contain shadow-2xl"
       />
+      {#if photo.edited}
+        <div class="absolute left-3 top-3 text-xs">
+          <span class="rounded bg-black/60 px-2 py-1 text-neutral-300">{showOriginal ? 'Original' : 'Edited · hold \\ for the original'}</span>
+        </div>
+      {/if}
     {:else}
       <img src="/thumbs/{id}.jpg" alt="" class="relative max-h-full max-w-full object-contain opacity-60 blur-[1px]" />
     {/if}
@@ -114,6 +125,24 @@
             class="flex-1 rounded px-2 py-1.5 text-xs font-medium {flag === 'reject' ? 'bg-red-600 text-white' : 'border border-neutral-700 text-red-300 hover:bg-red-950'}"
             title="Reject (X)"
             onclick={() => onflag(flag === 'reject' ? null : 'reject')}>✕ Reject</button
+          >
+        </div>
+        <div class="flex items-center gap-1">
+          <button
+            class="flex-1 rounded border border-neutral-700 px-2 py-1.5 text-xs text-neutral-200 hover:bg-neutral-800"
+            title="Crop, heal, remove or change things (the original is kept)"
+            onclick={() => {
+              view.editing = { ids: [photo.id] };
+              view.photo = null;
+            }}>✎ Edit</button
+          >
+          <button
+            class="flex-1 rounded border border-neutral-700 px-2 py-1.5 text-xs text-neutral-200 hover:bg-neutral-800"
+            title="Write or generate a caption and tags"
+            onclick={() => {
+              view.captioning = { ids: [photo.id] };
+              view.photo = null;
+            }}>¶ Caption & tags</button
           >
         </div>
         <label class="flex items-center gap-2 text-xs text-neutral-400" title="After P / X / U, go to the next photo">

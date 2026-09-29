@@ -96,6 +96,8 @@ class PhotoFilter:
     gps: bool | None = None
     flag: list[str] = field(default_factory=list)  # needs the selections DB attached as "sel"
     exported: bool | None = None  # exported before (selections DB) or not
+    edited: bool | None = None  # has edits (edits.py) or not
+    edited_shas: list[str] = field(default_factory=list)  # (resolved by the server: the edited files' content)
     country: list[str] = field(default_factory=list)  # location keys (LOCATION_KEYS)
     region: list[str] = field(default_factory=list)
     place: list[str] = field(default_factory=list)
@@ -211,6 +213,9 @@ class PhotoFilter:
 
         if self.exported is not None and "exported" not in exclude:
             clauses.append(EXPORTED_EXPR if self.exported else f"NOT {EXPORTED_EXPR}")
+        if self.edited is not None and "edited" not in exclude:
+            clauses.append(f"p.sha256 {'IN' if self.edited else 'NOT IN'} (SELECT value FROM json_each(?))")
+            params.append(json.dumps(self.edited_shas))
 
         if self.flag and "flag" not in exclude:
             parts = []
@@ -244,6 +249,7 @@ def photo_filter(
     gps: bool | None = None,
     flag: list[str] = Query([]),
     exported: bool | None = None,
+    edited: bool | None = None,
     country: list[str] = Query([]),
     region: list[str] = Query([]),
     place: list[str] = Query([]),
@@ -297,6 +303,7 @@ def photo_filter(
         gps=gps,
         flag=list(dict.fromkeys(flag)),
         exported=exported,
+        edited=edited,
         country=list(dict.fromkeys(country)),
         region=list(dict.fromkeys(region)),
         place=list(dict.fromkeys(place)),
@@ -381,6 +388,13 @@ def facets(conn: sqlite3.Connection, flt: PhotoFilter, model_id: str) -> dict:
     w, p = where("exported")
     yes, total = conn.execute(f"SELECT COALESCE(SUM({EXPORTED_EXPR}), 0), COUNT(*) FROM photos p WHERE {w}", p).fetchone()
     out["exported"] = {"yes": yes, "no": total - yes}
+
+    w, p = where("edited")
+    yes, total = conn.execute(
+        f"SELECT COALESCE(SUM(p.sha256 IN (SELECT value FROM json_each(?))), 0), COUNT(*) FROM photos p WHERE {w}",
+        [json.dumps(flt.edited_shas), *p],
+    ).fetchone()
+    out["edited"] = {"yes": yes, "no": total - yes}
 
     w, p = where("exposure")
     sums = ", ".join(f"COALESCE(SUM({expr}), 0)" for expr in EXPOSURE.values())

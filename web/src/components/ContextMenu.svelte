@@ -120,6 +120,9 @@
   <button class={item} role="menuitem" onclick={() => run(() => (view.captioning = { ids: targets }))}>
     Caption {n > 1 ? `${n} photos` : 'this photo'}…
   </button>
+  <button class={item} role="menuitem" onclick={() => run(() => (view.editing = { ids: targets }))}>
+    Edit {n > 1 ? `${n} photos` : 'this photo'}…
+  </button>
   <button class={item} role="menuitem" onclick={() => run(() => (view.tagDialog = { mode: 'create', photoIds: targets }))}>
     Learn a tag from {n > 1 ? `${n} photos` : 'this photo'}…
   </button>

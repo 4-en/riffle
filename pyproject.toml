@@ -23,6 +23,7 @@ dependencies = [
     "platformdirs>=4.0",
     "scipy>=1.10",  # taste model (also used by reverse_geocode)
     "scikit-learn>=1.3",  # the Similar map's layout (t-SNE)
+    "opencv-python-headless>=4.8",  # the editor's Heal (inpainting without a model)
 ]
 
 [project.optional-dependencies]
@@ -34,6 +35,9 @@ captions = [
   "onnxruntime-gpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "onnxruntime; sys_platform != 'linux' or platform_machine != 'x86_64'",
 ]
+# The editor's AI tools (editing.py): LaMa and the upscalers (spandrel), Stable Diffusion
+# inpainting (diffusers). Crop and Heal (OpenCV) need none of it.
+edit = ["diffusers>=0.30", "spandrel>=0.4", "transformers>=4.44", "accelerate", "gguf>=0.10"]
 dev = ["pytest>=8", "pytest-xdist>=3.5", "httpx>=0.27"]
 
 [project.scripts]

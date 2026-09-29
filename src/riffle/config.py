@@ -77,6 +77,8 @@ class Config:
     # Phone location history exports (Google Timeline JSON, Records.json, GPX): input, referenced in place.
     location_history: list[Path] = field(default_factory=list)
     location: LocationConfig = field(default_factory=LocationConfig)
+    # The editor's models per tool (editing.py): a catalogue key, a Hub repo, or a path ("": the default).
+    editing: dict[str, str] = field(default_factory=dict)
     path: Path | None = None  # the config file, when loaded from one
 
     @property
@@ -170,6 +172,7 @@ def config_from_dict(raw: dict, root: Path) -> Config:
             max_gap_minutes=float((raw.get("location") or {}).get("max_gap_minutes", 30)),
             min_population=int((raw.get("location") or {}).get("min_population", 0)),
         ),
+        editing={str(k): str(v) for k, v in (raw.get("editing") or {}).items() if v is not None},
     )
 
 
@@ -257,6 +260,13 @@ def set_model(cfg: Config, name: str, pretrained: str, stack_similarity: float) 
         _write_scalars(cfg, "stacks", {"min_similarity": stack_similarity})
     cfg.model = dataclasses.replace(cfg.model, name=name, pretrained=pretrained)
     cfg.stacks = dataclasses.replace(cfg.stacks, min_similarity=stack_similarity)
+
+
+def set_editing_model(cfg: Config, tool: str, choice: str) -> None:
+    """The model an editing tool uses (``editing:`` in the config file, and ``cfg``)."""
+    if cfg.path is not None:
+        _write_scalars(cfg, "editing", {tool: choice})
+    cfg.editing = {**cfg.editing, tool: choice}
 
 
 def set_location_history(cfg: Config, files: list[Path]) -> None:

@@ -52,6 +52,7 @@ class _File:
     content: bytes | None = None  # a sidecar's content
     location: str = ""  # exif | xmp | sidecar: how the position was added
     caption: str = ""  # xmp | sidecar | txt: how the caption and tags were added
+    original: Path | None = None  # a rendered copy's original file (edited or upscaled): src is the rendering
 
     @property
     def out_size(self) -> int:
@@ -259,6 +260,39 @@ def _unique(path: Path) -> Path:
         n += 1
 
 
+def render_images(conn, cfg: Config, files: list[_File], originals: bool, upscale: int, report=print) -> int:
+    """Replace the images of edited photos (and every image, when upscaling) with a
+    rendering in a temporary folder, named like the original, so the rest of the
+    export (location, captions, targets) works as for any file. Returns how many."""
+    from .edits import _save_like, list_edits, render
+    from .images import open_image
+
+    if upscale not in (0, 2, 4):
+        raise ExportError("upscale must be 2 or 4")
+    shas = dict(conn.execute("SELECT id, sha256 FROM photos WHERE id IN (SELECT value FROM json_each(?))",
+                             (json.dumps(sorted({f.photo_id for f in files})),)).fetchall())
+    folder = cfg.data_dir / "export-render"
+    done = 0
+    for f in files:
+        if f.kind != "image":
+            continue
+        edit_list = [] if originals or not cfg.selections_path else list_edits(cfg.selections_path, shas.get(f.photo_id, ""))
+        if not any(e.enabled for e in edit_list) and not upscale:
+            continue
+        im = render(f.src, edit_list) if edit_list else open_image(f.src)
+        if upscale:
+            from .editing import upscale as enlarge
+
+            report(f"upscaling {f.src.name} ×{upscale}")
+            im = enlarge(im, upscale, cfg.editing.get("upscale"))
+        out = folder / str(f.photo_id) / f.src.name
+        out.parent.mkdir(parents=True, exist_ok=True)
+        _save_like(im, f.src, out)
+        f.original, f.src, f.size = f.src, out, out.stat().st_size
+        done += 1
+    return done
+
+
 def run_export(
     cfg: Config,
     progress=None,
@@ -276,10 +310,14 @@ def run_export(
     underscores: bool = False,
     with_text: bool = False,
     numbered: bool = False,
+    originals: bool = False,
+    upscale: int = 0,
 ) -> dict:
     """Copy the files. Runs as a BackgroundJob; returns the summary. The export
     history goes to ``selections_path`` (the profile active when it started),
-    else the config's."""
+    else the config's. Edited photos are rendered with their edits (edits.py) unless
+    ``originals``; ``upscale`` (2 or 4) enlarges every image (editing.upscale). RAWs are
+    always copied as they are."""
     from . import db
 
     from . import selections
@@ -294,6 +332,7 @@ def run_export(
     conn = db.connect(cfg.db_path)
     try:
         files, without_raw, unreachable = plan_files(conn, photo_ids, content, raw_fallback)
+        rendered = render_images(conn, cfg, files, originals, upscale, report)
         texts: dict[int, tuple[str, list[str]]] = {}
         if captions:
             found = selections.captions_for(conn, sel, photo_ids)
@@ -379,10 +418,12 @@ def run_export(
         w = csv.writer(fh)
         w.writerow(["photo_id", "kind", "source", "exported", "status", "location", "caption"])
         for f in files:
-            src = "" if f.kind in ("sidecar", "caption") else str(f.src)
+            src = "" if f.kind in ("sidecar", "caption") else str(f.original or f.src)
             w.writerow([f.photo_id, f.kind, src, str(f.target), f.status, f.location, f.caption])
 
+    shutil.rmtree(cfg.data_dir / "export-render", ignore_errors=True)  # the renderings, copied now
     summary = {
+        "rendered": rendered,  # images written with their edits (or upscaled)
         "marked": marked,
         "folder": str(dest),
         "photos": len(photo_ids),

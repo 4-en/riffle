@@ -118,6 +118,41 @@ class FolderIn(BaseModel):
     path: str
 
 
+class GeometryIn(BaseModel):
+    rot90: int = 0  # quarter turns clockwise
+    angle: float = 0.0  # straightening, degrees clockwise
+    crop: list[float] | None = None  # x, y, w, h as fractions of the turned, straightened frame
+    flip_h: bool = False
+
+
+class EditRunIn(BaseModel):
+    tool: str  # heal | remove | inpaint | instruct (editing.TOOLS)
+    mask: str  # a PNG data URL, any size (scaled to the photo); may be empty for instruct
+    prompt: str = ""
+    negative: str = ""
+    seed: int | None = None
+    candidates: int = 1
+    steps: int | None = None  # the tool's default (editing.STEPS)
+    strength: float = 0.99
+
+
+class EditKeepIn(BaseModel):
+    token: str
+    index: int = 0
+
+
+class EditToggleIn(BaseModel):
+    enabled: bool
+
+
+class BakeIn(BaseModel):
+    backup: bool = True
+
+
+class EditModelIn(BaseModel):
+    model: str  # a catalogue key, a Hub repo ("org/model" or "org/model:file"), or a path
+
+
 class FolderRemove(FolderIn):
     # False: hide it in this profile (its data kept). True: its photos are gone (deleted, or
     # moved and added from the new place): off every profile, and their data dropped.
@@ -245,6 +280,8 @@ class ExportIn(BaseModel):
     underscores: bool = False  # for txt and jsonl: write tags with spaces instead of "_"
     with_text: bool = False  # also the text read from the photo and its translation (XMP description, txt)
     numbered: bool = False  # prefix the files with their position in photo_ids ("01_…": a Discover walk)
+    originals: bool = False  # edited photos as their originals, without the edits
+    upscale: int = 0  # 2 or 4: enlarge every image (editing.upscale)
 
 
 COLLAPSE = ("dupes", "stacks", "none")
@@ -394,6 +431,7 @@ def create_app(
         from .index import run_index
 
         run = index_runner or run_index
+        apply_edit_invalidations()
         if model is None:
             return run(cfg_, progress=progress, report=report)
         return prepare_model(run, progress, report, **model)
@@ -421,6 +459,112 @@ def create_app(
     taste_store = TasteStore(cfg, sel_path(), state["profile"])
     export_job = BackgroundJob(cfg, run_export)
     caption_job = BackgroundJob(cfg, captioning.run_captioning)
+
+    # ---- editing (edits.py: the edit lists; editing.py: the tools) -------------------
+    # Candidates from a tool run wait here until one is kept: token -> {photo_id, sha, …}.
+    edit_candidates: dict[str, dict] = {}
+    # Photos whose edits changed, for the next index run to clear their measures.
+    edits_stale: set[int] = set()
+    edits_stale_lock = threading.Lock()
+
+    def edits_home():
+        """The shared edits file lives beside the default profile's flags."""
+        return cfg.selections_path
+
+    def photo_file(conn, photo_id: int):
+        r = conn.execute("SELECT id, source, rel_path, sha256 FROM photos WHERE id = ? AND status = 'ok'", (photo_id,)).fetchone()
+        if r is None:
+            raise HTTPException(404, "photo not found")
+        return r, Path(r["source"]) / r["rel_path"]
+
+    def edits_changed(photo_id: int) -> None:
+        """Re-render the photo's thumbnail and preview now, and let indexing redo its
+        measures. The catalogue write is left to the index run (queued behind a running
+        one), since a run can hold the write lock for longer than a request should wait."""
+        from . import edits
+
+        conn = db.connect_readonly(cfg.db_path)
+        try:
+            edits.render_derivatives(conn, cfg, photo_id)
+        finally:
+            conn.close()
+        with edits_stale_lock:
+            edits_stale.add(photo_id)
+        job.start()
+
+    def apply_edit_invalidations() -> None:
+        """At the start of an index run: clear the measures of photos edited since the last."""
+        from . import edits
+
+        with edits_stale_lock:
+            ids = sorted(edits_stale)
+            edits_stale.clear()
+        if not ids:
+            return
+        conn = db.connect(cfg.db_path)
+        try:
+            edits.invalidate(conn, ids)
+        finally:
+            conn.close()
+
+    def run_edit_tool(cfg_, progress=None, report=print, photo_id: int = 0, token: str = "", body: dict | None = None):
+        """In the background: run a retouching tool on the masked area of the photo (its
+        original with its retouches so far), keeping the candidates for the editor."""
+        import base64
+        import io
+
+        from PIL import Image
+
+        from . import edits, editing
+
+        body = body or {}
+        conn = db.connect_readonly(cfg.db_path)
+        try:
+            r, path = photo_file(conn, photo_id)
+        finally:
+            conn.close()
+        report(f"{editing.TOOLS[body['tool']].label}: preparing the photo")
+        edit_list = edits.list_edits(edits_home(), r["sha256"])
+        base = edits.render(path, edit_list, geometry=False)
+        drawn = Image.open(io.BytesIO(base64.b64decode(body["mask"].split(",", 1)[-1])))
+        drawn.load()
+        # The editor paints on a transparent canvas: its alpha is the mask.
+        mask = drawn.getchannel("A") if "A" in drawn.getbands() else drawn.convert("L")
+        choice = cfg.editing.get(body["tool"])
+        label, spec = editing.resolve(body["tool"], choice)
+        report(f"running {label}")
+        steps = body.get("steps") or editing.STEPS.get(body["tool"], 30)
+        seed = body.get("seed")
+        if seed is None:
+            seed = int(time.time()) % 1_000_000
+        results = editing.retouch(
+            body["tool"], base, mask, choice, prompt=body.get("prompt", ""), negative=body.get("negative", ""),
+            seed=seed, candidates=body.get("candidates", 1), steps=steps, strength=body.get("strength", 0.99),
+        )
+        # Previews of each candidate: the retouched original at preview size with it pasted in.
+        folder = cfg.data_dir / "edit-candidates" / token
+        folder.mkdir(parents=True, exist_ok=True)
+        small = edits.render(path, edit_list, max_edge=1600, geometry=False)
+        scale = small.width / base.width
+        for k, res in enumerate(results):
+            x, y, w, h = res.bbox
+            im = small.copy()
+            size = (max(1, round(w * scale)), max(1, round(h * scale)))
+            im.paste(res.patch.resize(size, Image.Resampling.LANCZOS), (round(x * scale), round(y * scale)),
+                     res.mask.resize(size, Image.Resampling.BILINEAR))
+            im.save(folder / f"{k}.jpg", "JPEG", quality=88)
+        edit_candidates.clear()  # (one run's candidates at a time)
+        edit_candidates[token] = {
+            "photo_id": photo_id, "sha": r["sha256"], "size": list(base.size), "results": results, "tool": body["tool"],
+            "params": {"model": label, "spec": spec, "prompt": body.get("prompt", ""), "negative": body.get("negative", ""),
+                       "seed": seed, "steps": steps, "strength": body.get("strength", 0.99)},
+            "source": r["source"], "rel_path": r["rel_path"],
+        }
+        report("done")
+        return {"token": token, "photo_id": photo_id, "candidates": [f"/api/edits/candidates/{token}/{k}.jpg" for k in range(len(results))],
+                "seed": seed}
+
+    edit_job = BackgroundJob(cfg, run_edit_tool)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -450,6 +594,10 @@ def create_app(
         warmed = None
         while not state.get("stopping"):
             time.sleep(3)
+            if not edit_job.running:
+                from . import editing
+
+                editing.release_idle()  # editing models unused for a while
             if state["model"] == "loading" or job.running:
                 continue
             if state.get("index") is None:
@@ -675,6 +823,9 @@ def create_app(
         """The query-string filter within the profile's library, with custom tags
         resolved to their members."""
         flt.library = current_library()
+        from .edits import edited_shas
+
+        flt.edited_shas = sorted(edited_shas(cfg.selections_path))
         if flt.ctags or flt.exclude_ctags:
             members = custom_tag_members(conn, index)
             flt.ctag_members = [members.get(t, []) for t in flt.ctags]
@@ -687,11 +838,14 @@ def create_app(
         if not ids:
             return []
         marks = ",".join("?" * len(ids))
+        from .edits import versions
+
+        edited = versions(cfg.selections_path)  # sha -> edit version, for the edited photos
         # Stack and duplicate counts within the profile's library (its photos only).
         lib_d, params_d = current_library().sql("d")
         lib_s, params_s = current_library().sql("s")
         rows = conn.execute(
-            f"""SELECT p.id, p.source, p.rel_path, p.width, p.height, p.size_bytes, p.taken_at, p.dupe_group,
+            f"""SELECT p.id, p.source, p.rel_path, p.sha256, p.width, p.height, p.size_bytes, p.taken_at, p.dupe_group,
                        p.stack_id, p.sharpness, p.clip_highlights, p.clip_shadows, {FLAG_EXPR} AS flag,
                        {EXPORTED_EXPR} AS exported,
                        EXISTS (SELECT 1 FROM raws r WHERE r.photo_id = p.id) AS has_raw,
@@ -726,7 +880,8 @@ def create_app(
                 "flag": r["flag"],
                 "exported": bool(r["exported"]),
                 "taste": taste_store.score_of(r["id"]),
-                "thumb": f"/thumbs/{r['id']}.jpg",
+                "thumb": f"/thumbs/{r['id']}.jpg" + (f"?v={edited[r['sha256']]}" if r["sha256"] in edited else ""),
+                "edited": r["sha256"] in edited,
             }
             if scores is not None:
                 item["score"] = round(scores[pid], 4)
@@ -1490,7 +1645,13 @@ def create_app(
         photo.pop("accents", None)  # colors.accents_of; for Curate and Discover
         photo["path"] = str(Path(r["source"]) / r["rel_path"])
         photo["thumb"] = f"/thumbs/{photo_id}.jpg"
-        photo["preview"] = f"/previews/{photo_id}.jpg"
+        from .edits import versions
+
+        edit_version = versions(cfg.selections_path).get(r["sha256"])
+        photo["edited"] = edit_version is not None
+        photo["preview"] = f"/previews/{photo_id}.jpg" + (f"?v={edit_version}" if edit_version else "")
+        if edit_version and (cfg.previews_dir / f"{photo_id}.original.jpg").exists():
+            photo["original_preview"] = f"/previews/{photo_id}.original.jpg"
         photo["offline"] = not Path(photo["path"]).exists()  # its drive unplugged, say: shown from the cache
         photo["tags"] = [
             dict(t)
@@ -2417,6 +2578,8 @@ def create_app(
             underscores=body.underscores,
             with_text=body.with_text,
             numbered=body.numbered and body.photo_ids is not None,
+            originals=body.originals,
+            upscale=body.upscale,
         )
         if not started:
             raise HTTPException(409, "an export is already running")
@@ -2721,6 +2884,204 @@ def create_app(
             "indexed": indexed,  # indexed for some profile: adding it is instant
         }
 
+    # ---- editing -------------------------------------------------------------------------
+
+    @app.get("/api/editing/tools")
+    def editing_tools():
+        """The tools, their models (the catalogue and the one chosen), and whether each can
+        run here (the extra installed, a GPU)."""
+        from . import editing
+
+        out = []
+        for t in editing.TOOLS.values():
+            chosen = cfg.editing.get(t.key, "")
+            label, spec = editing.resolve(t.key, chosen)
+            out.append({
+                "key": t.key, "label": t.label, "description": t.description, "prompt": t.prompt,
+                "mask_optional": t.mask_optional, "kind": t.kind,
+                "models": [m.as_dict() for m in t.models], "chosen": chosen or t.models[0].key,
+                "chosen_label": label, **editing.availability(t.key, chosen),
+            })
+        return {"tools": out}
+
+    @app.post("/api/editing/tools/{tool}", dependencies=[Depends(require_json)])
+    def choose_edit_model(tool: str, body: EditModelIn):
+        from . import editing
+        from .config import set_editing_model
+
+        if tool not in editing.TOOLS:
+            raise HTTPException(404, "no such tool")
+        set_editing_model(cfg, tool, body.model.strip())
+        return editing_tools()
+
+    @app.get("/api/edits/job")
+    def edit_job_status():
+        return edit_job.status()
+
+    @app.get("/api/edits/{photo_id}")
+    def get_edits(photo_id: int, conn=Depends(get_conn)):
+        """A photo's edit list, its upright size (edit coordinates are in it), and the
+        images the editor shows."""
+        from . import edits
+
+        r, path = photo_file(conn, photo_id)
+        items = edits.list_edits(edits_home(), r["sha256"])
+        version = edits.versions(edits_home()).get(r["sha256"], "0")
+        return {
+            "id": photo_id,
+            "rel_path": r["rel_path"],
+            "size": list(edits.upright_size(path)),
+            "edits": [e.as_dict() for e in items],
+            "edited": any(e.enabled for e in items),
+            "version": version,
+            "base": f"/api/edits/{photo_id}/base.jpg?v={version}",  # retouched, without the geometry
+            "preview": f"/previews/{photo_id}.jpg?v={version}",  # as the library shows it
+            "original": f"/previews/{photo_id}.original.jpg" if (cfg.previews_dir / f"{photo_id}.original.jpg").exists() else f"/previews/{photo_id}.jpg",
+            "has_raw": bool(conn.execute("SELECT 1 FROM raws WHERE photo_id = ?", (photo_id,)).fetchone()),
+        }
+
+    @app.get("/api/edits/{photo_id}/base.jpg")
+    def edit_base(photo_id: int, conn=Depends(get_conn)):
+        """The original with its enabled retouches but no geometry, at preview size: what
+        the editor paints on (so masks are in the original's frame)."""
+        import io
+
+        from fastapi.responses import Response
+
+        from . import edits
+
+        r, path = photo_file(conn, photo_id)
+        im = edits.render(path, edits.list_edits(edits_home(), r["sha256"]), max_edge=1600, geometry=False)
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=88)
+        return Response(buf.getvalue(), media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/edits/{photo_id}/geometry", dependencies=[Depends(require_json)])
+    def set_geometry(photo_id: int, body: GeometryIn, conn=Depends(get_conn)):
+        """Set the photo's frame (quarter turns, straightening, crop, flip); all neutral
+        removes it."""
+        from . import edits
+
+        r, path = photo_file(conn, photo_id)
+        crop = body.crop
+        if crop is not None and (len(crop) != 4 or crop[2] <= 0 or crop[3] <= 0):
+            raise HTTPException(400, "crop is x, y, width, height as fractions of the frame")
+        neutral = body.rot90 % 4 == 0 and abs(body.angle) < 1e-6 and not body.flip_h and (crop is None or crop == [0, 0, 1, 1])
+        for e in edits.list_edits(edits_home(), r["sha256"]):
+            if e.kind == "geometry" and neutral:
+                edits.delete_edit(edits_home(), e.id)
+        if not neutral:
+            edits.add_edit(edits_home(), r["sha256"], "geometry",
+                           {"rot90": body.rot90 % 4, "angle": body.angle, "crop": crop, "flip_h": body.flip_h,
+                            "size": list(edits.upright_size(path))},
+                           source=r["source"], rel_path=r["rel_path"])
+        edits_changed(photo_id)
+        return get_edits(photo_id, conn)
+
+    @app.post("/api/edits/{photo_id}/run", dependencies=[Depends(require_json)])
+    def run_edit(photo_id: int, body: EditRunIn, conn=Depends(get_conn)):
+        """Run a retouching tool on the painted mask (in the background; see /api/edits/job).
+        The candidates wait until one is kept."""
+        import secrets
+
+        from . import editing
+
+        if body.tool not in editing.TOOLS or editing.TOOLS[body.tool].kind == "upscale":
+            raise HTTPException(400, "tool must be heal, remove, inpaint or instruct")
+        if editing.TOOLS[body.tool].kind == "instruct" and not body.prompt.strip():
+            raise HTTPException(400, "say what to change")
+        ok = editing.availability(body.tool, cfg.editing.get(body.tool))
+        if not ok["available"]:
+            raise HTTPException(409, ok["reason"])
+        photo_file(conn, photo_id)
+        token = secrets.token_hex(6)
+        if not edit_job.start(photo_id=photo_id, token=token, body=body.model_dump()):
+            raise HTTPException(409, "another edit is running")
+        return {"token": token}
+
+    @app.get("/api/edits/candidates/{token}/{index}.jpg")
+    def edit_candidate(token: str, index: int):
+        from fastapi.responses import FileResponse
+
+        path = cfg.data_dir / "edit-candidates" / token / f"{index}.jpg"
+        if not re.fullmatch(r"[0-9a-f]+", token) or not path.exists():
+            raise HTTPException(404, "no such candidate")
+        return FileResponse(path, headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/edits/{photo_id}/keep", dependencies=[Depends(require_json)])
+    def keep_edit(photo_id: int, body: EditKeepIn, conn=Depends(get_conn)):
+        """Keep one candidate: it becomes the next step of the photo's edit list."""
+        import shutil
+
+        from . import edits
+
+        c = edit_candidates.get(body.token)
+        if c is None or c["photo_id"] != photo_id or not 0 <= body.index < len(c["results"]):
+            raise HTTPException(404, "no such candidate (run the tool again)")
+        res = c["results"][body.index]
+        kind = c["tool"]  # the retouching tools are named as their edit kinds
+        edit_id = edits.add_edit(
+            edits_home(), c["sha"], kind, {**c["params"], "bbox": list(res.bbox), "size": c["size"], "tool": c["tool"]},
+            res.mask, res.patch, source=c["source"], rel_path=c["rel_path"],
+        )
+        edit_candidates.pop(body.token, None)
+        shutil.rmtree(cfg.data_dir / "edit-candidates" / body.token, ignore_errors=True)
+        edits_changed(photo_id)
+        return get_edits(photo_id, conn) | {"kept": edit_id}
+
+    @app.post("/api/edits/item/{edit_id}", dependencies=[Depends(require_json)])
+    def toggle_edit(edit_id: int, body: EditToggleIn, conn=Depends(get_conn)):
+        from . import edits
+
+        sha = edits.edit_sha(edits_home(), edit_id)
+        if sha is None:
+            raise HTTPException(404, "no such edit")
+        edits.set_enabled(edits_home(), edit_id, body.enabled)
+        for r in conn.execute("SELECT id FROM photos WHERE sha256 = ? AND status = 'ok'", (sha,)).fetchall():
+            edits_changed(r[0])
+        return {"ok": True}
+
+    @app.delete("/api/edits/item/{edit_id}")
+    def remove_edit(edit_id: int, conn=Depends(get_conn)):
+        from . import edits
+
+        sha = edits.edit_sha(edits_home(), edit_id)
+        if sha is None:
+            raise HTTPException(404, "no such edit")
+        edits.delete_edit(edits_home(), edit_id)
+        for r in conn.execute("SELECT id FROM photos WHERE sha256 = ? AND status = 'ok'", (sha,)).fetchall():
+            edits_changed(r[0])
+        return {"ok": True}
+
+    @app.post("/api/edits/{photo_id}/restore", dependencies=[Depends(require_json)])
+    def restore_original(photo_id: int, conn=Depends(get_conn)):
+        """Back to the original: every edit turned off (kept, to turn back on)."""
+        from . import edits
+
+        r, _ = photo_file(conn, photo_id)
+        n = edits.restore(edits_home(), r["sha256"])
+        edits_changed(photo_id)
+        return get_edits(photo_id, conn) | {"disabled": n}
+
+    @app.post("/api/edits/{photo_id}/bake", dependencies=[Depends(require_json)])
+    def bake_edits(photo_id: int, body: BakeIn):
+        """Write the edits into the photo's file (the original to the backup folder unless
+        told otherwise); flags, tags and captions move to the new file content."""
+        from . import edits
+
+        if job.running or export_job.running or caption_job.running:
+            raise HTTPException(409, "wait until indexing, the export, or captioning has finished")
+        conn = db.connect(cfg.db_path)
+        try:
+            try:
+                done = edits.bake(conn, cfg, photo_id, backup=body.backup)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+        finally:
+            conn.close()
+        job.start()
+        return done
+
     # ---- AI model (models.py) ---------------------------------------------------------
 
     @app.get("/api/models")
@@ -2785,6 +3146,15 @@ def create_app(
         return job.status()
 
     # ---- static files ----------------------------------------------------------
+
+    @app.middleware("http")
+    async def revalidate_images(request: Request, call_next):
+        """Thumbnails and previews change when a photo is edited: browsers check back (a
+        cheap "not modified") instead of reusing a stale copy."""
+        response = await call_next(request)
+        if request.url.path.startswith(("/thumbs/", "/previews/")):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     app.mount("/thumbs", StaticFiles(directory=cfg.thumbs_dir, check_dir=False), name="thumbs")
     app.mount("/previews", StaticFiles(directory=cfg.previews_dir, check_dir=False), name="previews")

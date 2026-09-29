@@ -130,8 +130,8 @@
 
 {#if facets}
   <div class="mb-2 border-b border-neutral-800 pb-2">
-    {#if showFlag || (facets.exported && facets.exported.yes > 0) || f.exported !== ''}
-      <Section id="flag" title="Flag" active={f.flag.length + (f.exported !== '' ? 1 : 0)}>
+    {#if showFlag || (facets.exported && facets.exported.yes > 0) || f.exported !== '' || (facets.edited && facets.edited.yes > 0) || f.edited !== ''}
+      <Section id="flag" title="Flag" active={f.flag.length + (f.exported !== '' ? 1 : 0) + (f.edited !== '' ? 1 : 0)}>
         {#if showFlag}
           <ul>
             {#each flagOptions as [value, label] (value)}
@@ -148,6 +148,21 @@
                   : 'border-neutral-700 text-neutral-300 hover:bg-neutral-800'}"
                 aria-pressed={f.exported === value}
                 onclick={() => (view.filters.exported = f.exported === value ? '' : value)}
+              >
+                {label} <span class="tabular-nums opacity-70">{count}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+        {#if (facets.edited && facets.edited.yes > 0) || f.edited !== ''}
+          <div class="mt-1 grid grid-cols-2 gap-1 px-2">
+            {#each [['true', 'Edited', facets.edited?.yes ?? 0], ['false', 'Unedited', facets.edited?.no ?? 0]] as [value, label, count] (value)}
+              <button
+                class="rounded border px-1 py-0.5 text-xs {f.edited === value
+                  ? 'border-sky-700 bg-sky-700 text-white'
+                  : 'border-neutral-700 text-neutral-300 hover:bg-neutral-800'}"
+                aria-pressed={f.edited === value}
+                onclick={() => (view.filters.edited = f.edited === value ? '' : value)}
               >
                 {label} <span class="tabular-nums opacity-70">{count}</span>
               </button>

@@ -21,6 +21,7 @@
   import Curate from './components/Curate.svelte';
   import TagDialog from './components/TagDialog.svelte';
   import CaptionView from './components/CaptionView.svelte';
+  import EditView from './components/EditView.svelte';
   import Discover from './components/Discover.svelte';
   // The map (d3 + country outlines) loads only when it is first shown.
   const loadMap = () => import('./components/MapView.svelte');
@@ -199,6 +200,13 @@
       loadSidebar();
       if (view.filters.ftags.length || view.filters.exclude_ftags.length || (view.q && prefs.nameMatch)) reset();
     }, 400);
+  }
+
+  // Edits changed a photo's look: the grid reloads (new thumbnails) once editing pauses.
+  let editTimer;
+  function editsChanged() {
+    clearTimeout(editTimer);
+    editTimer = setTimeout(reset, 800);
   }
 
   /** A custom tag was created, edited, or deleted: refresh the sidebar, and the grid
@@ -392,6 +400,7 @@
       else if (view.discover) {
         if (!view.discover.replaying) view.discover = null; // a replay handles its own Esc
       }
+      else if (view.editing) typing ? e.target.blur() : (view.editing = null);
       else if (view.captioning) typing ? e.target.blur() : (view.captioning = null);
       else if (view.curate) view.curate = false;
       else if (typing) e.target.blur();
@@ -400,6 +409,7 @@
     }
     if (typing || view.exporting || view.settings || view.raws || view.help) return;
     if (view.captioning && view.photo == null) return; // the Captions & tags view has the keyboard
+    if (view.editing && view.photo == null) return; // so does the editor
     if (view.discover && view.photo == null) return; // so does Discover
     if (key === '?') {
       view.help = true;
@@ -533,6 +543,10 @@
 
 {#if view.captioning}
   <CaptionView onchange={captionsChanged} />
+{/if}
+
+{#if view.editing}
+  <EditView onchange={editsChanged} />
 {/if}
 
 {#if view.curate}

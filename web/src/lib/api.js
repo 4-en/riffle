@@ -176,3 +176,17 @@ export const startIndex = () => send('POST', '/api/index');
 export const fetchModels = () => get('/api/models');
 /** Switch model: the photos are embedded with it first (an index run), then it is used. */
 export const chooseModel = (name, pretrained = '') => send('POST', '/api/model', { name, pretrained });
+
+/** Editing (edits.py, editing.py). */
+export const fetchEditingTools = () => get('/api/editing/tools');
+export const chooseEditModel = (tool, model) => send('POST', `/api/editing/tools/${tool}`, { model });
+export const fetchEdits = (id) => get(`/api/edits/${id}`);
+export const setGeometry = (id, geometry) => send('POST', `/api/edits/${id}/geometry`, geometry);
+/** Start a tool on a painted mask (a PNG data URL); poll fetchEditJob for its candidates. */
+export const runEditTool = (id, body) => send('POST', `/api/edits/${id}/run`, body);
+export const fetchEditJob = () => get('/api/edits/job');
+export const keepCandidate = (id, token, index) => send('POST', `/api/edits/${id}/keep`, { token, index });
+export const toggleEdit = (editId, enabled) => send('POST', `/api/edits/item/${editId}`, { enabled });
+export const deleteEdit = (editId) => send('DELETE', `/api/edits/item/${editId}`);
+export const restoreOriginal = (id) => send('POST', `/api/edits/${id}/restore`, {});
+export const bakeEdits = (id, backup) => send('POST', `/api/edits/${id}/bake`, { backup });
