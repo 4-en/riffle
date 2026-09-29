@@ -913,6 +913,10 @@ Non-destructive editing in its own view (`EditView.svelte`), AI and not.
 - **Known limits:** 16-bit sources render as 8-bit; SDXL shifts colours inside a hard-edged mask a little (a visible square with a rectangle; brush strokes and the feather soften it); the editor paints on a 1600 px preview (masks are scaled to the photo), with zoom up to 4×.
 - **Second round (not started):** bulk operations from text-prompted segmentation (Grounding DINO or OWLv2 plus SAM 2, both in transformers) with a review grid; tone and colour adjustments.
 
+### 14.9 Importing captions and tags (29 Sep 2026)
+
+`sidecars.py` reads back what export writes, when a folder is added (for the profile it was added to: at the end of the index run for a new folder; at once in its own job for one indexed already, since an index run would hold up switching profiles) or on request per folder (Settings shows what it found). In order: `metadata.jsonl` in the photo's folder or above (`text` unless it is only the tags joined, `tags`, `ocr_text`, `ocr_translation`); `<name>.xmp` or `<name>.<ext>.xmp`; XMP in JPEG/PNG (Pillow's `info`, header only); `<name>.txt` (tags, caption, or caption then tags, told apart by whether a line is a comma-separated list of short items). The first source with a part gives it; only parts the photo lacks in the profile are written (method `imported`, marked edited so generating again keeps them). Read text is appended to the XMP description and the `.txt` without a marker, so export now also writes it to `riffle:text` / `riffle:translation` (namespace `urn:riffle:xmp:1.0`), and the import takes the appended block off the description; from a `.txt` it is not imported. Camera boilerplate descriptions ("OLYMPUS DIGITAL CAMERA"…) are ignored. On the 95k library, 2,000 photos took 0.56 ms each, and the only finds were darktable's automatic tags (`darktable|format|jpg`, flattened into `dc:subject` of its `.JPG.xmp`): components that only come from a `darktable|` hierarchy in `lr:hierarchicalSubject` are dropped. Another 5,000: one stock description, correct.
+
 ## 15. Candidates
 
 Roughly in order of value:

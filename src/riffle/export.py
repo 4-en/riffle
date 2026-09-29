@@ -155,10 +155,15 @@ def timeline_locations(conn: sqlite3.Connection, ids: list[int]) -> dict[int, tu
     }
 
 
-def add_metadata(files: list[_File], locations: dict[int, tuple], texts: dict[int, tuple[str, list[str]]], embed_text: bool) -> None:
+def add_metadata(
+    files: list[_File], locations: dict[int, tuple], texts: dict[int, tuple[str, list[str]]], embed_text: bool,
+    read: dict[int, tuple[str, str]] | None = None,
+) -> None:
     """Positions (``locations``) and captions/keywords (``texts``: {id: (caption,
     keywords)}) for the copies: into JPEG/PNG copies where possible (captions only
-    with ``embed_text``), else one XMP sidecar per photo and name."""
+    with ``embed_text``), else one XMP sidecar per photo and name. ``read``: {id:
+    (text, translation)} in Riffle's own XMP fields as well (see xmp_packet)."""
+    read = read or {}
     sidecars: list[_File] = []
     seen: set[tuple[int, Path, str]] = set()
     for f in list(files):
@@ -166,7 +171,8 @@ def add_metadata(files: list[_File], locations: dict[int, tuple], texts: dict[in
         caption, keywords = texts.get(f.photo_id, ("", []))
         if loc is None and not (caption or keywords):
             continue
-        embed = Meta(*(loc or (None, None, None)), *((caption, tuple(keywords)) if embed_text else ("", ())))
+        text, translation = read.get(f.photo_id, ("", ""))
+        embed = Meta(*(loc or (None, None, None)), *((caption, tuple(keywords), text, translation) if embed_text else ("", ())))
         tagged = tag(f.src, meta=embed) if f.kind == "image" and (embed.has_gps or embed.has_text) else None
         if tagged is not None:
             f.tagged = tagged
@@ -179,7 +185,7 @@ def add_metadata(files: list[_File], locations: dict[int, tuple], texts: dict[in
         if key in seen:
             continue
         seen.add(key)
-        content = xmp_packet(*(loc or (None, None, None)), description=caption, keywords=keywords)
+        content = xmp_packet(*(loc or (None, None, None)), description=caption, keywords=keywords, text=text, translation=translation)
         side = _File(f.photo_id, "sidecar", f.src.with_suffix(".xmp"), len(content), f.rel_dir, content=content)
         side.location = "sidecar" if loc else ""
         side.caption = "sidecar" if (caption or keywords) else ""
@@ -348,7 +354,10 @@ def run_export(
                 caption, keywords = xmp_texts.get(pid, ("", []))
                 xmp_texts[pid] = ("\n\n".join(p for p in (caption, "\n".join(l for l in lines if l)) if p), keywords)
         locations = timeline_locations(conn, sorted({f.photo_id for f in files})) if add_location else {}
-        add_metadata(files, locations, xmp_texts if captions in ("embed", "xmp") else {}, embed_text=captions == "embed")
+        add_metadata(
+            files, locations, xmp_texts if captions in ("embed", "xmp") else {}, embed_text=captions == "embed",
+            read=read if with_text and captions in ("embed", "xmp") else None,
+        )
         if captions == "txt":
             add_caption_files(files, texts, caption_text, underscores, read if with_text else None)
     finally:

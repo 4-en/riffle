@@ -1,7 +1,7 @@
 <script>
   // Settings → Photo folders: this profile's folders, the other profiles' folders it can
   // add at once (already indexed), and a browser to add a new one.
-  import { addSource, removeSource } from '../../lib/api.js';
+  import { addSource, fetchImport, importSource, removeSource } from '../../lib/api.js';
   import FolderBrowser from '../FolderBrowser.svelte';
 
   let { sources, busy, act } = $props();
@@ -26,6 +26,23 @@
     if (confirm(`Forget ${s.path} for good?\n\nUse this when the folder was deleted or moved, not when its drive is only unplugged. It leaves every profile, and the ${s.photos} photos catalogued in it are dropped from Riffle (thumbnails and AI data). Your flags, tags and captions are kept by content, so photos you add again from their new place get them back.`))
       act(() => removeSource(s.path, true));
   }
+  // path -> what the import found ('…' while it runs)
+  let imported = $state({});
+  async function importTags(path) {
+    if (!(await act(() => importSource(path)))) return;
+    imported[path] = '…';
+    let status;
+    do {
+      await new Promise((r) => setTimeout(r, 500));
+      status = await fetchImport();
+    } while (status.running);
+    const n = (status.result ?? []).find((r) => r.folder === path);
+    imported[path] = status.error
+      ? `Failed: ${status.error}`
+      : n && (n.captions || n.tags || n.texts)
+        ? `Imported ${n.captions} captions, ${n.tags} tag lists, ${n.texts} read texts`
+        : 'Nothing new to import';
+  }
   const btn = 'shrink-0 rounded px-2 py-0.5 text-xs disabled:opacity-40';
 </script>
 
@@ -33,6 +50,10 @@
 <p class="mb-3 mt-1 text-xs text-neutral-400">
   The folders this profile shows, with their subfolders. Other profiles can show other folders; everything is indexed once and
   shared. Originals are only read, never modified.
+</p>
+<p class="mb-3 text-xs text-neutral-400">
+  Captions, tags and read text saved beside the photos in the formats Riffle exports (XMP, text files, <span class="font-mono">metadata.jsonl</span>)
+  are imported when a folder is added, for photos that have none yet in this profile.
 </p>
 
 {#if !sources}
@@ -50,6 +71,9 @@
           {:else if !s.exists}
             <span class="text-[11px] text-red-400">Not found</span>
           {/if}
+          {#if imported[s.path] && imported[s.path] !== '…'}
+            <span class="block text-[11px] text-neutral-400">{imported[s.path]}</span>
+          {/if}
         </span>
         <span class="shrink-0 text-xs tabular-nums text-neutral-400">{s.photos.toLocaleString()} photos</span>
         {#if s.offline}
@@ -60,6 +84,12 @@
             onclick={() => forget(s)}>Forget…</button
           >
         {/if}
+        <button
+          class="{btn} text-neutral-400 hover:bg-neutral-800 hover:text-white"
+          disabled={busy || s.offline || !s.exists || imported[s.path] === '…'}
+          title="Import captions, tags and read text from the files beside its photos (XMP, .txt, metadata.jsonl); only what is missing"
+          onclick={() => importTags(s.path)}>{imported[s.path] === '…' ? 'Importing…' : 'Import captions'}</button
+        >
         <button
           class="{btn} text-neutral-400 hover:bg-neutral-800 hover:text-red-300"
           disabled={busy || !sources.editable}

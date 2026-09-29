@@ -146,6 +146,8 @@ class Meta:
     accuracy_m: float | None = None
     description: str = ""
     keywords: tuple[str, ...] = ()
+    text: str = ""  # text read from the photo and its translation, in Riffle's own fields
+    translation: str = ""
 
     @property
     def has_gps(self) -> bool:
@@ -156,8 +158,16 @@ class Meta:
         return bool(self.description or self.keywords)
 
 
-def xmp_packet(lat: float | None = None, lon: float | None = None, accuracy_m: float | None = None, description: str = "", keywords=()) -> bytes:
-    """An XMP packet with a GPS position and/or dc:description and dc:subject."""
+RIFFLE_NS = "urn:riffle:xmp:1.0"  # Riffle's own XMP fields (sidecars.py reads them back)
+
+
+def xmp_packet(
+    lat: float | None = None, lon: float | None = None, accuracy_m: float | None = None, description: str = "", keywords=(),
+    text: str = "", translation: str = "",
+) -> bytes:
+    """An XMP packet with a GPS position and/or dc:description and dc:subject; ``text``
+    and ``translation`` (read from the photo) go into riffle:text / riffle:translation,
+    so an import can tell them from the caption they also follow in the description."""
     attrs, body = "", ""
     if lat is not None and lon is not None:
         acc = f' exif:GPSHPositioningError="{round(accuracy_m * 10)}/10"' if accuracy_m else ""
@@ -172,13 +182,18 @@ def xmp_packet(lat: float | None = None, lon: float | None = None, accuracy_m: f
     if keywords:
         items = "".join(f"<rdf:li>{escape(k)}</rdf:li>" for k in keywords)
         body += f"   <dc:subject><rdf:Bag>{items}</rdf:Bag></dc:subject>\n"
+    if text:
+        body += f"   <riffle:text>{escape(text)}</riffle:text>\n"
+    if translation:
+        body += f"   <riffle:translation>{escape(translation)}</riffle:translation>\n"
     close = f">\n{body}  </rdf:Description>\n" if body else "/>\n"
     return (
         '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
         '<x:xmpmeta xmlns:x="adobe:ns:meta/">\n'
         ' <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
         '  <rdf:Description rdf:about="" xmlns:exif="http://ns.adobe.com/exif/1.0/"'
-        f' xmlns:dc="http://purl.org/dc/elements/1.1/"{attrs}{close}'
+        f' xmlns:dc="http://purl.org/dc/elements/1.1/"'
+        f'{f" xmlns:riffle=\"{RIFFLE_NS}\"" if text or translation else ""}{attrs}{close}'
         " </rdf:RDF>\n"
         "</x:xmpmeta>\n"
         '<?xpacket end="w"?>'
@@ -257,7 +272,8 @@ def _tag_jpeg(path: Path, meta: Meta) -> Tagged | None:
         if has_xmp:
             return None  # would have to merge with the existing XMP: sidecar instead
         packet = xmp_packet(
-            meta.lat if gps_in_xmp else None, meta.lon if gps_in_xmp else None, meta.accuracy_m, meta.description, meta.keywords
+            meta.lat if gps_in_xmp else None, meta.lon if gps_in_xmp else None, meta.accuracy_m, meta.description, meta.keywords,
+            meta.text, meta.translation,
         )
         at = exif_seg[2] if exif_seg else first
         edits.append((at, at, app1(XMP_HEADER + packet)))
@@ -310,7 +326,7 @@ def _tag_png(path: Path, meta: Meta) -> Tagged | None:
         xmp_key = b"XML:com.adobe.xmp\x00"
         if any(c[0] == b"iTXt" and data[c[1] + 8 : c[1] + 8 + len(xmp_key)] == xmp_key for c in found):
             return None  # already has XMP: sidecar instead
-        packet = xmp_packet(description=meta.description, keywords=meta.keywords)
+        packet = xmp_packet(description=meta.description, keywords=meta.keywords, text=meta.text, translation=meta.translation)
         edits.append((at, at, chunk(b"iTXt", xmp_key + b"\x00\x00\x00\x00" + packet)))
     if not edits:
         return None

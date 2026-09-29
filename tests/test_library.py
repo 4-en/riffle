@@ -52,10 +52,10 @@ def client(file_cfg):
         yield c
 
 
-def wait_for_index(client, timeout=30):
+def wait_for_index(client, path="/api/index", timeout=30):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        status = client.get("/api/index").json()
+        status = client.get(path).json()
         if not status["running"]:
             return status
         time.sleep(0.05)
@@ -125,3 +125,41 @@ def test_browse(client, archive_dir):
     assert trip["parent"] == str(archive_dir / "photos")
     assert client.get("/api/fs", params={"path": str(archive_dir / "nope")}).status_code == 404
     assert client.get("/api/fs").json()["path"] == str(Path.home())
+
+
+def test_adding_a_folder_imports_exported_captions(client, tmp_path):
+    """Captions, tags and read text beside the photos, in the formats export writes, come
+    along when the folder is added; what a photo already has is kept."""
+    import json
+
+    from PIL import Image
+
+    from riffle.geotag import xmp_packet
+
+    new = tmp_path / "dataset"
+    new.mkdir()
+    for name, colour in (("a", "red"), ("b", "blue"), ("c", "yellow")):
+        Image.new("RGB", (64, 48), colour).save(new / f"{name}.jpg")
+    (new / "a.xmp").write_bytes(xmp_packet(description="A red wall\n\nEXIT", keywords=["wall", "red"], text="EXIT"))
+    (new / "b.txt").write_text("blue, plain\n", encoding="utf-8")
+    (new / "metadata.jsonl").write_text(json.dumps({"file_name": "c.jpg", "text": "A yellow card", "tags": []}) + "\n", encoding="utf-8")
+
+    assert client.post("/api/sources", json={"path": str(new)}).status_code == 200
+    status = wait_for_index(client)
+    assert any("imported from" in line and "2 captions, 2 tag lists, 1 read texts" in line for line in status["lines"]), status["lines"]
+    items = client.get("/api/photos", params={"dupes": "all"}).json()["items"]
+    ids = {Path(i["rel_path"]).name: i["id"] for i in items if Path(i["rel_path"]).name in ("a.jpg", "b.jpg", "c.jpg")}
+    got = client.get("/api/captions", params={"ids": ",".join(str(i) for i in ids.values())}).json()["captions"]
+    a, b, c = (got[str(ids[n])] for n in ("a.jpg", "b.jpg", "c.jpg"))
+    assert a["caption"] == "A red wall" and a["tags"] == ["wall", "red"] and a["text"] == "EXIT"
+    assert b["caption"] is None and b["tags"] == ["blue", "plain"]
+    assert c["caption"] == "A yellow card"
+
+    # Asked again: nothing already there is replaced.
+    client.post("/api/captions", json={"items": [{"id": ids["a.jpg"], "caption": "My own words"}]})
+    assert client.post("/api/sources/import", json={"path": str(new)}).status_code == 200
+    status = wait_for_index(client, "/api/sources/import")
+    assert status["result"] and status["result"][0]["captions"] == 0 and status["result"][0]["photos"] == 3
+    again = client.get("/api/captions", params={"ids": str(ids["a.jpg"])}).json()["captions"][str(ids["a.jpg"])]
+    assert again["caption"] == "My own words"
+    assert client.post("/api/sources/import", json={"path": str(tmp_path)}).status_code == 404

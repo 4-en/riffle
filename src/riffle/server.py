@@ -432,9 +432,44 @@ def create_app(
 
         run = index_runner or run_index
         apply_edit_invalidations()
-        if model is None:
-            return run(cfg_, progress=progress, report=report)
-        return prepare_model(run, progress, report, **model)
+        if model is not None:
+            return prepare_model(run, progress, report, **model)
+        run(cfg_, progress=progress, report=report)
+        import_sidecars(progress, report)
+
+    # Folders added (or asked for), whose captions, tags and read text are imported from
+    # the export formats (sidecars.py): [(profile, folder)]. A folder being indexed is
+    # imported at the end of the index run; one indexed already at once, by import_job
+    # (not an index run, which would hold up switching profiles meanwhile).
+    imports_pending: list[tuple[str, Path]] = []
+    imports_lock = threading.Lock()
+
+    def queue_import(slug: str, folder: Path, indexed: bool) -> None:
+        with imports_lock:
+            if (slug, folder) not in imports_pending:
+                imports_pending.append((slug, folder))
+        # Its photos are catalogued already (an index run meanwhile leaves them as they are).
+        (import_job if indexed else job).start()
+
+    def import_sidecars(progress=None, report=print) -> list[dict]:
+        from . import sidecars
+
+        with imports_lock:
+            todo = list(imports_pending)
+            imports_pending.clear()
+        results = []
+        for slug, folder in todo:
+            conn = db.connect_readonly(cfg.db_path)
+            try:
+                n = sidecars.import_folder(conn, profiles.path_for(cfg, slug), folder, progress=progress)
+            finally:
+                conn.close()
+            if n["captions"] or n["tags"] or n["texts"]:
+                report(f"imported from {folder}: {n['captions']} captions, {n['tags']} tag lists, {n['texts']} read texts")
+            else:
+                report(f"imported from {folder}: no captions or tags found in files beside the photos")
+            results.append({"profile": slug, "folder": str(folder), **n})
+        return results
 
     job = index_job(cfg, run=run_index_job)
     # The active profile's selections database (profiles.py); switched at runtime.
@@ -565,6 +600,7 @@ def create_app(
                 "seed": seed}
 
     edit_job = BackgroundJob(cfg, run_edit_tool)
+    import_job = BackgroundJob(cfg, lambda cfg_, progress=None, report=print: import_sidecars(progress, report), queue=True)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -2739,9 +2775,24 @@ def create_app(
         indexed = any(path == r or path.is_relative_to(r) for r in library.roots)
         profiles.set_folders(cfg, state["profile"], new)
         load_library()
-        if not indexed:
-            job.start()
+        # Indexing (quick when the folder is indexed already) ends with importing the
+        # captions and tags exported beside its photos.
+        queue_import(state["profile"], path, indexed)
         return {"ok": True, "path": str(path), "indexing": not indexed}
+
+    @app.post("/api/sources/import", dependencies=[Depends(require_json)])
+    def import_source(body: FolderIn):
+        """Import captions, tags and read text for a folder of the active profile from the
+        files beside its photos (the export formats); fills in only what is missing."""
+        path = folder_path(body.path)
+        if path not in current_library().folders:
+            raise HTTPException(404, "not a folder of this profile")
+        queue_import(state["profile"], path, indexed=True)
+        return {"ok": True}
+
+    @app.get("/api/sources/import")
+    def import_status():
+        return import_job.status()
 
     @app.delete("/api/sources", dependencies=[Depends(require_json)])
     def remove_source(body: FolderRemove):
