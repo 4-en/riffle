@@ -22,6 +22,15 @@
   let action = $state('remove'); // remove | inpaint
   let prompt = $state('');
   let negative = $state('');
+  let strength = $state(0.99); // Replace: denoising
+  let blur = $state(3); // the mask's blur, in 1600 px
+  let fill = $state('original'); // under the mask, below full denoising (editing.FILLS)
+  const FILLS = [
+    ['original', 'Original', 'What is there now'],
+    ['heal', 'Heal', 'Smooth colours from the edges (OpenCV)'],
+    ['remove', 'Remove', 'A plausible background (LaMa), for the model to refine'],
+    ['noise', 'Noise', 'The surrounding colours with noise: something new in those colours (works with high denoising, 0.8 and up)'],
+  ];
 
   const toolOf = (key) => tools.find((t) => t.key === key);
   const found = $derived(items.filter((i) => i.found));
@@ -66,7 +75,7 @@
   async function apply() {
     error = '';
     try {
-      await batchApply({ token, ids: kept.map((i) => i.id), tool: action, prompt, negative });
+      await batchApply({ token, ids: kept.map((i) => i.id), tool: action, prompt, negative, strength, blur, fill });
       running = { step: 'starting' };
       const res = await wait();
       const byId = Object.fromEntries(res.items.map((i) => [i.id, i]));
@@ -241,13 +250,34 @@
         </label>
         {#if action === 'inpaint'}
           <div class="space-y-1.5 pl-5">
-            <textarea bind:value={prompt} rows="2" placeholder="What should be there, e.g. empty cobblestone street" disabled={busy}
+            <textarea bind:value={prompt} rows="2" placeholder="What should be there, e.g. empty cobblestone street (optional)" disabled={busy}
               class="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 outline-none focus:border-sky-600"></textarea>
             <input bind:value={negative} placeholder="Not this (optional)" disabled={busy}
               class="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 outline-none focus:border-sky-600" />
+            <label class="block text-neutral-300" title="Where denoising starts: 1 paints from scratch, lower keeps more of what is under the mask">
+              <span class="flex justify-between"><span>Denoising</span><span class="tabular-nums text-neutral-400">{strength.toFixed(2)}</span></span>
+              <input type="range" min="0.1" max="1" step="0.01" bind:value={strength} disabled={busy} ondblclick={() => (strength = 0.99)} class="w-full accent-sky-600" />
+            </label>
+            {#if strength < 1}
+              <div class="flex items-center gap-1" role="group" aria-label="Under the mask">
+                <span class="mr-1 text-neutral-400" title="What denoising starts from under the mask">Start from</span>
+                {#each FILLS as [key, label, hint] (key)}
+                  <button
+                    class="rounded px-1.5 py-0.5 {fill === key ? 'bg-sky-700 text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
+                    title={hint}
+                    disabled={busy}
+                    onclick={() => (fill = key)}>{label}</button
+                  >
+                {/each}
+              </div>
+            {/if}
             {@render modelSelect(toolOf('inpaint'))}
           </div>
         {/if}
+        <label class="block text-neutral-300" title="How softly the result blends into the photo at the mask's edge (pixels at 1600 px)">
+          <span class="flex justify-between"><span>Mask blur</span><span class="tabular-nums text-neutral-400">{blur} px</span></span>
+          <input type="range" min="0" max="40" step="1" bind:value={blur} disabled={busy} ondblclick={() => (blur = 3)} class="w-full accent-sky-600" />
+        </label>
         {#if stage === 'review'}
           <div class="flex gap-1.5">
             <button class={btn} disabled={busy} onclick={() => found.forEach((i) => (i.keep = true))}>All</button>
@@ -255,7 +285,7 @@
           </div>
           <button
             class="w-full rounded bg-sky-700 px-3 py-1.5 font-medium text-white hover:bg-sky-600 disabled:opacity-40"
-            disabled={busy || !kept.length || (action === 'inpaint' && !prompt.trim()) || !toolOf(action)?.available}
+            disabled={busy || !kept.length || !toolOf(action)?.available}
             onclick={apply}>{action === 'remove' ? 'Remove' : 'Replace'} in {kept.length} photo{kept.length === 1 ? '' : 's'}</button
           >
         {:else}

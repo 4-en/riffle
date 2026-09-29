@@ -200,6 +200,15 @@
   let prompt = $state('');
   let negative = $state('');
   let count = $state(2);
+  let strength = $state(0.99); // Replace: denoising (1 starts from noise; lower keeps more of what is there)
+  let blur = $state(3); // the mask's blur where the result meets the photo, in this view's 1600 px
+  let fill = $state('original'); // under the mask, below full denoising (editing.FILLS)
+  const FILLS = [
+    ['original', 'Original', 'What is there now'],
+    ['heal', 'Heal', 'Smooth colours from the edges (OpenCV)'],
+    ['remove', 'Remove', 'A plausible background (LaMa), for the model to refine'],
+    ['noise', 'Noise', 'The surrounding colours with noise: something new in those colours (works with high denoising, 0.8 and up)'],
+  ];
   const toolInfo = $derived(tools.find((t) => t.key === tool));
 
   async function run(seed = null) {
@@ -215,6 +224,9 @@
         negative: toolInfo?.kind === 'instruct' ? '' : negative,
         candidates: choose ? count : 1,
         seed,
+        strength,
+        blur,
+        fill,
       });
       running = { step: 'starting' };
       let status;
@@ -566,7 +578,7 @@
                     <textarea
                       bind:value={prompt}
                       rows="2"
-                      placeholder={t.kind === 'instruct' ? 'What to change, e.g. make it golden hour' : 'What should be there, e.g. clear blue sky'}
+                      placeholder={t.kind === 'instruct' ? 'What to change, e.g. make it golden hour' : 'What should be there, e.g. clear blue sky (optional)'}
                       class="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 outline-none focus:border-sky-600"
                     ></textarea>
                     {#if t.kind !== 'instruct'}
@@ -576,9 +588,34 @@
                       <input type="range" min="1" max="4" bind:value={count} class="flex-1 accent-sky-600" /><span class="tabular-nums">{count}</span>
                     </label>
                   {/if}
+                  {#if t.kind === 'diffusion'}
+                    <label class="block text-neutral-300" title="Where denoising starts: 1 paints from scratch, lower keeps more of what is under the mask (its shapes and colours)">
+                      <span class="flex justify-between"><span>Denoising</span><span class="tabular-nums text-neutral-400">{strength.toFixed(2)}</span></span>
+                      <input type="range" min="0.1" max="1" step="0.01" bind:value={strength} ondblclick={() => (strength = 0.99)} class="w-full accent-sky-600" />
+                    </label>
+                    {#if strength < 1}
+                      <div class="flex items-center gap-1" role="group" aria-label="Under the mask">
+                        <span class="mr-1 text-neutral-400" title="What denoising starts from under the mask">Start from</span>
+                        {#each FILLS as [key, label, hint] (key)}
+                          <button
+                            class="rounded px-1.5 py-0.5 {fill === key ? 'bg-sky-700 text-white' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
+                            title={hint}
+                            disabled={!!running}
+                            onclick={() => (fill = key)}>{label}</button
+                          >
+                        {/each}
+                      </div>
+                    {/if}
+                  {/if}
+                  {#if t.kind !== 'instruct' || hasMask}
+                    <label class="block text-neutral-300" title="How softly the result blends into the photo at the mask's edge (in this view's pixels)">
+                      <span class="flex justify-between"><span>Mask blur</span><span class="tabular-nums text-neutral-400">{blur} px</span></span>
+                      <input type="range" min="0" max="40" step="1" bind:value={blur} ondblclick={() => (blur = 3)} class="w-full accent-sky-600" />
+                    </label>
+                  {/if}
                   <button
                     class="w-full rounded bg-sky-700 px-3 py-1.5 font-medium text-white hover:bg-sky-600 disabled:opacity-40"
-                    disabled={(!hasMask && !t.mask_optional) || !t.available || !!running || !!candidates || (t.prompt && !prompt.trim())}
+                    disabled={(!hasMask && !t.mask_optional) || !t.available || !!running || !!candidates || (t.kind === 'instruct' && !prompt.trim())}
                     title={hasMask || t.mask_optional ? '' : 'Paint over the area first'}
                     onclick={() => run()}>{t.mask_optional ? (hasMask ? 'Edit the painted area' : 'Edit the whole photo') : t.label}</button
                   >

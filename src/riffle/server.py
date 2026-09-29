@@ -18,14 +18,14 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 import numpy as np
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import db
 from .config import Config, load_config, set_location_history
@@ -133,7 +133,9 @@ class EditRunIn(BaseModel):
     seed: int | None = None
     candidates: int = 1
     steps: int | None = None  # the tool's default (editing.STEPS)
-    strength: float = 0.99
+    strength: float = Field(0.99, ge=0.05, le=1.0)  # denoising: 1 starts from noise, lower keeps more of what is there
+    blur: float | None = Field(None, ge=0, le=64)  # the mask's blur, in the editor's 1600 px (None: the default)
+    fill: Literal["original", "heal", "remove", "noise"] = "original"  # under the mask, below full denoising
 
 
 class EditKeepIn(BaseModel):
@@ -159,9 +161,12 @@ class BatchFindIn(BaseModel):
 class BatchApplyIn(BaseModel):
     token: str
     ids: list[int]  # the photos (of those found) to change
-    tool: str = "remove"  # remove (from the surroundings) | inpaint (with a prompt)
+    tool: str = "remove"  # remove (from the surroundings) | inpaint (Stable Diffusion; the prompt may be empty)
     prompt: str = ""
     negative: str = ""
+    strength: float = Field(0.99, ge=0.05, le=1.0)
+    blur: float | None = Field(None, ge=0, le=64)
+    fill: Literal["original", "heal", "remove", "noise"] = "original"
 
 
 class EditModelIn(BaseModel):
@@ -590,6 +595,7 @@ def create_app(
         results = editing.retouch(
             body["tool"], base, mask, choice, prompt=body.get("prompt", ""), negative=body.get("negative", ""),
             seed=seed, candidates=body.get("candidates", 1), steps=steps, strength=body.get("strength", 0.99),
+            blur=body.get("blur"), fill=body.get("fill", "original"), fill_choice=cfg.editing.get("remove"),
         )
         # Previews of each candidate: the retouched original at preview size with it pasted in.
         folder = cfg.data_dir / "edit-candidates" / token
@@ -607,7 +613,8 @@ def create_app(
         edit_candidates[token] = {
             "photo_id": photo_id, "sha": r["sha256"], "size": list(base.size), "results": results, "tool": body["tool"],
             "params": {"model": label, "spec": spec, "prompt": body.get("prompt", ""), "negative": body.get("negative", ""),
-                       "seed": seed, "steps": steps, "strength": body.get("strength", 0.99)},
+                       "seed": seed, "steps": steps, "strength": body.get("strength", 0.99), "blur": body.get("blur"),
+                       "fill": body.get("fill", "original")},
             "source": r["source"], "rel_path": r["rel_path"],
         }
         report("done")
@@ -690,11 +697,14 @@ def create_app(
                     base = edits.render(path, edit_list, geometry=False)
                     mask = Image.open(folder / f"{pid}.mask.png")
                     res = editing.retouch_regions(tool, base, mask, choice, prompt=body.get("prompt", ""),
-                                                  negative=body.get("negative", ""), seed=seed)
+                                                  negative=body.get("negative", ""), seed=seed,
+                                                  strength=body.get("strength", 0.99), blur=body.get("blur"),
+                                                  fill=body.get("fill", "original"), fill_choice=cfg.editing.get("remove"))
                     if res is None:
                         continue
                     params = {"model": label, "spec": spec, "prompt": body.get("prompt", ""), "negative": body.get("negative", ""),
-                              "seed": seed, "steps": editing.STEPS.get(tool, 30), "strength": 0.99, "find": batch["text"],
+                              "seed": seed, "steps": editing.STEPS.get(tool, 30), "strength": body.get("strength", 0.99),
+                              "blur": body.get("blur"), "fill": body.get("fill", "original"), "find": batch["text"],
                               "bbox": list(res.bbox), "size": list(base.size), "tool": tool}
                     edit_id = edits.add_edit(edits_home(), r["sha256"], tool, params, res.mask, res.patch,
                                              source=r["source"], rel_path=r["rel_path"])
@@ -3154,6 +3164,10 @@ def create_app(
         ok = editing.availability(body.tool, cfg.editing.get(body.tool))
         if not ok["available"]:
             raise HTTPException(409, ok["reason"])
+        if body.fill == "remove" and body.strength < 1:
+            lama = editing.availability("remove", cfg.editing.get("remove"))
+            if not lama["available"]:
+                raise HTTPException(409, f"filling with Remove {lama['reason']}")
         photo_file(conn, photo_id)
         token = secrets.token_hex(6)
         if not edit_job.start(photo_id=photo_id, token=token, body=body.model_dump()):
@@ -3186,13 +3200,15 @@ def create_app(
 
         if body.tool not in ("remove", "inpaint"):
             raise HTTPException(400, "tool must be remove or inpaint")
-        if body.tool == "inpaint" and not body.prompt.strip():
-            raise HTTPException(400, "say what should be there instead")
         if body.token not in batches:
             raise HTTPException(404, "these masks are gone: find again")
         ok = editing.availability(body.tool, cfg.editing.get(body.tool))
         if not ok["available"]:
             raise HTTPException(409, ok["reason"])
+        if body.tool == "inpaint" and body.fill == "remove" and body.strength < 1:
+            lama = editing.availability("remove", cfg.editing.get("remove"))
+            if not lama["available"]:
+                raise HTTPException(409, f"filling with Remove {lama['reason']}")
         if not batch_job.start(phase="apply", token=body.token, body=body.model_dump()):
             raise HTTPException(409, "another batch is running")
         return {"ok": True}

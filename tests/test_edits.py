@@ -390,15 +390,70 @@ def test_find_and_remove_in_many_photos(client, indexed, conn, monkeypatch):
     assert mask.size == base.size and mask.getpixel((60, 60)) == 255
 
     assert c.post("/api/batch/apply", json={"token": "nope", "ids": [first]}).status_code == 404
-    assert c.post("/api/batch/apply", json={"token": token, "ids": [first], "tool": "inpaint"}).status_code == 400  # no prompt
+    assert c.post("/api/batch/apply", json={"token": token, "ids": [first], "tool": "inpaint", "strength": 2}).status_code == 422
     before = (indexed.previews_dir / f"{first}.jpg").read_bytes()
-    assert c.post("/api/batch/apply", json={"token": token, "ids": [first, second], "tool": "remove"}).status_code == 200
+    assert c.post("/api/batch/apply", json={"token": token, "ids": [first, second], "tool": "remove", "blur": 6}).status_code == 200
     done = {i["id"]: i for i in wait(c, "/api/batch/job")["result"]["items"]}
     assert done[first]["applied"] and not done[second].get("applied")
     steps = edits.list_edits(indexed.selections_path, first_sha)
-    assert [e.kind for e in steps] == ["remove"] and steps[0].params["find"] == "things"
+    assert [e.kind for e in steps] == ["remove"] and steps[0].params["find"] == "things" and steps[0].params["blur"] == 6
     assert (indexed.previews_dir / f"{first}.jpg").read_bytes() != before
     assert not c.get(f"/api/edits/{second}").json()["edited"]
     # Undo is deleting the step.
     assert c.delete(f"/api/edits/item/{done[first]['edit_id']}").json()["ok"]
     assert not c.get(f"/api/edits/{first}").json()["edited"]
+
+
+def test_mask_blur_sets_how_softly_a_result_blends_in():
+    from riffle import editing
+
+    image = Image.new("RGB", (1600, 1200), (120, 120, 120))
+    mask = Image.new("L", image.size, 0)
+    mask.paste(255, (700, 500, 900, 700))
+    hard = editing.retouch("heal", image, mask, blur=0)[0].mask
+    soft = editing.retouch("heal", image, mask, blur=12)[0].mask
+    ramp = lambda m: int(((np.asarray(m) > 0) & (np.asarray(m) < 255)).sum())
+    assert ramp(hard) == 0  # no blur: in or out
+    assert ramp(soft) > ramp(editing.retouch("heal", image, mask)[0].mask) > 0  # more than the default
+
+
+def test_prefill_under_the_mask():
+    """What Replace below full denoising starts from: the photo, a heal, or noise."""
+    from riffle import editing
+
+    a = np.full((200, 300, 3), (40, 90, 160), np.uint8)
+    a[80:120, 130:170] = (250, 250, 0)  # a yellow thing to replace
+    image = Image.fromarray(a)
+    mask = Image.new("L", image.size, 0)
+    mask.paste(255, (125, 75, 175, 125))
+    assert editing.prefill(image, mask, "original") is image
+    healed = np.asarray(editing.prefill(image, mask, "heal")).astype(int)
+    assert abs(healed[100, 150] - (40, 90, 160)).max() < 10  # the surroundings' colour, the yellow gone
+    assert (healed[10, 10] == (40, 90, 160)).all()  # outside the mask untouched
+    n1 = np.asarray(editing.prefill(image, mask, "noise", seed=1)).astype(int)
+    n2 = np.asarray(editing.prefill(image, mask, "noise", seed=2)).astype(int)
+    inside = (slice(80, 120), slice(130, 170))
+    assert (n1[inside] != n2[inside]).any() and abs(n1[inside].mean(axis=(0, 1)) - (40, 90, 160)).max() < 12
+    assert (n1[10, 10] == (40, 90, 160)).all()
+
+
+def test_replace_options_are_checked(client, conn):
+    pid = photo(conn, "IMG_0003.png")["id"]
+    body = {"tool": "inpaint", "mask": mask_url((10, 10), (0, 0, 5, 5))}
+    assert client.post(f"/api/edits/{pid}/run", json=body | {"fill": "lava"}).status_code == 422
+    assert client.post(f"/api/edits/{pid}/run", json=body | {"blur": -1}).status_code == 422
+    assert client.post(f"/api/edits/{pid}/run", json=body | {"strength": 0}).status_code == 422
+
+
+def test_context_grows_to_the_models_working_area():
+    """A small mask's context is grown (1:1, costing no resolution) to what the model works at."""
+    from riffle import editing
+
+    cx, cy, cw, ch = editing._grow((1000, 1000, 512, 512), (4000, 3000), 1024 * 1024)
+    assert (cw, ch) == (1024, 1024) and (cx + cw // 2, cy + ch // 2) == (1256, 1256)  # around the same centre
+    cx, cy, cw, ch = editing._grow((0, 0, 400, 300), (600, 3000), 1024 * 1024)  # narrow photo: grows in height instead
+    assert cw == 600 and cw * ch >= 1024 * 1024 * 0.99 and cx == 0 and cy == 0
+    assert editing._grow((0, 0, 2000, 1500), (4000, 3000), 1024 * 1024) == (0, 0, 2000, 1500)  # large already: as it was
+    assert editing._grow((0, 0, 300, 200), (500, 400), 1024 * 1024) == (0, 0, 500, 400)  # the whole image at most
+    small = editing._fit(Image.new("RGB", (3000, 1000)), 1024 * 1024)
+    assert small.width * small.height <= 1024 * 1024 and small.width % 8 == 0 and abs(small.width / small.height - 3) < 0.05

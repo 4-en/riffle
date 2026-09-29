@@ -35,8 +35,12 @@ from PIL import Image, ImageFilter
 
 CONTEXT = 1.5  # the context around the mask's box, as a factor of its size…
 MIN_CONTEXT = 512  # …but at least this many pixels on the long side
-LAMA_EDGE = 1024  # LaMa works at up to this size (the context is scaled down to it)
-DIFFUSION_EDGE = 1024  # SDXL's working size
+# The models' working sizes, as areas: a context up to this many pixels is used 1:1 (more
+# context costs no resolution, so a small mask is given at least this much of the scene);
+# a larger one is scaled down to it.
+LAMA_AREA = 1024 * 1024
+DIFFUSION_AREA = 1024 * 1024  # SDXL, FLUX
+SD15_AREA = 512 * 512  # Stable Diffusion 1.5
 # Qwen-Image 2.1's sizes (its model card), about 4 megapixels, one per aspect ratio. An image
 # is edited at the shape closest to its own (stretched a little to fit, and back afterwards),
 # at half the size: on a 24 GB card the full size took 5 minutes, followed the instruction
@@ -55,6 +59,15 @@ QWEN_BASE = "Qwen/Qwen-Image-2.1"  # the text encoder, VAE and scheduler for a s
 QWEN_GGUF = "abenzerps/Qwen-Image-2.1-Uncensored-GGUF"  # its `base` branch: the official weights
 TILE, TILE_PAD = 512, 32  # upscaling in tiles, overlapping by this much
 IDLE_SECONDS = 300
+VIEW_EDGE = 1600  # the editor's view of a photo: mask blur is given in its pixels
+DEFAULT_BLUR = 3.2  # (0.2 % of the long side)
+# Replace below full denoising starts from the image with the mask's area filled so:
+# original (what is there), heal (OpenCV, from the edges), remove (LaMa), noise (the
+# surroundings' colours with noise: new detail, the colours kept).
+FILLS = ("original", "heal", "remove", "noise")
+NOISE = 32  # 0-255: the noise fill's spread…
+NOISE_CELL = 8  # …in blotches this many pixels across (a latent cell of SD's VAE): per-pixel
+# noise is read as fine texture, and at middling denoising a whole picture is painted into it
 STEPS = {"inpaint": 30, "instruct": 30}  # sampling steps by default (Qwen's example uses 40; 30 is a quarter faster)
 
 
@@ -262,19 +275,21 @@ def _load(tool: str, spec: str):
     if t.kind in ("fill", "upscale"):
         import torch
 
+        import warnings
+
         path = _file(spec)
-        try:
-            import spandrel
+        # LaMa ships as TorchScript: spandrel's attempt and the fallback both go through
+        # torch.jit.load, whose deprecation notice is noise here.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            try:
+                import spandrel
 
-            model = spandrel.ModelLoader().load_from_file(path).to(_device()).eval()
-            return ("spandrel", model)
-        except Exception:
-            if t.kind != "fill":
-                raise
-            import warnings
-
-            with warnings.catch_warnings():  # LaMa ships as TorchScript; its deprecation notice is noise here
-                warnings.simplefilter("ignore", FutureWarning)
+                model = spandrel.ModelLoader().load_from_file(path).to(_device()).eval()
+                return ("spandrel", model)
+            except Exception:
+                if t.kind != "fill":
+                    raise
                 return ("torchscript", torch.jit.load(str(path), map_location=_device()).eval())
     if t.kind == "instruct":
         return _load_instruct(spec)
@@ -288,6 +303,7 @@ def _load(tool: str, spec: str):
 
     p = Path(spec).expanduser()
     kwargs = {"torch_dtype": torch.float16}
+    _quiet_empty_fp32_notice()
     if p.is_file():
         from diffusers import StableDiffusionXLInpaintPipeline
 
@@ -303,6 +319,22 @@ def _load(tool: str, spec: str):
         pipe = pipe.to("cuda")
     pipe.set_progress_bar_config(disable=True)
     return ("diffusers", pipe)
+
+
+class _EmptyFp32Notice:
+    """Loading a single checkpoint file, diffusers casts each part with ``.to()`` and warns
+    that "modules … should be kept in float32: []": with none listed, nothing is affected."""
+
+    def filter(self, record) -> bool:
+        return "should be kept in float32: []" not in record.getMessage()
+
+
+def _quiet_empty_fp32_notice() -> None:
+    import logging
+
+    log_ = logging.getLogger("diffusers.models.modeling_utils")
+    if not any(isinstance(f, _EmptyFp32Notice) for f in log_.filters):
+        log_.addFilter(_EmptyFp32Notice())
 
 
 def model_for(tool: str, choice: str | None):
@@ -379,9 +411,36 @@ def _context(box, size, least: int = MIN_CONTEXT, factor: float = CONTEXT) -> tu
     return cx, cy, cw, ch
 
 
-def _fit(im: Image.Image, edge: int, multiple: int = 8) -> Image.Image:
-    """``im`` scaled so its long side is at most ``edge``, both sides a multiple of ``multiple``."""
-    s = min(1.0, edge / max(im.size))
+def _grow(ctx, size, area: int) -> tuple[int, int, int, int]:
+    """The context ``ctx`` grown around its centre, within the image, until it covers
+    ``area`` pixels (or the whole image)."""
+    cx, cy, cw, ch = ctx
+    W, H = size
+    if cw * ch >= area:
+        return ctx
+    k = (area / (cw * ch)) ** 0.5
+    nw, nh = min(W, round(cw * k)), min(H, round(ch * k))
+    # A side stopped by the image's edge leaves the rest of the area to the other.
+    if nw == W:
+        nh = min(H, -(-area // nw))
+    elif nh == H:
+        nw = min(W, -(-area // nh))
+    cx = min(max(0, cx + cw // 2 - nw // 2), W - nw)
+    cy = min(max(0, cy + ch // 2 - nh // 2), H - nh)
+    return cx, cy, nw, nh
+
+
+def work_area(kind: str, loaded) -> int:
+    if kind == "fill":
+        return LAMA_AREA
+    pipe = loaded[1] if isinstance(loaded, tuple) else loaded
+    name = type(pipe).__name__
+    return DIFFUSION_AREA if ("XL" in name or "Flux" in name) else SD15_AREA
+
+
+def _fit(im: Image.Image, area: int, multiple: int = 8) -> Image.Image:
+    """``im`` scaled down to at most ``area`` pixels, both sides a multiple of ``multiple``."""
+    s = min(1.0, (area / (im.width * im.height)) ** 0.5)
     w = max(multiple, int(im.width * s) // multiple * multiple)
     h = max(multiple, int(im.height * s) // multiple * multiple)
     return im.resize((w, h), Image.Resampling.LANCZOS)
@@ -390,7 +449,8 @@ def _fit(im: Image.Image, edge: int, multiple: int = 8) -> Image.Image:
 def retouch(
     tool: str, image: Image.Image, mask: Image.Image, choice: str | None = None,
     prompt: str = "", negative: str = "", seed: int = 0, candidates: int = 1,
-    steps: int = 30, strength: float = 0.99,
+    steps: int = 30, strength: float = 0.99, blur: float | None = None, fill: str = "original",
+    fill_choice: str | None = None,
 ) -> list[Result]:
     """Run a retouching tool on the masked part of ``image`` (the full-size, retouched
     original). Returns one result, or ``candidates`` for a prompt."""
@@ -398,7 +458,9 @@ def retouch(
     image = image.convert("RGB")
     m = np.asarray(mask.convert("L").resize(image.size, Image.Resampling.BILINEAR)) > 127
     feather = max(3, round(max(image.size) * 0.004))
-    box = _box(m, 2 * feather)
+    # The mask's blur where the result meets the photo: in the editor's 1600 px, scaled.
+    radius = (DEFAULT_BLUR if blur is None else max(0.0, float(blur))) * max(image.size) / VIEW_EDGE
+    box = _box(m, max(2 * feather, int(np.ceil(3 * radius))))
     if box is None:
         if not t.mask_optional:
             raise ValueError("paint over what to change first")
@@ -406,8 +468,11 @@ def retouch(
         out = _instruct(model_for(tool, choice), image, prompt, seed, candidates, steps)
         full = Image.new("L", image.size, 255)
         return [Result(o, full, (0, 0, image.width, image.height)) for o in out]
+    loaded = model_for(tool, choice) if t.kind in ("fill", "diffusion") else None
     if t.kind != "instruct":
         cx, cy, cw, ch = _context(box, image.size)
+        if loaded is not None:
+            cx, cy, cw, ch = _grow((cx, cy, cw, ch), image.size, work_area(t.kind, loaded))
     elif box[2] < INSTRUCT_SMALL * image.width and box[3] < INSTRUCT_SMALL * image.height:
         cx, cy, cw, ch = _context(box, image.size, INSTRUCT_MIN_CONTEXT, INSTRUCT_CONTEXT)
     else:
@@ -423,9 +488,10 @@ def retouch(
         out = cv2.inpaint(bgr, np.asarray(hard), max(3, feather), cv2.INPAINT_TELEA)
         filled = [Image.fromarray(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))]
     elif t.kind == "fill":
-        filled = [_fill(model_for(tool, choice), crop, hard)]
+        filled = [_fill(loaded, crop, hard)]
     elif t.kind == "diffusion":
-        filled = _diffuse(model_for(tool, choice), crop, hard, prompt, negative, seed, candidates, steps, strength)
+        filled = _diffuse(loaded, crop, hard, prompt, negative, seed, candidates, steps, strength,
+                          fill, fill_choice)
     elif t.kind == "instruct":
         filled = [Image.composite(o, crop, hard) for o in _instruct(model_for(tool, choice), crop, prompt, seed, candidates, steps)]
     else:
@@ -433,14 +499,15 @@ def retouch(
 
     # The patch: the mask's box (in the context's coordinates), pasted through a soft mask.
     bx, by, bw, bh = box[0] - cx, box[1] - cy, box[2], box[3]
-    soft = hard.filter(ImageFilter.GaussianBlur(feather / 2))
+    soft = hard.filter(ImageFilter.GaussianBlur(radius)) if radius > 0 else hard
     soft_box = soft.crop((bx, by, bx + bw, by + bh))
     return [Result(f.crop((bx, by, bx + bw, by + bh)), soft_box, box) for f in filled]
 
 
 def retouch_regions(
     tool: str, image: Image.Image, mask: Image.Image, choice: str | None = None, *, prompt: str = "",
-    negative: str = "", seed: int = 0, steps: int | None = None, strength: float = 0.99, progress=None,
+    negative: str = "", seed: int = 0, steps: int | None = None, strength: float = 0.99, blur: float | None = None,
+    fill: str = "original", fill_choice: str | None = None, progress=None,
 ) -> Result | None:
     """``retouch`` for a mask of many separate things (people across a street): each area
     (parts close together count as one) is done on its own, with its own context, so a
@@ -460,7 +527,8 @@ def retouch_regions(
     for k in progress(areas, total=n - 1, desc="areas") if progress else areas:
         part = Image.fromarray(((labels == k) & (m > 0)).astype(np.uint8) * 255)
         res = retouch(tool, work, part, choice, prompt=prompt, negative=negative, seed=seed + k, candidates=1,
-                      steps=steps or STEPS.get(tool, 30), strength=strength)[0]
+                      steps=steps or STEPS.get(tool, 30), strength=strength, blur=blur, fill=fill,
+                      fill_choice=fill_choice)[0]
         x, y, w, h = res.bbox
         work.paste(res.patch, (x, y), res.mask)
         soft[y : y + h, x : x + w] = np.maximum(soft[y : y + h, x : x + w], np.asarray(res.mask))
@@ -473,7 +541,7 @@ def _fill(loaded, crop: Image.Image, mask: Image.Image) -> Image.Image:
     import torch
 
     kind, model = loaded
-    small = _fit(crop, LAMA_EDGE)
+    small = _fit(crop, LAMA_AREA)
     small_mask = mask.resize(small.size, Image.Resampling.NEAREST)
     dev = _device()
     x = torch.from_numpy(np.array(small)).permute(2, 0, 1)[None].float().to(dev) / 255
@@ -486,16 +554,40 @@ def _fill(loaded, crop: Image.Image, mask: Image.Image) -> Image.Image:
     return Image.composite(result, crop, mask)
 
 
-def _diffuse(loaded, crop, mask, prompt, negative, seed, candidates, steps, strength) -> list[Image.Image]:
+def prefill(image: Image.Image, mask: Image.Image, fill: str, seed: int = 0, fill_choice: str | None = None) -> Image.Image:
+    """``image`` with the mask's area filled as ``fill`` says (FILLS): what denoising
+    below 1 starts from there."""
+    if fill == "original" or fill not in FILLS:
+        return image
+    if fill == "remove":
+        return _fill(model_for("remove", fill_choice), image, mask)
+    import cv2
+
+    m = np.asarray(mask.convert("L"))
+    radius = max(3, round(max(image.size) * 0.01))
+    healed = cv2.inpaint(np.asarray(image.convert("RGB")), (m > 127).astype(np.uint8) * 255, radius, cv2.INPAINT_TELEA)
+    if fill == "noise":
+        rng = np.random.default_rng(seed)
+        h, w = healed.shape[:2]
+        cells = rng.normal(0, NOISE, (max(1, h // NOISE_CELL), max(1, w // NOISE_CELL), 3)).astype(np.float32)
+        noise = cv2.resize(cells, (w, h), interpolation=cv2.INTER_LINEAR)
+        healed = (healed.astype(np.float32) + noise).clip(0, 255).astype(np.uint8)
+    return Image.composite(Image.fromarray(healed), image, mask)
+
+
+def _diffuse(loaded, crop, mask, prompt, negative, seed, candidates, steps, strength, fill="original", fill_choice=None) -> list[Image.Image]:
     import torch
 
     _, pipe = loaded
-    small = _fit(crop, DIFFUSION_EDGE)
+    small = _fit(crop, work_area("diffusion", loaded))
     small_mask = mask.resize(small.size, Image.Resampling.NEAREST)
+    if strength < 1 and fill in ("heal", "remove"):  # (the same start for every candidate)
+        small = prefill(small, small_mask, fill, seed, fill_choice)
     out = []
     for k in range(max(1, min(4, candidates))):
         g = torch.Generator("cuda" if _cuda() else "cpu").manual_seed(int(seed) + k)
-        kwargs = dict(prompt=prompt or "", image=small, mask_image=small_mask, generator=g,
+        start = prefill(small, small_mask, "noise", int(seed) + k) if strength < 1 and fill == "noise" else small
+        kwargs = dict(prompt=prompt or "", image=start, mask_image=small_mask, generator=g,
                       num_inference_steps=int(steps), width=small.width, height=small.height)
         if negative and "flux" not in type(pipe).__name__.lower():
             kwargs["negative_prompt"] = negative
