@@ -97,8 +97,15 @@ def main(argv=None) -> None:
         sigma = max(1.0, 1.5 * info["scale"])
         blur = lambda x: cv2.GaussianBlur(x, (0, 0), sigma)
         de = np.sqrt(((lab(blur(np.clip(img, 0, 1))) - lab(blur(np.clip(aligned, 0, 1)))) ** 2).sum(-1))[valid]
-        print(f"{line}; aligned x{info['scale']:.3f} ({info['inliers']} features, {info['error_px']} px apart): "
-              f"ΔE median {np.median(de):.2f}, 95th pct {np.percentile(de, 95):.2f}")
+        # Downscale DNG to match RAW for fidelity metrics
+        dng_1x = cv2.warpAffine(img, cv2.invertAffineTransform(M[:2]), (W, H), flags=cv2.INTER_LANCZOS4)
+        valid_1x = (dng_1x >= 0).all(axis=2)
+        mse_1x = ((ref - dng_1x)**2).sum(-1)[valid_1x].mean()
+        psnr_1x = -10 * np.log10(mse_1x + 1e-8)
+        
+        print(f"{line}; aligned x{info['scale']:.3f} ({info['inliers']} features, {info['error_px']} px apart): ")
+        print(f"  ΔE median {np.median(de):.2f}, 95th pct {np.percentile(de, 95):.2f}")
+        print(f"  Downscaled PSNR vs Native RAW: {psnr_1x:.2f} dB")
         cx, cy = int(fx * w), int(fy * h)
         side = int(size * info["scale"])
         box = (max(0, cx - side // 2), max(0, cy - side // 2))

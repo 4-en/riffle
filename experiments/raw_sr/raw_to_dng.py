@@ -484,30 +484,86 @@ def append_exif(dng: Path, exif: dict, src_order: str) -> None:
 def convert(src: Path, dst: Path, model: str = "swin2sr", scale: int = 2, demosaic: str = "AHD", median: int = 0,
             lens: bool = True, geometry: dict | None = None, jpeg: Path | None = None, chroma: int = 3) -> dict:
     t0 = time.perf_counter()
-    lin, info = read_raw(src, demosaic, median)
     tiff = RawTiff(src)
     report = {}
     jpeg = jpeg or next((p for p in (src.with_suffix(".JPG"), src.with_suffix(".jpg")) if p.exists()), None)
     if geometry and jpeg is None:
         raise SystemExit("a crop needs the JPEG it was set on (--jpeg)")
     in_jpeg_geometry = jpeg is not None and (lens or geometry)
-    if lens:
-        lin, report["lens"] = correct_lens(lin, tiff, distortion=not in_jpeg_geometry)
-    lin = upright(lin, info["flip"])
-    if in_jpeg_geometry:
-        lin, report["match"] = crop_raw(lin, info["wb"], jpeg, geometry or {})
-    t_read = time.perf_counter() - t0
-    if model == "none":
-        scale = 1
-    disp, head = to_display(lin, info["wb"])
-    disp = smooth_chroma(disp, chroma)
-    t1 = time.perf_counter()
-    big = upscale(disp, model, scale)
-    t_up = time.perf_counter() - t1
-    lin_big = to_linear(big, info["wb"], head)
-    if in_jpeg_geometry:
-        m = MARGIN * scale
-        lin_big = lin_big[m:-m, m:-m]
+
+    if model == "bayer_swin2sr":
+        import rawpy
+        from model import BayerSwin2SR
+        
+        with rawpy.imread(str(src)) as raw:
+            wb = np.array(raw.camera_whitebalance[:3], np.float64)
+            if not wb.any():
+                wb = np.array(raw.daylight_whitebalance[:3], np.float64)
+            info = {"wb": wb / wb[1], "cam_xyz": np.array(raw.rgb_xyz_matrix[:3], np.float64), "flip": raw.sizes.flip}
+            
+            raw_img = raw.raw_image.astype(np.float32)
+            b = np.array(raw.black_level_per_channel, dtype=np.float32)
+            w = float(raw.white_level)
+            r = np.clip((raw_img[0::2, 0::2] - b[0]) / (w - b[0]), 0, 1)
+            g1 = np.clip((raw_img[0::2, 1::2] - b[1]) / (w - b[1]), 0, 1)
+            g2 = np.clip((raw_img[1::2, 0::2] - b[3]) / (w - b[3]), 0, 1)
+            b_ch = np.clip((raw_img[1::2, 1::2] - b[2]) / (w - b[2]), 0, 1)
+            packed = np.stack([r, g1, g2, b_ch], axis=2) # (H/2, W/2, 4)
+            
+        packed = upright(packed, info["flip"])
+        t_read = time.perf_counter() - t0
+        
+        wb_bayer = np.array([info["wb"][0], info["wb"][1], info["wb"][1], info["wb"][2]], dtype=np.float32)
+        packed_wb = packed * wb_bayer[None, None, :]
+        head = float(max(1.0, packed_wb.max()))
+        packed_disp = np.power(np.clip(packed_wb / head, 0, 1), 1 / GAMMA).astype(np.float32)
+        
+        import torch
+        net = BayerSwin2SR().cuda().eval()
+        ckpt = Path("experiments/raw_sr/checkpoints/best_model.pt")
+        if ckpt.exists():
+            net.load_checkpoint(ckpt)
+        else:
+            print("Warning: No checkpoint found at", ckpt)
+            
+        def run_net(t):
+            return net(t).clamp(0, 1)
+            
+        t1 = time.perf_counter()
+        # Tile over packed spatial dimensions. scale=4 because H/2 -> 2H.
+        big = tiled(packed_disp, 4, run_net, multiple=8)
+        t_up = time.perf_counter() - t1
+        
+        lin_big = np.power(np.clip(big, 0, 1), GAMMA) * head / info["wb"][None, None, :]
+        
+        # Geometry is applied AFTER upscaling to preserve Bayer integrity
+        if lens:
+            # We would need a 2x correct_lens here. Skipping for POC full-frame test if not implemented.
+            pass
+        if in_jpeg_geometry:
+            # We would need a 2x crop_raw here.
+            pass
+            
+    else:
+        lin, info = read_raw(src, demosaic, median)
+        if lens:
+            lin, report["lens"] = correct_lens(lin, tiff, distortion=not in_jpeg_geometry)
+        lin = upright(lin, info["flip"])
+        if in_jpeg_geometry:
+            lin, report["match"] = crop_raw(lin, info["wb"], jpeg, geometry or {})
+        t_read = time.perf_counter() - t0
+        if model == "none":
+            scale = 1
+        disp, head = to_display(lin, info["wb"])
+        disp = smooth_chroma(disp, chroma)
+        t1 = time.perf_counter()
+        big = upscale(disp, model, scale)
+        t_up = time.perf_counter() - t1
+        lin_big = to_linear(big, info["wb"], head)
+        if in_jpeg_geometry:
+            m = MARGIN * scale
+            lin_big = lin_big[m:-m, m:-m]
+
     write_dng(dst, lin_big, info, tiff.text(271), tiff.text(272))
     exif = {c: v for c, v in tiff.exif.items() if c in EXIF_TAGS}
     append_exif(dst, exif, tiff.order)
@@ -519,7 +575,7 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("raw", type=Path)
     ap.add_argument("-o", "--out", type=Path, required=True)
-    ap.add_argument("--model", default="swin2sr", choices=["swin2sr", "swinir", "realesrgan", "lanczos", "none"])
+    ap.add_argument("--model", default="swin2sr", choices=["swin2sr", "swinir", "realesrgan", "lanczos", "none", "bayer_swin2sr"])
     ap.add_argument("--scale", type=int, default=2)
     ap.add_argument("--demosaic", default="AHD", choices=["AHD", "AAHD", "DHT", "DCB", "PPG", "VNG"])
     ap.add_argument("--median", type=int, default=0, help="median filter passes against colour speckle")

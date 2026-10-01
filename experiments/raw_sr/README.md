@@ -146,3 +146,61 @@ values (so shadows count), fp16 training on the RTX 3090. A run: hours to a day 
 demosaicing speckle, not a different class of image. A single RAW holds real new detail
 for perhaps ×1.3–1.5; beyond that a faithful model stays soft and a less faithful one
 invents detail. The High Res Shot pairs show where that limit lies for this camera and lens.
+
+## Training data (step 1)
+
+```sh
+venv/bin/python experiments/raw_sr/prepare_dataset.py --data-dir ~/Pictures/photos
+venv/bin/python experiments/raw_sr/train.py --save-val-image
+```
+
+`prepare_dataset.py` writes `data_binned/{train,val}/*.npz` (320 × 320 patches, 24 per RAW,
+a fifth of them random rather than the most textured, so flat areas and their noise are
+learnt too), `noise.csv` (per photo) and `noise.json` (the library's noise per ISO). About
+0.65 MB per patch, 17 GB for 1,000 RAWs. Held-out photos go to `val/`.
+
+What a patch is (`dataset.py`):
+- **Planes.** The four Bayer planes, black 0, white 1, before white balance, each shifted a
+  quarter of its pitch (Lanczos) to the centre of its 2×2 quad, so all four are sampled at
+  the same points. No demosaicing.
+- **Target.** Per quad: R, the mean of the two greens, B. Linear camera RGB at half the
+  RAW's resolution.
+- **Input.** Each 2×2 block of quads averaged per colour (what a sensor with pixels twice as
+  large records), one colour kept per site in RGGB order. These are averages of real sensor
+  pixels; the re-mosaic only drops colours, as a sensor does. Then blur and noise (below).
+- Packed input (4, P/4, P/4) → target (3, P, P): ×2 over the mosaic, as at inference.
+- Crops keep to the 4 px RGGB grid; rotations and flips are free, since the planes are
+  aligned. Validation samples are fixed per index.
+
+**Why not 2×2 binning of the packed planes** (the first version): it averages R, G1, G2 and B
+over the same 4 × 4 pixels, which puts the colours a quarter of a site apart instead of
+half. On a linear ramp, R and B landed 0.68 px from where a real mosaic samples them;
+with the shifted planes, 0.04 px.
+
+**Noise.** Each G1 is compared with the mean of its four diagonal G2 neighbours (cancels
+linear gradients; 1.25× a pixel's variance in flat areas), in the flattest 10 % of each level
+band, with a 3σ-clipped variance (a MAD is stepped by the 12-bit levels). Across 30 ORFs one
+pixel's variance is 4.6 × 10⁻⁵ · s · ISO/200 (σ 0.0029 at s = 0.18, ISO 200); photos with
+little flat area read up to 3× higher, so the library median per ISO is used. Read noise
+was not measurable above s = 0.02. The input gets noise so that each site is as noisy as
+one pixel, times a log-uniform gain of 0.7–3 (`--noise-gain`).
+
+**Blur.** A downscaled image is crisper per pixel than a native one. On the same regions
+(most textured quarter), the high-band to mid-band power of real native mosaics matches the
+synthetic input at Gaussian σ 1.25–3.1 target px (median 2.4). The input is blurred by
+σ 0.5–3.5 (`--blur`); the target by a fraction of that (`--target-blur`, default 0.5): 0
+teaches full sharpening (and inventing detail where it cannot), 1 none (as soft as the
+lens). This is the main setting to judge by eye and against High Res Shot pairs.
+
+**Monochrome** (`train.py --monochrome`, `model_mono.py`). The target is one fixed mix,
+(R + 2G + B) / 4 of white-balanced camera RGB, in linear light. Other mixes come from scaling
+the input channels before the model, as a colour filter in front of the lens does:
+`dataset.mix_gains`. In training, 70 % of samples (`--mix-prob`) get random channel gains
+(R and B down to 0.005, G to 0.2 of the largest), applied after the noise as at inference.
+- Luminance: CIE Y from the camera matrix needs a negative blue weight in camera RGB
+  (OM-5 II: 0.13 R + 1.09 G − 0.23 B), which gains cannot make. `dataset.luminance_weights`
+  fits the closest non-negative weights on the photo's own colours (each ≥ 0.02); on 30 ORFs
+  about 0.18 R + 0.82 G, 5 % off at the median, blues brighter and foliage darker.
+- Filters (`FILTERS`: yellow, orange, red, green, blue) multiply that mix by an approximate
+  transmission; red needs blue at 0.005 of the largest gain, the edge of the trained range.
+  Since the luminance fit has almost no blue, the blue filter is weak; pass `mix=` instead.
