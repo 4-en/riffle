@@ -167,8 +167,14 @@ inference ISO / 200 × `--denoise`). Without it the model has to guess, and sinc
 noise averages 1.45× a real RAW's, it smoothed subtle texture (a bee's eye) as noise. It is
 a learned offset on the first convolution's features (what a constant input channel adds),
 zero at first, so older checkpoints load and behave as before (`train.py --init`).
-`--denoise` below 1 keeps more texture and grain, above 1 smooths more; values outside the
-trained `--noise-gain` range are extrapolation.
+As a plain noise level, the model learnt to ignore it: the noise is visible in the input, so
+the number added nothing (`--denoise` 0.1 vs 1 changed the output by a third of an 8-bit
+step). So it means the noise to remove: in half the samples (`--partial-denoise`) part of the
+input's added noise also goes into the target, interpolated per colour from its sites
+(`dataset.keep_noise`), and the model is told only the rest. `--denoise` is the share of the
+photo's noise variance to remove: 1 all, lower keeps the RAW's own noise and the fine texture
+it hides. About a fifth (the patches' own noise, which cannot be split off) is always removed
+in training, so below 0.2 is extrapolation.
 
 Clipped highlights are made neutral before the model (and in training): where a channel
 reached the white level, all channels are capped at the lowest one's clip level. Without
@@ -225,3 +231,17 @@ the input channels before the model, as a colour filter in front of the lens doe
 - Filters (`FILTERS`: yellow, orange, red, green, blue) multiply that mix by an approximate
   transmission; red needs blue at 0.005 of the largest gain, the edge of the trained range.
   Since the luminance fit has almost no blue, the blue filter is weak; pass `mix=` instead.
+
+**Loss: texture without its exact position (optional).** L1 and the edge loss compare each pixel
+with the same target pixel. Fine texture the input determines only to within a pixel is then
+cheaper blurred than placed slightly off: on a test texture, a 1 px shift cost L1 0.046,
+blurring it 0.035. Two options in `train.py`, off by default:
+- `--coarse-l1`: L1 and edge loss on the 2×-downscaled output, plus `--anchor-weight` (0.25)
+  × full-resolution L1. What the input determines must still match.
+- `--spectral-weight`: L1 between the magnitude spectra of luma in overlapping 16 × 16 windows,
+  which do not change when content shifts within a window (the same test: 0.007 for the shift,
+  0.030 for the blur). The target's own noise is subtracted from its power first (its expected
+  variance per pixel comes from the dataset, through the target blur), so the model is not
+  rewarded for making noise; on flat areas the estimate matches the target's noise (0.98× at
+  the highest frequencies, without target blur).
+Loss sizes after an epoch: coarse L1 0.005, edge 0.008, spectral 0.002, so a weight of about 3.

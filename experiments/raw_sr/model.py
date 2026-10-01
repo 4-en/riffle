@@ -24,8 +24,9 @@ class BayerModelBase(nn.Module):
     """
     Shared by the RGB and monochrome models: noise conditioning and checkpoints.
 
-    forward(x, noise): noise is (B,) log2 of the input's noise variance relative to one pixel
-    at ISO 200 (dataset: noise gain × ISO / 200; at inference ISO / 200 × the denoise setting).
+    forward(x, noise): noise is (B,) log2 of the noise variance to remove, relative to one
+    pixel at ISO 200. In training that is all of the input's noise, or part of it, the rest
+    staying in the target (dataset.keep_noise); at inference ISO / 200 × the denoise setting.
     None leaves the features as they are.
     """
 

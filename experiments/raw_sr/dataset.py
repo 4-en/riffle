@@ -38,7 +38,8 @@ def _lanczos4_weights(t):
 # Noise left in an input site, as a fraction of one pixel's variance: the Lanczos shift
 # (per axis) and the 2×2 average of quads. The rest is added back in the dataset.
 _w = _lanczos4_weights(0.25)
-RESIDUAL_NOISE = float((_w ** 2).sum()) ** 2 / 4
+SHIFT_NOISE = float((_w ** 2).sum()) ** 2  # a shifted plane's share of one pixel's variance
+RESIDUAL_NOISE = SHIFT_NOISE / 4
 
 
 def read_iso(path):
@@ -227,9 +228,29 @@ def mix_gains(mix=None, filter="none", luminance=None):
     return k.astype(np.float32)
 
 
+# Centre (y, x) of each colour's site in an RGGB superblock, in target px (a site is 2 × 2)
+SITE_CENTRES = [(0.5, 0.5), (0.5, 2.5), (2.5, 0.5), (2.5, 2.5)]
+
+
+def keep_noise(noise, size):
+    """
+    The input's per-site noise (4, P/4, P/4; R G1 G2 B) as RGB noise on the target's grid
+    (3, P, P): each colour's sites interpolated bilinearly from where they sit, greens averaged.
+    What a ×2 image looks like that keeps the RAW's own noise, at its pixel scale.
+    """
+    planes = []
+    for n, (cy, cx) in zip(noise, SITE_CENTRES):
+        # dst(x, y) = src((x - cx) / 4, (y - cy) / 4): a site's value lands on its centre
+        M = np.float32([[0.25, 0, -cx / 4], [0, 0.25, -cy / 4]])
+        planes.append(cv2.warpAffine(n, M, (size, size), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+                                     borderMode=cv2.BORDER_REFLECT))
+    return np.stack([planes[0], 0.5 * (planes[1] + planes[2]), planes[3]])
+
+
 class BayerPatchDataset(Dataset):
     def __init__(self, patch_dir, patch_size=256, is_train=True, monochrome=False,
-                 noise_gain=(0.7, 3.0), blur=(0.5, 3.5), target_blur=0.5, mix_prob=0.7):
+                 noise_gain=(0.7, 3.0), blur=(0.5, 3.5), target_blur=0.5, mix_prob=0.7,
+                 partial_denoise=0.5):
         """
         patch_dir:  .npz patches from prepare_dataset.py; its parent holds noise.json
         patch_size: target size (a multiple of 32; the packed input is a quarter of it)
@@ -242,8 +263,11 @@ class BayerPatchDataset(Dataset):
                     1 to keep all of it (as soft as the lens, like a faithful ×2)
         monochrome: 1-channel target, MONO_MIX in linear light
         mix_prob:   monochrome only: share of samples with random channel gains (see MONO_MIX)
+        partial_denoise: share of samples where the model is to remove only part of the noise
+                    (see keep_noise); the rest remove all of it
         Validation samples are deterministic per index (crop, noise, blur, gains).
-        Returns (input, target, noise level): see model.BayerModelBase for the noise level.
+        Returns (input, target, noise level, target noise): see model.BayerModelBase for the
+        noise level; target noise is the target's own expected noise, for train.spectral_loss.
         """
         self.patch_files = sorted(Path(patch_dir).glob("*.npz"))
         if not self.patch_files:
@@ -257,6 +281,7 @@ class BayerPatchDataset(Dataset):
         self.blur = blur
         self.target_blur = target_blur
         self.mix_prob = mix_prob
+        self.partial_denoise = partial_denoise
         with open(Path(patch_dir).parent / "noise.json") as f:
             self.noise_iso200 = json.load(f)  # {"a": …, "b": …}: pixel variance a·s + b at ISO 200
 
@@ -297,9 +322,21 @@ class BayerPatchDataset(Dataset):
         target = np.stack([t[0], 0.5 * (t[1] + t[2]), t[3]])
         inp = mosaic(blurred(planes, sigma))
 
+        # Noise: the input gets `gain` × one pixel's variance in all. Of the added part, `keep`
+        # (in the same units) also goes into the target, so the model learns to remove only
+        # `gain - keep`: the level it is told (see the end). The patch's own residual noise
+        # cannot be split off, so at most the added part is kept.
         gain = math.exp(rng.uniform(math.log(self.noise_gain[0]), math.log(self.noise_gain[1])))
-        var = max(gain - RESIDUAL_NOISE, 0.0) * (a * np.clip(inp, 0, None) + b)
-        inp = np.clip(inp + rng.standard_normal(inp.shape, dtype=np.float32) * np.sqrt(var), 0, 1)
+        added = max(gain - RESIDUAL_NOISE, 0.0)
+        keep = 0.0
+        if rng.random() < self.partial_denoise:
+            keep = min((1 - rng.uniform(0, 1)) * gain, added)
+        unit = a * np.clip(inp, 0, None) + b  # one pixel's variance at each site
+        n_keep = rng.standard_normal(inp.shape, dtype=np.float32) * np.sqrt(keep * unit)
+        n_rest = rng.standard_normal(inp.shape, dtype=np.float32) * np.sqrt((added - keep) * unit)
+        inp = np.clip(inp + n_keep + n_rest, 0, 1)
+        if keep > 0:
+            target = target + keep_noise(n_keep, P)
 
         # White balance (and for monochrome, channel gains after the noise, as at inference),
         # scale to the input's peak (as at inference), gamma
@@ -318,15 +355,34 @@ class BayerPatchDataset(Dataset):
         clipped_in = cv2.dilate(clipped_in, np.ones((3, 3), np.uint8)).astype(bool)
         inp[:, clipped_in] = np.minimum(inp[:, clipped_in], level)
 
+        # The target's own noise (not the kept part): its variance per pixel before the target
+        # blur, in raw units times the white balance squared. R and B of a quad are one shifted
+        # pixel, G the mean of two; none where highlights were capped.
+        level_raw = np.clip(target / wb[:, None, None], 0, None)
+        var = (SHIFT_NOISE * (a * level_raw + b) * np.array([1, 0.5, 1], np.float32)[:, None, None]
+               * (wb.astype(np.float32) ** 2)[:, None, None])
+        var[:, clipped.astype(bool)] = 0
+
         head = float(max(1.0, inp.max()))
         if self.monochrome:
             target = np.tensordot(MONO_MIX.astype(np.float32), target, axes=1)[None]
+            var = np.tensordot((MONO_MIX ** 2).astype(np.float32), var, axes=1)[None]
+        # ... and after scaling and gamma, as the variance of the luma the spectral loss uses
+        x = np.clip(target / head, 1e-3, 1)
+        var = var / head ** 2 * ((1 / GAMMA) * x ** (1 / GAMMA - 1)) ** 2
+        if not self.monochrome:
+            var = np.tensordot((MONO_MIX ** 2).astype(np.float32), var, axes=1)[None]
         inp = np.power(np.clip(inp / head, 0, 1), 1 / GAMMA).astype(np.float32)
         target = np.power(np.clip(target / head, 0, 1), 1 / GAMMA).astype(np.float32)
 
-        # The model's noise input: log2 of the input's noise relative to one pixel at ISO 200
-        noise = torch.tensor(math.log2(gain * iso / 200), dtype=torch.float32)
-        return torch.from_numpy(inp), torch.from_numpy(np.ascontiguousarray(target)), noise
+        # The model's noise input: log2 of the noise variance to remove, relative to one pixel
+        # at ISO 200 (all of it, gain × ISO / 200, unless part is kept)
+        noise = torch.tensor(math.log2((gain - keep) * iso / 200), dtype=torch.float32)
+        target_noise = {
+            "var": torch.from_numpy(var.astype(np.float32)),  # (1, P, P): white noise, before the blur
+            "sigma": torch.tensor(sigma * self.target_blur if sigma * self.target_blur >= 0.05 else 0.0),
+        }
+        return torch.from_numpy(inp), torch.from_numpy(np.ascontiguousarray(target)), noise, target_noise
 
     def _mix_gains(self, rng):
         """Random channel gains (R, G, B), normalised so a neutral grey keeps its brightness."""

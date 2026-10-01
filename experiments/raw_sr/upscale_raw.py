@@ -96,7 +96,7 @@ def main(argv=None):
     ap.add_argument("--checkpoint", type=Path, help="default: checkpoints/best_psnr.pt (checkpoints_mono/ for mono)")
     ap.add_argument("--crop", help="x,y,w,h: fractions of the upright frame (a whole frame takes minutes)")
     ap.add_argument("--denoise", type=float, default=1.0,
-                    help="noise level the model is told, relative to the photo's (from its ISO): below 1 keeps more fine texture and grain, above 1 smooths more")
+                    help="share of the photo's noise variance to remove, 0.2-1 (1: all of it; lower keeps the RAW's own noise and the fine texture it hides)")
     ap.add_argument("--fp32", action="store_true", help="full precision (default: fp16 autocast, as in training)")
     mono = ap.add_argument_group("monochrome mix (default: the photo's luminance, non-negative fit)")
     mono.add_argument("--filter", choices=list(FILTERS), default="none", help="a black-and-white filter on top of the luminance")
@@ -141,7 +141,10 @@ def main(argv=None):
 
     net = load_model(a.model, checkpoint)
     iso = read_iso(a.raw) or 200
-    noise = torch.tensor([np.log2(iso / 200 * a.denoise)], dtype=torch.float32, device="cuda")
+    if not 0.2 <= a.denoise <= 1:
+        print("warning: --denoise outside 0.2-1 is outside training (the patches' own noise, "
+              "about a fifth, is always removed)")
+    noise = torch.tensor([np.log2(iso / 200 * max(a.denoise, 0.01))], dtype=torch.float32, device="cuda")
     if not net.noise_conditioned:
         noise = None
         if a.denoise != 1.0:

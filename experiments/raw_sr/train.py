@@ -9,7 +9,7 @@ import math
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
-from dataset import BayerPatchDataset
+from dataset import MONO_MIX, BayerPatchDataset
 from model import BayerSwin2SR
 from model_mono import BayerSwin2SRMono
 
@@ -68,6 +68,49 @@ class LaplacianSharpnessVarianceLoss(nn.Module):
         l1_std = F.l1_loss(std_p, std_t)
         ratio_loss = torch.mean(torch.abs(var_p / (var_t + 1e-5) - 1.0))
         return l1_std + 0.1 * ratio_loss
+
+def luma(img):
+    """(B, 1, H, W): a monochrome image as it is, RGB as MONO_MIX of its gamma-encoded channels."""
+    if img.shape[1] == 1:
+        return img
+    w = torch.tensor(MONO_MIX, device=img.device, dtype=img.dtype).view(1, 3, 1, 1)
+    return (img * w).sum(dim=1, keepdim=True)
+
+
+def spectral_loss(pred, target, target_noise, win=16):
+    """
+    L1 between the magnitude spectra of luma in overlapping win × win windows (Hann). The
+    magnitude does not change when content shifts within a window, so this checks that the
+    right fine texture is there (amount, direction, fineness) without its exact sub-pixel
+    position. The target's own noise is subtracted from its power first (white noise of the
+    window's expected variance, through the target blur): otherwise the model would be
+    rewarded for making noise of the same spectrum.
+    """
+    p, t = luma(pred.float()), luma(target.float())
+    var, sigma = target_noise["var"].float(), target_noise["sigma"].float()
+    B, stride = p.shape[0], win // 2
+
+    def windows(x):  # (B, 1, H, W) → (B, N, win, win)
+        return x.unfold(2, win, stride).unfold(3, win, stride).reshape(B, -1, win, win)
+
+    hann = torch.hann_window(win, periodic=False, device=p.device)
+    w2 = hann[:, None] * hann[None, :]
+    norm = w2.pow(2).sum()
+
+    def power(x):  # per window, normalised so white noise of variance v has power v
+        x = x - x.mean(dim=(-2, -1), keepdim=True)
+        return torch.fft.rfft2(x * w2).abs().pow(2) / norm
+
+    fy = torch.fft.fftfreq(win, device=p.device)[:, None]
+    fx = torch.fft.rfftfreq(win, device=p.device)[None, :]
+    blur = torch.exp(-4 * math.pi ** 2 * sigma.view(B, 1, 1, 1) ** 2 * (fy ** 2 + fx ** 2))
+    floor = windows(var).mean(dim=(-2, -1), keepdim=True) * blur
+
+    amp_p = torch.sqrt(power(windows(p)) + 1e-12)
+    amp_t = torch.sqrt(torch.clamp(power(windows(t)) - floor, min=0) + 1e-12)
+    mask = torch.ones_like(amp_p[0, 0]); mask[0, 0] = 0  # not the window's mean
+    return (torch.abs(amp_p - amp_t) * mask).sum() / (mask.sum() * amp_p.shape[0] * amp_p.shape[1])
+
 
 def compute_sharpness_metrics(pred, target):
     """
@@ -184,8 +227,12 @@ def main():
     parser.add_argument("--random-first-conv", action="store_true", help="Initialize first_conv randomly with Kaiming Normal (no RGB bias)")
     parser.add_argument("--edge-weight", type=float, default=1.0, help="Weight of EdgeLoss relative to L1")
     parser.add_argument("--sharp-weight", type=float, default=0.5, help="Weight of Laplacian Sharpness Variance Loss")
+    parser.add_argument("--spectral-weight", type=float, default=0.0, help="Weight of the spectral loss: fine texture compared without its exact position (train.spectral_loss)")
+    parser.add_argument("--coarse-l1", action="store_true", help="L1 and edge loss on the 2×-downscaled output (what the input determines), plus --anchor-weight × full-resolution L1")
+    parser.add_argument("--anchor-weight", type=float, default=0.25, help="With --coarse-l1: weight of the full-resolution L1")
     parser.add_argument("--noise-gain", type=float, nargs=2, default=[0.7, 3.0], metavar=("MIN", "MAX"), help="Input noise range, relative to one pixel of the photo (log-uniform)")
     parser.add_argument("--blur", type=float, nargs=2, default=[0.5, 3.5], metavar=("MIN", "MAX"), help="Input blur sigma range (target px), for the lens blur a native pixel has")
+    parser.add_argument("--partial-denoise", type=float, default=0.5, help="Share of samples where only part of the noise is to be removed (the rest stays in the target), for upscale_raw.py --denoise")
     parser.add_argument("--mix-prob", type=float, default=0.7, help="Monochrome: share of samples with random channel gains (for other black-and-white mixes at inference)")
     parser.add_argument("--target-blur", type=float, default=0.5, help="Target blur as a fraction of the input's: 0 = learn full sharpening, 1 = none")
     parser.add_argument("--patch-size", type=int, default=256)
@@ -208,14 +255,14 @@ def main():
     args.save_dir.mkdir(parents=True, exist_ok=True)
     mode_str = "MONOCHROME (1-channel luminance target)" if args.monochrome else "RGB (3-channel target)"
     print(f"Mode: {mode_str} | Save Dir: {args.save_dir}")
-    print(f"Loss configuration: L1 + {args.edge_weight}*EdgeLoss + {args.sharp_weight}*LaplacianSharpnessVarianceLoss | Noise gain: {args.noise_gain} | Blur: {args.blur}, target ×{args.target_blur}")
+    print(f"Loss configuration: L1 + {args.edge_weight}*EdgeLoss + {args.sharp_weight}*LaplacianSharpnessVarianceLoss | Spectral: {args.spectral_weight}, coarse L1: {args.coarse_l1} (anchor {args.anchor_weight}) | Noise gain: {args.noise_gain} | Blur: {args.blur}, target ×{args.target_blur}")
     if args.save_val_image:
         val_preview_dir.mkdir(parents=True, exist_ok=True)
         print(f"Validation previews enabled: will save to {val_preview_dir}")
 
     ds_args = dict(patch_size=args.patch_size, monochrome=args.monochrome,
                    noise_gain=tuple(args.noise_gain), blur=tuple(args.blur), target_blur=args.target_blur,
-                   mix_prob=args.mix_prob)
+                   mix_prob=args.mix_prob, partial_denoise=args.partial_denoise)
     train_ds = BayerPatchDataset(args.patches_dir / "train", is_train=True, **ds_args)
     val_ds = BayerPatchDataset(args.patches_dir / "val", is_train=False, **ds_args)
     print(f"Loaded {len(train_ds)} train patches, {len(val_ds)} val patches from {args.patches_dir}")
@@ -267,6 +314,23 @@ def main():
     edge_loss_fn = EdgeLoss(channels=channels).to(device)
     sharp_loss_fn = LaplacianSharpnessVarianceLoss().to(device)
 
+    def compute_loss(out, y, target_noise):
+        parts = {}
+        if args.coarse_l1:
+            o2, y2 = F.avg_pool2d(out, 2), F.avg_pool2d(y, 2)
+            parts["l1"] = F.l1_loss(o2, y2) + args.anchor_weight * F.l1_loss(out, y)
+            parts["edge"] = edge_loss_fn(o2, y2)
+        else:
+            parts["l1"] = F.l1_loss(out, y)
+            parts["edge"] = edge_loss_fn(out, y)
+        parts["sharp"] = sharp_loss_fn(out, y) if args.sharp_weight else out.new_zeros(())
+        loss = parts["l1"] + args.edge_weight * parts["edge"] + args.sharp_weight * parts["sharp"]
+        if args.spectral_weight:
+            with torch.autocast(device.type, enabled=False):
+                parts["spec"] = spectral_loss(out, y, target_noise)
+            loss = loss + args.spectral_weight * parts["spec"]
+        return loss, parts
+
     best_val_loss = float('inf')
     best_psnr = 0.0
     best_sharpness = 0.0
@@ -279,17 +343,15 @@ def main():
         model.train()
         train_loss = 0.0
         pbar = tqdm(train_dl, desc=f"Epoch {epoch+1}/{args.epochs}", leave=False)
-        for x, y, n in pbar:
+        for x, y, n, tn in pbar:
             x, y, n = x.to(device), y.to(device), n.to(device)
+            tn = {k: v.to(device) for k, v in tn.items()}
             optimizer.zero_grad()
-            
+
             with torch.amp.autocast('cuda' if torch.cuda.is_available() else 'cpu'):
                 out = model(x, n)
-                l1 = F.l1_loss(out, y)
-                edge = edge_loss_fn(out, y)
-                sharp = sharp_loss_fn(out, y)
-                loss = l1 + args.edge_weight * edge + args.sharp_weight * sharp
-                
+                loss, parts = compute_loss(out, y, tn)
+
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -297,12 +359,7 @@ def main():
             
             train_loss += loss.item()
             curr_lr = scheduler.get_last_lr()[0]
-            pbar.set_postfix({
-                "l1": f"{l1.item():.4f}",
-                "edge": f"{edge.item():.4f}",
-                "sharp": f"{sharp.item():.4f}",
-                "lr": f"{curr_lr:.2e}"
-            })
+            pbar.set_postfix({**{k: f"{v.item():.4f}" for k, v in parts.items()}, "lr": f"{curr_lr:.2e}"})
             
         train_loss /= len(train_dl)
         
@@ -312,14 +369,12 @@ def main():
         psnr_list, edge_psnr_list, s_ratio_list = [], [], []
 
         with torch.no_grad():
-            for i_val, (x, y, n) in enumerate(val_dl):
+            for i_val, (x, y, n, tn) in enumerate(val_dl):
                 x, y, n = x.to(device), y.to(device), n.to(device)
+                tn = {k: v.to(device) for k, v in tn.items()}
                 with torch.amp.autocast('cuda' if torch.cuda.is_available() else 'cpu'):
                     out = model(x, n)
-                    l1 = F.l1_loss(out, y)
-                    edge = edge_loss_fn(out, y)
-                    sharp = sharp_loss_fn(out, y)
-                    loss = l1 + args.edge_weight * edge + args.sharp_weight * sharp
+                    loss, _ = compute_loss(out, y, tn)
 
                 val_loss += loss.item()
                 p, ep, sr = compute_sharpness_metrics(out, y)
