@@ -243,6 +243,7 @@ class BayerPatchDataset(Dataset):
         monochrome: 1-channel target, MONO_MIX in linear light
         mix_prob:   monochrome only: share of samples with random channel gains (see MONO_MIX)
         Validation samples are deterministic per index (crop, noise, blur, gains).
+        Returns (input, target, noise level): see model.BayerModelBase for the noise level.
         """
         self.patch_files = sorted(Path(patch_dir).glob("*.npz"))
         if not self.patch_files:
@@ -306,13 +307,26 @@ class BayerPatchDataset(Dataset):
             wb = wb * self._mix_gains(rng)
         inp = inp * np.array([wb[0], wb[1], wb[1], wb[2]], np.float32)[:, None, None]
         target = target * wb[:, None, None]
+
+        # Clipped highlights made neutral, as upscale_raw.clip_highlights does at inference:
+        # where a channel reached the white level, all channels capped at the lowest one's
+        # clip level (otherwise a clipped green turns magenta after white balance)
+        clipped = cv2.dilate((planes >= 0.99).any(axis=0).astype(np.uint8), np.ones((3, 3), np.uint8))
+        level = float(wb.min())
+        target[:, clipped.astype(bool)] = np.minimum(target[:, clipped.astype(bool)], level)
+        clipped_in = clipped.reshape(P // 4, 4, P // 4, 4).max(axis=(1, 3))
+        clipped_in = cv2.dilate(clipped_in, np.ones((3, 3), np.uint8)).astype(bool)
+        inp[:, clipped_in] = np.minimum(inp[:, clipped_in], level)
+
         head = float(max(1.0, inp.max()))
         if self.monochrome:
             target = np.tensordot(MONO_MIX.astype(np.float32), target, axes=1)[None]
         inp = np.power(np.clip(inp / head, 0, 1), 1 / GAMMA).astype(np.float32)
         target = np.power(np.clip(target / head, 0, 1), 1 / GAMMA).astype(np.float32)
 
-        return torch.from_numpy(inp), torch.from_numpy(np.ascontiguousarray(target))
+        # The model's noise input: log2 of the input's noise relative to one pixel at ISO 200
+        noise = torch.tensor(math.log2(gain * iso / 200), dtype=torch.float32)
+        return torch.from_numpy(inp), torch.from_numpy(np.ascontiguousarray(target)), noise
 
     def _mix_gains(self, rng):
         """Random channel gains (R, G, B), normalised so a neutral grey keeps its brightness."""

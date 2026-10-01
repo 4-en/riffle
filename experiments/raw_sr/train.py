@@ -190,6 +190,7 @@ def main():
     parser.add_argument("--target-blur", type=float, default=0.5, help="Target blur as a fraction of the input's: 0 = learn full sharpening, 1 = none")
     parser.add_argument("--patch-size", type=int, default=256)
     parser.add_argument("--save-dir", type=Path, default=None)
+    parser.add_argument("--init", type=Path, default=None, help="Start from this checkpoint (fine-tuning; older ones without the noise input load too)")
     parser.add_argument("--scheduler", type=str, default="cosine", choices=["cosine", "onecycle"], help="Learning rate schedule")
     parser.add_argument("--warmup-pct", type=float, default=0.08, help="Fraction of total steps dedicated to linear warmup")
     parser.add_argument("--min-lr", type=float, default=1e-6, help="Minimum learning rate at the end of cosine annealing")
@@ -228,6 +229,9 @@ def main():
         model = BayerSwin2SRMono(random_first_conv=args.random_first_conv).to(device)
     else:
         model = BayerSwin2SR(random_first_conv=args.random_first_conv).to(device)
+    if args.init:
+        model.load_checkpoint(args.init)
+        print(f"Initialised from {args.init}" + ("" if model.noise_conditioned else " (no noise input yet: it starts at zero)"))
     
     # Differential learning rate: first_conv adapts faster to Bayer phase offsets
     first_conv_params = list(model.swin2sr.first_convolution.parameters())
@@ -275,12 +279,12 @@ def main():
         model.train()
         train_loss = 0.0
         pbar = tqdm(train_dl, desc=f"Epoch {epoch+1}/{args.epochs}", leave=False)
-        for x, y in pbar:
-            x, y = x.to(device), y.to(device)
+        for x, y, n in pbar:
+            x, y, n = x.to(device), y.to(device), n.to(device)
             optimizer.zero_grad()
             
             with torch.amp.autocast('cuda' if torch.cuda.is_available() else 'cpu'):
-                out = model(x)
+                out = model(x, n)
                 l1 = F.l1_loss(out, y)
                 edge = edge_loss_fn(out, y)
                 sharp = sharp_loss_fn(out, y)
@@ -308,10 +312,10 @@ def main():
         psnr_list, edge_psnr_list, s_ratio_list = [], [], []
 
         with torch.no_grad():
-            for i_val, (x, y) in enumerate(val_dl):
-                x, y = x.to(device), y.to(device)
+            for i_val, (x, y, n) in enumerate(val_dl):
+                x, y, n = x.to(device), y.to(device), n.to(device)
                 with torch.amp.autocast('cuda' if torch.cuda.is_available() else 'cpu'):
-                    out = model(x)
+                    out = model(x, n)
                     l1 = F.l1_loss(out, y)
                     edge = edge_loss_fn(out, y)
                     sharp = sharp_loss_fn(out, y)

@@ -151,8 +151,29 @@ invents detail. The High Res Shot pairs show where that limit lies for this came
 
 ```sh
 venv/bin/python experiments/raw_sr/prepare_dataset.py --data-dir ~/Pictures/photos
-venv/bin/python experiments/raw_sr/train.py --save-val-image
+venv/bin/python experiments/raw_sr/train.py --save-val-image [--monochrome]
+venv/bin/python experiments/raw_sr/upscale_raw.py IN.ORF [-o OUT.dng] [--model rgb | mono] \
+    [--crop x,y,w,h] [--filter yellow | orange | red | green | blue | --mix r,g,b | --plain-mix]
 ```
+
+`upscale_raw.py` runs a trained model (default `checkpoints/best_psnr.pt`, or
+`checkpoints_mono/`) on the packed Bayer data and writes a ×2 linear DNG with the RAW's colour
+matrix, white balance and EXIF; a monochrome result is neutral grey in it. `--crop` takes
+fractions of the upright frame; the image is turned upright after the model (turning the
+mosaic first would move its colours within the quad). No lens corrections or Riffle crop yet.
+**Noise level.** The models take the input's noise level as a second input (log2 of its
+variance relative to one pixel at ISO 200: in training the noise gain × ISO / 200, at
+inference ISO / 200 × `--denoise`). Without it the model has to guess, and since training
+noise averages 1.45× a real RAW's, it smoothed subtle texture (a bee's eye) as noise. It is
+a learned offset on the first convolution's features (what a constant input channel adds),
+zero at first, so older checkpoints load and behave as before (`train.py --init`).
+`--denoise` below 1 keeps more texture and grain, above 1 smooths more; values outside the
+trained `--noise-gain` range are extrapolation.
+
+Clipped highlights are made neutral before the model (and in training): where a channel
+reached the white level, all channels are capped at the lowest one's clip level. Without
+that, a clipped green turns magenta after white balance, and the model reproduced it.
+A 300 × 300 px crop of the RAW takes about 1 s on the RTX 3090.
 
 `prepare_dataset.py` writes `data_binned/{train,val}/*.npz` (320 × 320 patches, 24 per RAW,
 a fifth of them random rather than the most textured, so flat areas and their noise are

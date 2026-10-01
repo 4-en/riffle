@@ -2,7 +2,63 @@ import torch
 import torch.nn as nn
 from transformers import Swin2SRForImageSuperResolution
 
-class BayerSwin2SR(nn.Module):
+
+class NoiseEmbedding(nn.Module):
+    """
+    The input's noise level → an offset on the first convolution's features. A constant input
+    channel holding the level would add the same (the convolution is linear), without the
+    channel. The last layer starts at zero, so a checkpoint from before behaves as it did.
+    """
+
+    def __init__(self, dim, hidden=64):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(1, hidden), nn.SiLU(), nn.Linear(hidden, dim))
+        nn.init.zeros_(self.net[2].weight)
+        nn.init.zeros_(self.net[2].bias)
+
+    def forward(self, noise):
+        return self.net(noise.reshape(-1, 1).float())[:, :, None, None]
+
+
+class BayerModelBase(nn.Module):
+    """
+    Shared by the RGB and monochrome models: noise conditioning and checkpoints.
+
+    forward(x, noise): noise is (B,) log2 of the input's noise variance relative to one pixel
+    at ISO 200 (dataset: noise gain × ISO / 200; at inference ISO / 200 × the denoise setting).
+    None leaves the features as they are.
+    """
+
+    def _setup_noise(self):
+        self.noise_embed = NoiseEmbedding(self.swin2sr.first_convolution.out_channels)
+        self.noise_conditioned = True
+        self._noise = None
+        self.swin2sr.first_convolution.register_forward_hook(self._add_noise)
+
+    def _add_noise(self, module, args, out):
+        if self._noise is None:
+            return out
+        return out + self.noise_embed(self._noise).to(out.dtype)
+
+    def forward(self, x, noise=None):
+        self._noise = noise
+        try:
+            return self._run(x)
+        finally:
+            self._noise = None
+
+    def save_checkpoint(self, path):
+        torch.save(self.state_dict(), path)
+
+    def load_checkpoint(self, path):
+        """Also loads checkpoints from before the noise conditioning (noise_conditioned False)."""
+        missing, unexpected = self.load_state_dict(torch.load(path, map_location="cpu"), strict=False)
+        if unexpected or any(not k.startswith("noise_embed.") for k in missing):
+            raise RuntimeError(f"checkpoint does not match: missing {missing}, unexpected {unexpected}")
+        self.noise_conditioned = not missing
+
+
+class BayerSwin2SR(BayerModelBase):
     def __init__(self, pretrained_model_name='caidas/swin2SR-classical-sr-x4-64', random_first_conv=False):
         super().__init__()
         base = Swin2SRForImageSuperResolution.from_pretrained(pretrained_model_name)
@@ -36,8 +92,9 @@ class BayerSwin2SR(nn.Module):
         
         self.swin2sr = base.swin2sr
         self.upsample = base.upsample
-        
-    def forward(self, x):
+        self._setup_noise()
+
+    def _run(self, x):
         """
         x: (B, 4, H, W) packed Bayer tensor.
         Returns: (B, 3, H * upscale, W * upscale) RGB tensor.
@@ -51,9 +108,3 @@ class BayerSwin2SR(nn.Module):
         # Un-normalize using the 3-channel output mean
         rec = rec / self.swin2sr.img_range + self.output_mean
         return rec[:, :, : H * self.upscale, : W * self.upscale]
-
-    def save_checkpoint(self, path):
-        torch.save(self.state_dict(), path)
-        
-    def load_checkpoint(self, path):
-        self.load_state_dict(torch.load(path, map_location="cpu"))

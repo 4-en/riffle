@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 from transformers import Swin2SRForImageSuperResolution
 
-class BayerSwin2SRMono(nn.Module):
+from model import BayerModelBase
+
+class BayerSwin2SRMono(BayerModelBase):
     """
     Bayer → ×2 monochrome: BayerSwin2SR with a 1-channel final convolution.
 
@@ -76,8 +78,9 @@ class BayerSwin2SRMono(nn.Module):
 
         self.swin2sr = base.swin2sr
         self.upsample = base.upsample
+        self._setup_noise()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _run(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x: (B, 4, H, W) packed Bayer tensor.
@@ -93,9 +96,3 @@ class BayerSwin2SRMono(nn.Module):
         # Un-normalize using the 1-channel output mean
         rec = rec / self.swin2sr.img_range + self.output_mean
         return rec[:, :, : H * self.upscale, : W * self.upscale]
-
-    def save_checkpoint(self, path):
-        torch.save(self.state_dict(), path)
-
-    def load_checkpoint(self, path):
-        self.load_state_dict(torch.load(path, map_location="cpu"))
