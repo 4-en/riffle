@@ -238,9 +238,11 @@ cheaper blurred than placed slightly off: on a test texture, a 1 px shift cost L
 blurring it 0.035. Two options in `train.py`, off by default:
 - `--coarse-l1`: L1 and edge loss on the 2×-downscaled output, plus `--anchor-weight` (0.25)
   × full-resolution L1. What the input determines must still match.
-- `--spectral-weight`: L1 between the magnitude spectra of luma in overlapping 16 × 16 windows,
-  which do not change when content shifts within a window (the same test: 0.007 for the shift,
-  0.030 for the blur). The target's own noise is subtracted from its power first (its expected
+- `--spectral-weight`: L1 between the magnitude spectra of luma in overlapping windows
+  (`--spectral-window`, 8 × 8, step 4), which do not change when content shifts within a
+  window (the same test: 0.013 for the shift, 0.030 for the blur; 16 × 16: 0.007). The window
+  sets how far texture can spread into smooth surroundings (about half a window: coarse L1
+  hardly sees fine texture); 8 still holds 2–4 periods of the 2–4 px detail it is for. The target's own noise is subtracted from its power first (its expected
   variance per pixel comes from the dataset, through the target blur), so the model is not
   rewarded for making noise; on flat areas the estimate matches the target's noise (0.98× at
   the highest frequencies, without target blur).

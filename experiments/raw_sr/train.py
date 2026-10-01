@@ -77,7 +77,7 @@ def luma(img):
     return (img * w).sum(dim=1, keepdim=True)
 
 
-def spectral_loss(pred, target, target_noise, win=16):
+def spectral_loss(pred, target, target_noise, win=8):
     """
     L1 between the magnitude spectra of luma in overlapping win × win windows (Hann). The
     magnitude does not change when content shifts within a window, so this checks that the
@@ -228,6 +228,7 @@ def main():
     parser.add_argument("--edge-weight", type=float, default=1.0, help="Weight of EdgeLoss relative to L1")
     parser.add_argument("--sharp-weight", type=float, default=0.5, help="Weight of Laplacian Sharpness Variance Loss")
     parser.add_argument("--spectral-weight", type=float, default=0.0, help="Weight of the spectral loss: fine texture compared without its exact position (train.spectral_loss)")
+    parser.add_argument("--spectral-window", type=int, default=8, help="Window size of the spectral loss (step half of it): texture can spread about half a window")
     parser.add_argument("--coarse-l1", action="store_true", help="L1 and edge loss on the 2×-downscaled output (what the input determines), plus --anchor-weight × full-resolution L1")
     parser.add_argument("--anchor-weight", type=float, default=0.25, help="With --coarse-l1: weight of the full-resolution L1")
     parser.add_argument("--noise-gain", type=float, nargs=2, default=[0.7, 3.0], metavar=("MIN", "MAX"), help="Input noise range, relative to one pixel of the photo (log-uniform)")
@@ -255,7 +256,7 @@ def main():
     args.save_dir.mkdir(parents=True, exist_ok=True)
     mode_str = "MONOCHROME (1-channel luminance target)" if args.monochrome else "RGB (3-channel target)"
     print(f"Mode: {mode_str} | Save Dir: {args.save_dir}")
-    print(f"Loss configuration: L1 + {args.edge_weight}*EdgeLoss + {args.sharp_weight}*LaplacianSharpnessVarianceLoss | Spectral: {args.spectral_weight}, coarse L1: {args.coarse_l1} (anchor {args.anchor_weight}) | Noise gain: {args.noise_gain} | Blur: {args.blur}, target ×{args.target_blur}")
+    print(f"Loss configuration: L1 + {args.edge_weight}*EdgeLoss + {args.sharp_weight}*LaplacianSharpnessVarianceLoss | Spectral: {args.spectral_weight} ({args.spectral_window} px), coarse L1: {args.coarse_l1} (anchor {args.anchor_weight}) | Noise gain: {args.noise_gain} | Blur: {args.blur}, target ×{args.target_blur}")
     if args.save_val_image:
         val_preview_dir.mkdir(parents=True, exist_ok=True)
         print(f"Validation previews enabled: will save to {val_preview_dir}")
@@ -327,7 +328,7 @@ def main():
         loss = parts["l1"] + args.edge_weight * parts["edge"] + args.sharp_weight * parts["sharp"]
         if args.spectral_weight:
             with torch.autocast(device.type, enabled=False):
-                parts["spec"] = spectral_loss(out, y, target_noise)
+                parts["spec"] = spectral_loss(out, y, target_noise, win=args.spectral_window)
             loss = loss + args.spectral_weight * parts["spec"]
         return loss, parts
 
