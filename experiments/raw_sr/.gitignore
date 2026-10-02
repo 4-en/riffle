@@ -1,6 +1,7 @@
 raws/
 checkpoints/
 checkpoints_mono/
+checkpoints_mono_v2/
 data_binned/
 __pycache__/
 compare_native_crop/

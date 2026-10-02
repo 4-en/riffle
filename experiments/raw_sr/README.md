@@ -153,7 +153,7 @@ invents detail. The High Res Shot pairs show where that limit lies for this came
 venv/bin/python experiments/raw_sr/prepare_dataset.py --data-dir ~/Pictures/photos
 venv/bin/python experiments/raw_sr/train.py --save-val-image [--monochrome]
 venv/bin/python experiments/raw_sr/upscale_raw.py IN.ORF [-o OUT.dng] [--model rgb | mono] \
-    [--crop x,y,w,h] [--filter yellow | orange | red | green | blue | --mix r,g,b | --plain-mix]
+    [--crop x,y,w,h] [--denoise F] [--luminance] [--filter yellow | orange | red | green | blue | --mix r,g,b]
 ```
 
 `upscale_raw.py` runs a trained model (default `checkpoints/best_psnr.pt`, or
@@ -173,12 +173,18 @@ step). So it means the noise to remove: in half the samples (`--partial-denoise`
 input's added noise also goes into the target, interpolated per colour from its sites
 (`dataset.keep_noise`), and the model is told only the rest. `--denoise` is the share of the
 photo's noise variance to remove: 1 all, lower keeps the RAW's own noise and the fine texture
-it hides. About a fifth (the patches' own noise, which cannot be split off) is always removed
-in training, so below 0.2 is extrapolation.
+it hides. The patches' own noise cannot be split off, so training always removes it: after
+the Lanczos shift, input blur and averaging that is 0.25 of a pixel's variance without blur,
+0.06 at σ 1, 0.02 at σ 2 (`dataset.residual_noise`). So `--denoise` down to about 0.05 is
+trained. (Until this was counted exactly, 0.21 was assumed for every blur: inputs had less
+noise than intended, and the lowest trained `--denoise` was 0.2.)
 
 Clipped highlights are made neutral before the model (and in training): where a channel
 reached the white level, all channels are capped at the lowest one's clip level. Without
 that, a clipped green turns magenta after white balance, and the model reproduced it.
+For monochrome this happens before the mix gains: capped after them, clipped white sat at
+the weakest gained channel's level (blue at 0.08× under the luminance mix), and overexposed
+areas came out medium grey with an outline.
 A 300 × 300 px crop of the RAW takes about 1 s on the RTX 3090.
 
 `prepare_dataset.py` writes `data_binned/{train,val}/*.npz` (320 × 320 patches, 24 per RAW,
@@ -224,13 +230,17 @@ lens). This is the main setting to judge by eye and against High Res Shot pairs.
 the input channels before the model, as a colour filter in front of the lens does:
 `dataset.mix_gains`. In training, 70 % of samples (`--mix-prob`) get random channel gains
 (R and B down to 0.005, G to 0.2 of the largest), applied after the noise as at inference.
+- Default: the model's own mix, (R + 2G + B) / 4, roughly panchromatic black-and-white film,
+  which sees blue more than the eye does (pale skies, hence the filters). `--luminance` for
+  brightness as the eye sees it.
 - Luminance: CIE Y from the camera matrix needs a negative blue weight in camera RGB
   (OM-5 II: 0.13 R + 1.09 G − 0.23 B), which gains cannot make. `dataset.luminance_weights`
   fits the closest non-negative weights on the photo's own colours (each ≥ 0.02); on 30 ORFs
   about 0.18 R + 0.82 G, 5 % off at the median, blues brighter and foliage darker.
-- Filters (`FILTERS`: yellow, orange, red, green, blue) multiply that mix by an approximate
-  transmission; red needs blue at 0.005 of the largest gain, the edge of the trained range.
-  Since the luminance fit has almost no blue, the blue filter is weak; pass `mix=` instead.
+- Filters (`FILTERS`: yellow, orange, red, green, blue) multiply the mix (film-like, or
+  luminance) by an approximate transmission. On the luminance fit, red needs blue at 0.005 of
+  the largest gain, the edge of the trained range, and the blue filter is weak (little blue
+  to raise); on the film mix all of them are well inside it.
 
 **Loss: texture without its exact position (optional).** L1 and the edge loss compare each pixel
 with the same target pixel. Fine texture the input determines only to within a pixel is then
@@ -247,3 +257,13 @@ blurring it 0.035. Two options in `train.py`, off by default:
   rewarded for making noise; on flat areas the estimate matches the target's noise (0.98× at
   the highest frequencies, without target blur).
 Loss sizes after an epoch: coarse L1 0.005, edge 0.008, spectral 0.002, so a weight of about 3.
+
+**Result: the spectral loss is not used.** Trained with `--coarse-l1 --spectral-weight 3`, it
+barely changed the output at `--denoise 1`, and at 0.3 or 0.1 it made coloured digital noise.
+Where the target keeps part of the noise, the spectral loss counts that noise as texture the
+output should have, and since it ignores position, generating new noise satisfies it as well
+as passing the photo's own through. It looks at luma only, and with `--coarse-l1` only the
+anchor holds colour at full resolution, so the generated noise took any colour. With full
+L1 the only way to match kept noise is the photo's own, where it is: the default model at
+`--denoise` 0.1 brings back texture that follows the bee's eye. So the smoothness was mostly
+the denoising, not L1's strictness about position. The options stay in `train.py`, off.

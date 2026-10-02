@@ -35,11 +35,24 @@ def _lanczos4_weights(t):
     return w / w.sum()
 
 
-# Noise left in an input site, as a fraction of one pixel's variance: the Lanczos shift
-# (per axis) and the 2×2 average of quads. The rest is added back in the dataset.
 _w = _lanczos4_weights(0.25)
 SHIFT_NOISE = float((_w ** 2).sum()) ** 2  # a shifted plane's share of one pixel's variance
-RESIDUAL_NOISE = SHIFT_NOISE / 4
+
+
+def residual_noise(sigma):
+    """
+    The patch's own noise left in an input site, as a fraction of one pixel's variance: after
+    the Lanczos shift, the input blur (sigma, as cv2.GaussianBlur makes it) and the 2 × 2
+    average of quads. Per axis the three are one filter h; for white noise the share is
+    (Σh²)², counting the correlation the shift and blur leave between neighbours (0.25 without
+    blur, 0.02 at sigma 2; matches a simulation to 1 %). The rest is added in the dataset.
+    """
+    h = _w
+    if sigma >= 0.05:
+        k = cv2.getGaussianKernel(int(round(sigma * 8 + 1)) | 1, sigma, cv2.CV_64F).ravel()
+        h = np.convolve(h, k)
+    h = np.convolve(h, [0.5, 0.5])
+    return float((h ** 2).sum()) ** 2
 
 
 def read_iso(path):
@@ -210,7 +223,7 @@ def mix_gains(mix=None, filter="none", luminance=None):
     white-balanced packed input by (R, G, G, B) before scaling to its peak and gamma.
 
     mix:       target weights on white-balanced camera RGB (non-negative), or
-    luminance: the neutral mix (luminance_weights) to apply `filter` to.
+    luminance: the base mix to apply `filter` to (MONO_MIX, film-like, or luminance_weights).
     Normalised so a neutral grey keeps its brightness. Warns outside the trained gain range.
     """
     if mix is None:
@@ -327,7 +340,7 @@ class BayerPatchDataset(Dataset):
         # `gain - keep`: the level it is told (see the end). The patch's own residual noise
         # cannot be split off, so at most the added part is kept.
         gain = math.exp(rng.uniform(math.log(self.noise_gain[0]), math.log(self.noise_gain[1])))
-        added = max(gain - RESIDUAL_NOISE, 0.0)
+        added = max(gain - residual_noise(sigma), 0.0)
         keep = 0.0
         if rng.random() < self.partial_denoise:
             keep = min((1 - rng.uniform(0, 1)) * gain, added)
@@ -338,22 +351,26 @@ class BayerPatchDataset(Dataset):
         if keep > 0:
             target = target + keep_noise(n_keep, P)
 
-        # White balance (and for monochrome, channel gains after the noise, as at inference),
-        # scale to the input's peak (as at inference), gamma
-        if self.monochrome:
-            wb = wb * self._mix_gains(rng)
+        # White balance, then clipped highlights made neutral, as upscale_raw.clip_highlights
+        # does at inference: where a channel reached the white level, all channels capped at
+        # the lowest one's clip level (otherwise a clipped green turns magenta)
         inp = inp * np.array([wb[0], wb[1], wb[1], wb[2]], np.float32)[:, None, None]
         target = target * wb[:, None, None]
-
-        # Clipped highlights made neutral, as upscale_raw.clip_highlights does at inference:
-        # where a channel reached the white level, all channels capped at the lowest one's
-        # clip level (otherwise a clipped green turns magenta after white balance)
         clipped = cv2.dilate((planes >= 0.99).any(axis=0).astype(np.uint8), np.ones((3, 3), np.uint8))
         level = float(wb.min())
         target[:, clipped.astype(bool)] = np.minimum(target[:, clipped.astype(bool)], level)
         clipped_in = clipped.reshape(P // 4, 4, P // 4, 4).max(axis=(1, 3))
         clipped_in = cv2.dilate(clipped_in, np.ones((3, 3), np.uint8)).astype(bool)
         inp[:, clipped_in] = np.minimum(inp[:, clipped_in], level)
+
+        # Monochrome: channel gains for other mixes after that (and after the noise), as at
+        # inference. Capping after the gains would put clipped white at the weakest gained
+        # channel's level: grey under a mix with little blue.
+        if self.monochrome:
+            g = self._mix_gains(rng)
+            inp = inp * g[[0, 1, 1, 2]][:, None, None]
+            target = target * g[:, None, None]
+            wb = wb * g
 
         # The target's own noise (not the kept part): its variance per pixel before the target
         # blur, in raw units times the white balance squared. R and B of a quad are one shifted

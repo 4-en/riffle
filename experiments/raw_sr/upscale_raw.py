@@ -1,7 +1,7 @@
 """Bayer RAW → ×2 linear DNG with the trained Bayer models (RGB or monochrome).
 
     venv/bin/python experiments/raw_sr/upscale_raw.py IN.ORF [-o OUT.dng] [--model rgb | mono]
-        [--checkpoint PT] [--crop x,y,w,h] [--denoise F] [--filter red | --mix r,g,b | --plain-mix]
+        [--checkpoint PT] [--crop x,y,w,h] [--denoise F] [--luminance] [--filter red | --mix r,g,b]
 
 The model replaces demosaicing and upscaling: it takes the packed Bayer data (white-balanced,
 scaled to its peak, gamma 2.2, as in training) and returns RGB, or monochrome, at twice the
@@ -50,7 +50,7 @@ def read_packed(path):
 
 def clip_highlights(packed, scale):
     """
-    `packed` (4, h, w, black 0 and white 1) times `scale` (white balance and gains), with
+    `packed` (4, h, w, black 0 and white 1) times `scale` (the white balance), with
     clipped highlights made neutral. Where one channel reaches the white level, the others
     still rise, so after white balance a clipped green turns magenta (and the model reproduces
     it). In quads with a clipped channel (and their neighbours) every channel is capped at the
@@ -95,17 +95,17 @@ def main(argv=None):
     ap.add_argument("--model", choices=["rgb", "mono"], default="rgb")
     ap.add_argument("--checkpoint", type=Path, help="default: checkpoints/best_psnr.pt (checkpoints_mono/ for mono)")
     ap.add_argument("--crop", help="x,y,w,h: fractions of the upright frame (a whole frame takes minutes)")
-    ap.add_argument("--denoise", type=float, default=1.0,
-                    help="share of the photo's noise variance to remove, 0.2-1 (1: all of it; lower keeps the RAW's own noise and the fine texture it hides)")
+    ap.add_argument("--denoise", type=float, default=0.3,
+                    help="share of the photo's noise variance to remove, 0.05-1 (1: all of it; lower keeps the RAW's own noise and the fine texture it hides)")
     ap.add_argument("--fp32", action="store_true", help="full precision (default: fp16 autocast, as in training)")
-    mono = ap.add_argument_group("monochrome mix (default: the photo's luminance, non-negative fit)")
-    mono.add_argument("--filter", choices=list(FILTERS), default="none", help="a black-and-white filter on top of the luminance")
+    mono = ap.add_argument_group("monochrome mix (default: like panchromatic film, (R + 2G + B) / 4, the model's own)")
+    mono.add_argument("--luminance", action="store_true", help="brightness as the eye sees it (the photo's luminance, non-negative fit: little blue, so pale skies darken)")
+    mono.add_argument("--filter", choices=list(FILTERS), default="none", help="a black-and-white filter on top of the mix (yellow/orange/red darken skies)")
     mono.add_argument("--mix", help="r,g,b: own weights on white-balanced camera RGB (non-negative)")
-    mono.add_argument("--plain-mix", action="store_true", help="the model's own mix, (R + 2G + B) / 4, no input gains")
     a = ap.parse_args(argv)
 
-    if a.model == "rgb" and (a.mix or a.plain_mix or a.filter != "none"):
-        ap.error("--filter, --mix and --plain-mix are for --model mono")
+    if a.model == "rgb" and (a.mix or a.luminance or a.filter != "none"):
+        ap.error("--luminance, --filter and --mix are for --model mono")
     checkpoint = a.checkpoint or HERE / ("checkpoints_mono" if a.model == "mono" else "checkpoints") / "best_psnr.pt"
     out = a.out or a.raw.with_name(a.raw.stem + ("_x2_mono.dng" if a.model == "mono" else "_x2.dng"))
 
@@ -115,12 +115,12 @@ def main(argv=None):
     wb4 = np.array([wb[0], wb[1], wb[1], wb[2]], np.float32)[:, None, None]
 
     gains = np.ones(3, np.float32)
-    if a.model == "mono" and not a.plain_mix:
+    if a.model == "mono":
         if a.mix:
             gains = mix_gains(mix=[float(v) for v in a.mix.split(",")])
         else:
-            lum = luminance_weights(a.raw, packed * wb4)
-            gains = mix_gains(filter=a.filter, luminance=lum)
+            base = luminance_weights(a.raw, packed * wb4) if a.luminance else MONO_MIX
+            gains = mix_gains(filter=a.filter, luminance=base)
         print(f"mix {np.round(MONO_MIX * gains, 3)} (R, G, B), input gains {np.round(gains, 3)}")
 
     # The crop on the packed grid (whole quads), with context around it
@@ -132,7 +132,9 @@ def main(argv=None):
     else:
         px0, py0, px1, py1 = 0, 0, W, H
     ex0, ey0, ex1, ey1 = max(0, px0 - MARGIN), max(0, py0 - MARGIN), min(W, px1 + MARGIN), min(H, py1 + MARGIN)
-    x_in = clip_highlights(packed[:, ey0:ey1, ex0:ex1], wb4 * gains[[0, 1, 1, 2]][:, None, None])
+    # Neutral highlights in white-balanced light first, then the mix gains: capped after the
+    # gains, clipped white would sit at the weakest gained channel's level (grey)
+    x_in = clip_highlights(packed[:, ey0:ey1, ex0:ex1], wb4) * gains[[0, 1, 1, 2]][:, None, None]
     head = float(max(1.0, x_in.max()))
     disp = np.power(np.clip(x_in / head, 0, 1), 1 / GAMMA).astype(np.float32)
     t_read = time.perf_counter() - t0
@@ -141,9 +143,9 @@ def main(argv=None):
 
     net = load_model(a.model, checkpoint)
     iso = read_iso(a.raw) or 200
-    if not 0.2 <= a.denoise <= 1:
-        print("warning: --denoise outside 0.2-1 is outside training (the patches' own noise, "
-              "about a fifth, is always removed)")
+    if not 0.05 <= a.denoise <= 1:
+        print("warning: --denoise outside 0.05-1 is outside training (the patches' own noise, "
+              "which cannot be kept, is always removed)")
     noise = torch.tensor([np.log2(iso / 200 * max(a.denoise, 0.01))], dtype=torch.float32, device="cuda")
     if not net.noise_conditioned:
         noise = None
