@@ -269,3 +269,27 @@ anchor holds colour at full resolution, so the generated noise took any colour. 
 L1 the only way to match kept noise is the photo's own, where it is: the default model at
 `--denoise` 0.1 brings back texture that follows the bee's eye. So the smoothness was mostly
 the denoising, not L1's strictness about position. The options stay in `train.py`, off.
+
+## Lightweight model (separate, in progress)
+
+Of the 45 s a 20 MP RAW takes, 38 s are the Swin2SR network (12.3 M parameters, 36
+transformer layers over every packed pixel). A small convolutional network might come close:
+SPAN (spandrel's implementation) with 4 input channels, ×4, the noise input as in the
+Swin2SR model, predicting the difference to a bilinear enlargement of the quads. SPAN-48
+(2.2 M parameters in training form) runs a 20 MP frame in about 1.1 s, SPAN-64 in 1.3 s.
+
+```sh
+venv/bin/python experiments/raw_sr/train_light.py [--monochrome] \
+    [--teacher experiments/raw_sr/huggingface/riffle-raw-sr-rgb.safetensors]
+venv/bin/python experiments/raw_sr/eval_light.py --light experiments/raw_sr/checkpoints_light/best_psnr.pt \
+    [--light-mono experiments/raw_sr/checkpoints_light_mono/best_psnr.pt]
+```
+
+- `model_light.py`, `train_light.py`, `eval_light.py`: nothing in the Swin2SR pipeline
+  changes; the same data (`dataset.py`) and loss (L1 and edge), trained from scratch.
+- `--teacher`: the Swin2SR model's output on the same input as a second target
+  (`--distill-weight`, 0.5): distillation.
+- `eval_light.py`: the release's protocol (every held-out patch, PSNR and SSIM in colour and
+  black and white, the same real crops) plus seconds per frame, into `light_eval/`.
+- To ship it, it would need to be within about 0.3 dB of the Swin2SR model and look the same
+  on the real crops, the high-ISO duck above all.

@@ -3,6 +3,8 @@ checkpoints/
 checkpoints_mono/
 checkpoints_mono_v2/
 data_binned/
+light_eval/
+huggingface/
 __pycache__/
 compare_native_crop/
 compare_half_vs_full/
@@ -12,3 +14,6 @@ comparison_crops/
 full_eval_crops/
 *.pt
 *.pth
+*.safetensors
+checkpoints_light/
+checkpoints_light_mono/

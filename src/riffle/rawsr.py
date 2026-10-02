@@ -16,10 +16,13 @@ it. Whole frames, upright; RGGB sensors only (the models are trained on an OM-5 
   filter in front of the lens does: ``FILTERS``, the photo's luminance (as the eye sees
   brightness), or own weights.
 
-Checkpoints: ``editing.raw_upscale`` and ``editing.raw_upscale_mono`` in the config, a path or
-a Hub file ("org/repo:file.pt"); by default ``models/raw-upscale.pt`` and
+Checkpoints (.pt or .safetensors): ``editing.raw_upscale`` and ``editing.raw_upscale_mono`` in
+the config, a path or a Hub file ("org/repo:file"); by default ``models/raw-upscale.pt`` and
 ``models/raw-upscale-mono.pt`` in Riffle's data folder (``riffle paths``). Whether a
 checkpoint is colour or black and white is read from it.
+
+This module also works on its own, outside Riffle (the published model ships it):
+``convert(checkpoint, src, dst, ...)`` needs no config.
 """
 
 from __future__ import annotations
@@ -152,16 +155,33 @@ def _device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def resolve(spec: str) -> Path:
+    """A local file, or a file from a Hub repo ("org/repo:file", "org/repo@revision:file")."""
+    p = Path(spec).expanduser()
+    if p.exists():
+        return p
+    if ":" in spec:
+        from huggingface_hub import hf_hub_download
+
+        repo, name = spec.split(":", 1)
+        repo, _, revision = repo.partition("@")
+        return Path(hf_hub_download(repo, name, revision=revision or None))
+    raise FileNotFoundError(f"not a file, and not 'repo:file': {spec}")
+
+
 def load(spec: str):
-    """(model, kind, noise_conditioned) for a checkpoint; loaded once and kept."""
+    """(model, kind, noise_conditioned) for a checkpoint (.pt or .safetensors); loaded once and kept."""
     import torch
 
-    from .editing import _file
-
-    path = str(_file(spec))
+    path = str(resolve(spec))
     with _lock:
         if path not in _models:
-            state = torch.load(path, map_location="cpu", weights_only=True)
+            if path.endswith(".safetensors"):
+                from safetensors.torch import load_file
+
+                state = load_file(path)
+            else:
+                state = torch.load(path, map_location="cpu", weights_only=True)
             out = state["upsample.final_convolution.weight"].shape[0]
             if out not in (1, 3) or state["swin2sr.first_convolution.weight"].shape[1] != 4:
                 raise RawUpscaleError(f"not a Bayer upscaling checkpoint: {path}")
@@ -343,20 +363,32 @@ def upscale_raw(
     cfg, src: Path, dst: Path, *, kind: str = "rgb", denoise: float = 0.3,
     base: str = "film", filter: str = "none", mix=None,
 ) -> dict:
-    """Write ``src`` (a RAW) as a ×2 linear DNG at ``dst``. ``kind``: rgb or mono (black and
-    white, with ``base``, ``filter`` or ``mix``: see bw_mix). Returns what was done."""
-    import torch
-
+    """Write ``src`` (a RAW) as a ×2 linear DNG at ``dst``, with the configured checkpoint for
+    ``kind`` (rgb, or mono: black and white). See convert."""
     if kind not in KINDS:
         raise RawUpscaleError(f"kind must be one of {', '.join(KINDS)}")
-    if not 0 < denoise <= 1:
-        raise RawUpscaleError("denoise is the share of the noise to remove: above 0, up to 1")
     ok = availability(cfg, kind)
     if not ok["available"]:
         raise RawUpscaleError(ok["reason"])
-    model, model_kind, conditioned = load(ok["checkpoint"])
-    if model_kind != kind:
-        raise RawUpscaleError(f"the {kind} checkpoint ({ok['checkpoint']}) is a {model_kind} model")
+    return convert(ok["checkpoint"], src, dst, kind=kind, denoise=denoise, base=base, filter=filter, mix=mix)
+
+
+def convert(
+    checkpoint: str, src: Path, dst: Path, *, kind: str | None = None, denoise: float = 0.3,
+    base: str = "film", filter: str = "none", mix=None,
+) -> dict:
+    """Write ``src`` (a RAW) as a ×2 linear DNG at ``dst`` with ``checkpoint`` (a path or a Hub
+    file). ``kind`` (rgb | mono), if given, must be the checkpoint's. ``denoise``: the share of
+    the noise to remove (0.05-1). Black and white: ``base``, ``filter`` or ``mix`` (see
+    bw_mix). Returns what was done."""
+    import torch
+
+    if not 0 < denoise <= 1:
+        raise RawUpscaleError("denoise is the share of the noise to remove: above 0, up to 1")
+    model, model_kind, conditioned = load(checkpoint)
+    if kind is not None and model_kind != kind:
+        raise RawUpscaleError(f"the {kind} checkpoint ({checkpoint}) is a {model_kind} model")
+    kind = model_kind
 
     packed, info = read_packed(Path(src))
     wb = info["wb"]
