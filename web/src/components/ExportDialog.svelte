@@ -1,7 +1,7 @@
 <script>
   import { untrack } from 'svelte';
   import { view, activeFilterCount, tagFilterActive } from '../lib/state.svelte.js';
-  import { startExport, fetchExportStatus, fetchPickExportCounts } from '../lib/api.js';
+  import { startExport, fetchExportStatus, fetchPickExportCounts, fetchRawUpscale } from '../lib/api.js';
   import { saveSetting } from '../lib/culling.svelte.js';
   import FolderBrowser from './FolderBrowser.svelte';
 
@@ -41,6 +41,22 @@
   // Edited photos (edits.py) are exported with their edits unless originals is on; upscale 2 | 4 enlarges every image.
   let originals = $state(false);
   let upscale = $state(0);
+  // RAWs as ×2 DNGs from Riffle's Bayer model: '' (as they are) | rgb | mono, how much of the
+  // noise it removes, and for black and white the base mix (film | luminance) and a filter.
+  let rawUpscale = $state(setting('rawUpscale', ''));
+  let rawDenoise = $state(setting('rawDenoise', 0.3));
+  let rawBw = $state(setting('rawBw', 'film'));
+  let rawFilter = $state(setting('rawFilter', 'none'));
+  let rawModels = $state(null); // /api/raw-upscale: whether each model can run here
+  fetchRawUpscale()
+    .then((r) => {
+      rawModels = r;
+      if (rawUpscale && !r[rawUpscale]?.available) rawUpscale = '';
+    })
+    .catch(() => (rawModels = null));
+  const rawUnavailable = $derived(
+    rawModels ? ['rgb', 'mono'].filter((k) => !rawModels[k].available).map((k) => rawModels[k].reason) : [],
+  );
   let underscores = $state(setting('underscores', false));
   let withText = $state(setting('withText', false)); // for txt: the text read from the photo too
   // Picks in the chosen scope that were not exported before.
@@ -66,7 +82,7 @@
 
   async function start() {
     error = '';
-    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, withCaptions, captionFormat, captionText, underscores, withText, numbered, folder: dir.path }))
+    for (const [k, v] of Object.entries({ content, rawFallback, structure, addLocation, onlyNew, withCaptions, captionFormat, captionText, underscores, withText, numbered, rawUpscale, rawDenoise, rawBw, rawFilter, folder: dir.path }))
       saveSetting(`export.${k}`, v);
     try {
       status = await startExport(view, {
@@ -85,6 +101,10 @@
         numbered: (kind === 'walk' || kind === 'curate') && numbered,
         originals,
         upscale,
+        raw_upscale: content !== 'images' && rawUpscale ? rawUpscale : null,
+        raw_denoise: rawDenoise,
+        raw_bw: rawBw,
+        raw_filter: rawFilter,
         ...(draft ? { photo_ids: draft.ids } : {}),
       });
       while (status.running) {
@@ -183,7 +203,7 @@
           <input type="checkbox" bind:checked={originals} class="mt-0.5" />
           <span>
             Export edited photos as their originals, without the edits
-            <span class="block text-xs text-neutral-500">Otherwise they are written with their edits. RAW files are always copied as they are (edits do not apply to them).</span>
+            <span class="block text-xs text-neutral-500">Otherwise they are written with their edits. Edits do not apply to RAW files.</span>
           </span>
         </label>
         <label class="{radio} items-center">
@@ -195,6 +215,52 @@
           </select>
           <span class="text-xs text-neutral-500">With an AI upscaler (Real-ESRGAN; set in the editor). Slow: seconds per photo on a GPU.</span>
         </label>
+        {#if content !== 'images'}
+          <label class="{radio} items-center">
+            <span class="shrink-0">RAWs</span>
+            <select bind:value={rawUpscale} class="rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-xs">
+              <option value="">As they are</option>
+              <option value="rgb" disabled={!rawModels?.rgb.available}>×2 DNG, colour</option>
+              <option value="mono" disabled={!rawModels?.mono.available}>×2 DNG, black and white</option>
+            </select>
+            <span class="text-xs text-neutral-500">
+              Riffle's RAW model replaces demosaicing; the DNG opens in darktable like the RAW. About a minute and 500 MB per photo.
+            </span>
+          </label>
+          {#if rawUnavailable.length}
+            <p class="px-2 text-xs text-neutral-500">{rawUnavailable.join(' · ')}</p>
+          {/if}
+          {#if rawUpscale}
+            <p class="mx-2 rounded border border-amber-900 bg-amber-950/40 px-2 py-1 text-xs text-amber-200">
+              Experimental. Slow (about 45 s per 20 MP RAW on a fast GPU, minutes without one) and large (about 500 MB per DNG).
+              The quality can vary: results may be soft or show artefacts, so check them before relying on them. Trained on one
+              camera (OM-5 Mark II); other cameras are untested, and only RGGB Bayer RAWs are supported.
+            </p>
+          {/if}
+          {#if rawUpscale}
+            <label class="{radio} items-center">
+              <span class="shrink-0">Noise removed</span>
+              <input type="range" min="0.05" max="1" step="0.05" bind:value={rawDenoise} class="w-32" />
+              <span class="w-9 shrink-0 text-xs tabular-nums">{Math.round(rawDenoise * 100)}%</span>
+              <span class="text-xs text-neutral-500">Less keeps the RAW's own grain and the fine texture it hides.</span>
+            </label>
+          {/if}
+          {#if rawUpscale === 'mono'}
+            <label class="{radio} items-center">
+              <span class="shrink-0">Black and white</span>
+              <select bind:value={rawBw} class="rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-xs">
+                <option value="film">Like film</option>
+                <option value="luminance">As the eye sees brightness</option>
+              </select>
+              <select bind:value={rawFilter} class="rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-xs">
+                {#each rawModels?.filters ?? ['none'] as f (f)}
+                  <option value={f}>{f === 'none' ? 'No filter' : `${f[0].toUpperCase()}${f.slice(1)} filter`}</option>
+                {/each}
+              </select>
+              <span class="text-xs text-neutral-500">Yellow to red darken skies.</span>
+            </label>
+          {/if}
+        {/if}
       </fieldset>
 
       {#if hasHistory}
@@ -307,6 +373,8 @@
           <p>
             Exported {r.photos} photos: {r.copied} files copied{r.skipped ? `, ${r.skipped} already there` : ''}{r.without_raw
               ? `, ${r.without_raw} without RAW`
+              : ''}{r.raws_upscaled
+              ? `, ${r.raws_upscaled} RAW${r.raws_upscaled === 1 ? '' : 's'} as ×2 DNGs${r.raws_not_upscaled ? ` (${r.raws_not_upscaled} copied as they are: not an RGGB Bayer RAW)` : ''}`
               : ''}{r.geotagged ? `, location added to ${r.geotagged}${r.sidecars ? ` (${r.sidecars} as .xmp sidecars)` : ''}` : ''}{r.captioned
               ? `, captions and tags for ${r.captioned}${r.without_caption ? ` (${r.without_caption} had none)` : ''}`
               : ''}.

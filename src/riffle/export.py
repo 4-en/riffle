@@ -17,6 +17,11 @@ sidecars, ``txt`` as a text file with the image's name, or ``jsonl`` as one
 text read from the photo (OCR) and its translation go along too: after the caption
 in the XMP description, on their own lines in the .txt (the JSONL always has them).
 Photos without any of it get nothing.
+
+With ``raw_upscale`` (rgb or mono), each RAW is exported as a ×2 linear DNG from Riffle's
+Bayer model (rawsr.py) instead of a copy, named like the RAW. It is written straight to its
+destination while copying (about 500 MB each, so not via a temporary folder). RAWs the
+model cannot read (not RGGB Bayer) are copied as they are.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .config import Config
 from .geotag import Meta, Tagged, tag, xmp_packet
@@ -53,6 +59,7 @@ class _File:
     location: str = ""  # exif | xmp | sidecar: how the position was added
     caption: str = ""  # xmp | sidecar | txt: how the caption and tags were added
     original: Path | None = None  # a rendered copy's original file (edited or upscaled): src is the rendering
+    render: Callable[[Path], None] | None = None  # writes the file (an upscaled RAW): src is only its name
 
     @property
     def out_size(self) -> int:
@@ -70,6 +77,8 @@ class _File:
             return False
         if self.content is not None:
             return st.st_size == len(self.content) and target.read_bytes() == self.content
+        if self.render is not None:  # its size is known only roughly (the EXIF it carries)
+            return abs(st.st_size - self.size) < 2 << 20
         try:
             src_mtime = self.src.stat().st_mtime
         except OSError:
@@ -299,6 +308,35 @@ def render_images(conn, cfg: Config, files: list[_File], originals: bool, upscal
     return done
 
 
+RAW_UPSCALE = ("rgb", "mono")
+
+
+def plan_raw_upscale(
+    cfg: Config, files: list[_File], kind: str, denoise: float, bw_base: str, bw_filter: str, report=print
+) -> tuple[int, list[str]]:
+    """Turn the RAWs among ``files`` into ×2 DNGs written on copy (see module docstring).
+    Returns how many, and the names of the RAWs that stay as they are (with why)."""
+    from . import rawsr
+
+    supported, kept = [], []
+    for f in files:
+        if f.kind == "raw":
+            reason = rawsr.check(f.src)
+            if reason:
+                kept.append(f"{f.src.name}: {reason}")
+            else:
+                supported.append(f)
+    for n, f in enumerate(supported, 1):
+        raw = f.src
+
+        def render(out: Path, raw: Path = raw, n: int = n) -> None:
+            report(f"upscaling {raw.name} into a DNG ({n} of {len(supported)})")
+            rawsr.upscale_raw(cfg, raw, out, kind=kind, denoise=denoise, base=bw_base, filter=bw_filter)
+
+        f.original, f.src, f.size, f.render = raw, raw.with_suffix(".dng"), rawsr.expected_bytes(raw), render
+    return len(supported), kept
+
+
 def run_export(
     cfg: Config,
     progress=None,
@@ -318,12 +356,18 @@ def run_export(
     numbered: bool = False,
     originals: bool = False,
     upscale: int = 0,
+    raw_upscale: str | None = None,
+    raw_denoise: float = 0.3,
+    raw_bw: str = "film",
+    raw_filter: str = "none",
 ) -> dict:
     """Copy the files. Runs as a BackgroundJob; returns the summary. The export
     history goes to ``selections_path`` (the profile active when it started),
     else the config's. Edited photos are rendered with their edits (edits.py) unless
     ``originals``; ``upscale`` (2 or 4) enlarges every image (editing.upscale). RAWs are
-    always copied as they are."""
+    copied as they are, or with ``raw_upscale`` (rgb | mono) exported as ×2 DNGs: with
+    ``raw_denoise`` (the share of the noise removed), and for mono ``raw_bw`` (film |
+    luminance) and ``raw_filter`` (rawsr.FILTERS)."""
     from . import db
 
     from . import selections
@@ -332,6 +376,18 @@ def run_export(
         raise ExportError(f"captions must be one of {', '.join(CAPTIONS)}")
     if caption_text not in CAPTION_TEXT:
         raise ExportError(f"caption_text must be one of {', '.join(CAPTION_TEXT)}")
+    if raw_upscale is not None:
+        from . import rawsr
+
+        if raw_upscale not in RAW_UPSCALE:
+            raise ExportError(f"raw_upscale must be one of {', '.join(RAW_UPSCALE)}")
+        if not 0.05 <= raw_denoise <= 1:
+            raise ExportError("raw_denoise must be between 0.05 and 1")
+        if raw_bw not in ("film", "luminance") or raw_filter not in rawsr.FILTERS:
+            raise ExportError("raw_bw must be film or luminance, raw_filter one of " + ", ".join(rawsr.FILTERS))
+        ok = rawsr.availability(cfg, raw_upscale)
+        if not ok["available"]:
+            raise ExportError(f"cannot upscale RAWs: {ok['reason']}")
     dest = Path(folder)
     check_destination(cfg, dest)
     sel = selections_path or cfg.selections_path
@@ -339,6 +395,11 @@ def run_export(
     try:
         files, without_raw, unreachable = plan_files(conn, photo_ids, content, raw_fallback)
         rendered = render_images(conn, cfg, files, originals, upscale, report)
+        raws_upscaled, raws_kept = 0, []
+        if raw_upscale and content != "images":
+            raws_upscaled, raws_kept = plan_raw_upscale(cfg, files, raw_upscale, raw_denoise, raw_bw, raw_filter, report)
+            for line in raws_kept:
+                report(f"copied as it is, {line}")
         texts: dict[int, tuple[str, list[str]]] = {}
         if captions:
             found = selections.captions_for(conn, sel, photo_ids)
@@ -381,6 +442,12 @@ def run_export(
         tmp = f.target.with_name(f".{f.target.name}.partial")
         if f.content is not None:
             tmp.write_bytes(f.content)
+        elif f.render is not None:
+            try:
+                f.render(tmp)
+            except Exception:
+                tmp.unlink(missing_ok=True)
+                raise
         elif f.tagged is not None:
             with open(f.src, "rb") as src, open(tmp, "wb") as out:
                 out.write(f.tagged.head)
@@ -433,6 +500,8 @@ def run_export(
     shutil.rmtree(cfg.data_dir / "export-render", ignore_errors=True)  # the renderings, copied now
     summary = {
         "rendered": rendered,  # images written with their edits (or upscaled)
+        "raws_upscaled": raws_upscaled,  # RAWs exported as ×2 DNGs
+        "raws_not_upscaled": len(raws_kept),  # RAWs the model cannot read, copied as they are
         "marked": marked,
         "folder": str(dest),
         "photos": len(photo_ids),
@@ -454,6 +523,8 @@ def run_export(
         + (f", {summary['without_raw']} without RAW" if summary["without_raw"] else "")
         + (f"; {summary['unreachable']} not copied: their files cannot be reached (deleted, or on a drive that is not connected)"
            if summary["unreachable"] else "")
+        + (f", {raws_upscaled} RAWs as ×2 DNGs" if raws_upscaled else "")
+        + (f" ({len(raws_kept)} not: copied as they are)" if raws_kept else "")
         + (f", location added to {summary['geotagged']}" if summary["geotagged"] else "")
         + (f", captions and tags for {summary['captioned']}" if summary["captioned"] else "")
     )

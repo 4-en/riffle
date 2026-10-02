@@ -91,6 +91,8 @@ export function startExport(view, body) {
   return send('POST', qs ? `/api/export?${qs}` : '/api/export', body);
 }
 export const fetchExportStatus = () => get('/api/export');
+/** Whether RAWs can be exported as ×2 DNGs: {rgb, mono: {available, reason, checkpoint}, filters}. */
+export const fetchRawUpscale = () => get('/api/raw-upscale');
 /** Forget which photos were exported: all, or those within the current filters. */
 export function postResetExported(view, scope) {
   const qs = scope === 'filtered' ? query(filterParams(view)) : '';

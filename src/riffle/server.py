@@ -302,6 +302,10 @@ class ExportIn(BaseModel):
     numbered: bool = False  # prefix the files with their position in photo_ids ("01_…": a Discover walk)
     originals: bool = False  # edited photos as their originals, without the edits
     upscale: int = 0  # 2 or 4: enlarge every image (editing.upscale)
+    raw_upscale: str | None = None  # rgb | mono: RAWs as ×2 DNGs (rawsr.py); None: copied as they are
+    raw_denoise: float = 0.3  # the share of the noise the model removes
+    raw_bw: str = "film"  # mono: film | luminance
+    raw_filter: str = "none"  # mono: a black-and-white filter (rawsr.FILTERS)
 
 
 COLLAPSE = ("dupes", "stacks", "none")
@@ -2736,6 +2740,10 @@ def create_app(
             numbered=body.numbered and body.photo_ids is not None,
             originals=body.originals,
             upscale=body.upscale,
+            raw_upscale=body.raw_upscale,
+            raw_denoise=body.raw_denoise,
+            raw_bw=body.raw_bw,
+            raw_filter=body.raw_filter,
         )
         if not started:
             raise HTTPException(409, "an export is already running")
@@ -2744,6 +2752,13 @@ def create_app(
     @app.get("/api/export")
     def export_status():
         return export_job.status()
+
+    @app.get("/api/raw-upscale")
+    def raw_upscale_status():
+        """Whether RAWs can be exported as ×2 DNGs (rawsr.py): per model, and why not."""
+        from . import rawsr
+
+        return {**{k: rawsr.availability(cfg, k) for k in rawsr.KINDS}, "filters": list(rawsr.FILTERS)}
 
     @app.get("/api/raws/unmatched")
     def unmatched_raws(conn=Depends(get_conn)):

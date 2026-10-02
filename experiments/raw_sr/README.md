@@ -94,7 +94,9 @@ venv/bin/python experiments/raw_sr/compare.py IN.ORF OUT.dng [MORE.dng …] --ou
 2. RAWs without a JPEG: lensfun's distortion profile (see above) or the correction data in
    the maker note, which darktable can use for Olympus.
 3. fp16 inference; smaller files.
-4. In Riffle: an export option "RAWs as ×2 linear DNG, with the photo's crop".
+4. In Riffle: done for whole frames with the trained Bayer models (`src/riffle/rawsr.py`:
+   `riffle upscale-raw` and the export). Still open: the photo's crop from Riffle's editor
+   (the JPEG geometry fit above), and lens corrections.
 
 ## Plan: a Bayer → ×2 RGB model, trained on this camera
 

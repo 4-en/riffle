@@ -20,6 +20,7 @@ You search and browse by image content, cull by picking and rejecting photos, co
 - **Discover**: a walk through the library from one photo to others related in one way each (subject, light, colour, composition, place, time), with the path kept for a slideshow, export, or Curate.
 - **Editing** (experimental): crop and straighten, heal, remove things or people, replace with a prompt, and upscale on export, without ever changing your files (unless you bake edits in).
 - **Export** of picks, or of any selection, as images, images + RAWs, or RAWs only. Copies only; originals are never touched.
+- **RAW upscaling** (experimental): RAWs to ×2 linear DNGs that open in darktable like the RAW, in colour or black and white, with Riffle's own Bayer model, which replaces demosaicing. From the command line or on export.
 - **Location from your phone**: a Google Timeline, Records.json, or GPX export places photos without GPS, and can add the position to exported copies.
 - Duplicate detection (perceptual hash), RAW matching by file name, EXIF metadata.
 
@@ -59,6 +60,7 @@ venv/bin/riffle serve      # server only, http://127.0.0.1:8000 (--host, --port,
 venv/bin/riffle index      # index from the command line (incremental)
 venv/bin/riffle tag        # re-tag from stored embeddings after editing the vocabulary
 venv/bin/riffle paths      # show where config, flags, and derived data live
+venv/bin/riffle upscale-raw IN OUT   # RAWs to ×2 DNGs (see RAW upscaling)
 ```
 
 `riffle` uses port 8000, or a free port if that is taken. Running it again while it runs opens another tab. It stops by itself 30 seconds after the last tab is closed; it never stops in its first minute or during indexing or export. `riffle serve` runs until stopped. Global options: `--config PATH`, `-v` for debug logging.
@@ -180,13 +182,38 @@ Select photos and click **Edit…** (or **✎ Edit…** in the photo view). Edit
 - **View**: the result; hold `\` for the original (also in the photo view).
 - **Steps**: every edit can be turned off or deleted; **Restore original** turns them all off.
 - **Bake into file…** writes the edits into the file itself, after a warning. The original is kept in `originals-backup/` in your data folder unless you switch that off; your flags, tags and captions move with it to the new file content.
-- **Export** writes edited photos with their edits, or as originals; **Upscale ×2 / ×4** enlarges every exported image (Real-ESRGAN). RAW files are never edited.
+- **Export** writes edited photos with their edits, or as originals; **Upscale ×2 / ×4** enlarges every exported image (Real-ESRGAN). RAW files are never edited (see [RAW upscaling](#raw-upscaling-experimental) for RAWs as ×2 DNGs).
 
 Each tool offers recommended models and accepts another: a Hugging Face repository, a file in one (`org/repo:file.pt`), or a local path (Settings are stored under `editing:` in `config.yaml`). Heal and Crop work out of the box; the AI tools need `pip install -e ".[edit]"`, and Replace and Edit with a prompt an NVIDIA GPU. Models download on first use (LaMa 0.2 GB, SDXL inpainting 6.9 GB, Real-ESRGAN 67 MB, Qwen-Image 2.1 about 23 GB, Grounding DINO + SAM 2.1 3.7 GB).
 
 Qwen-Image 2.1 needs a diffusers newer than 0.40 (until one is released: `pip install git+https://github.com/huggingface/diffusers`). By default it uses a 4-bit GGUF of the official weights with the official text encoder, which waits in system memory while the image model runs (about 18 GB of RAM): about a minute per candidate on an RTX 3090. The Q8_0 file, the full model, or any GGUF or safetensors transformer file can be chosen instead.
 
 Edits are shared by all profiles and stored with your data (`edits.sqlite3` and `edits/` next to `selections.sqlite3`), by file content like the flags.
+
+## RAW upscaling (experimental)
+
+> **Experimental.** Check the results before relying on them, and keep your RAWs.
+> - **Performance**: about 45 s per 20 MP RAW on an RTX 3090, minutes on a CPU; 3.5 GB of RAM; each DNG is about 490 MB.
+> - **Quality**: the models are trained on synthetic pairs made from one camera's photos. They can come out soft, or with artefacts the RAW does not have; the lens's chromatic aberration stays, and clipped highlights are made neutral white.
+> - **Compatibility**: RGGB Bayer RAWs only. Trained on an OM-5 Mark II; other cameras are untested, and the noise setting is calibrated to that sensor. The DNGs are tested with darktable only.
+
+A RAW becomes a ×2 linear DNG: Riffle's Bayer model takes the sensor data and returns the image at twice the resolution, doing the demosaicing and the upscaling in one step. The DNG opens in darktable like the RAW (linear camera RGB, the camera's colour matrix, white balance and EXIF), so it is developed as usual.
+
+```sh
+venv/bin/riffle upscale-raw P1234.ORF big.dng
+venv/bin/riffle upscale-raw ~/Pictures/trip ~/Pictures/trip-x2 -r   # a folder (-r: and its subfolders)
+venv/bin/riffle upscale-raw IN OUT --bw --filter orange             # black and white
+```
+
+- `--denoise` (0.05–1, default 0.3): the share of the noise the model removes, scaled by the ISO. Lower keeps the RAW's own grain and the fine texture it hides; 1 removes it all.
+- `--bw`: black and white, like panchromatic film by default; `--filter yellow | orange | red | green | blue` (yellow to red darken skies), `--luminance` for brightness as the eye sees it, or `--mix r,g,b` for own weights.
+- Existing DNGs are skipped (`--overwrite` to replace them); RAWs the model cannot read are skipped and named.
+
+**Export**: with **Images + RAWs** or **RAWs only**, **RAWs → ×2 DNG, colour** or **black and white** exports each RAW as a DNG instead of a copy, named like it; the same settings as above. RAWs the model cannot read are copied as they are.
+
+**Setup**: `pip install -e ".[raw]"`, and the checkpoints from training (`experiments/raw_sr/`) as `raw-upscale.pt` (colour) and `raw-upscale-mono.pt` (black and white) in the RAW models folder (`riffle paths`; on Linux `~/.local/share/riffle/models/`), or anywhere with `editing: {raw_upscale: PATH, raw_upscale_mono: PATH}` in `config.yaml` (a path or `org/repo:file.pt`). Whether a checkpoint is colour or black and white is read from it.
+
+**Limits**: whole frames only (crop in darktable), no lens corrections, RGGB Bayer sensors only. The models are trained on an OM-5 Mark II; other RGGB cameras should work but are untested, and the noise setting is calibrated to that sensor. A 20 MP RAW takes about 45 s on an RTX 3090 (minutes on a CPU) and 3.5 GB of RAM, and gives a 490 MB DNG (uncompressed 16-bit: darktable does not read compressed 16-bit integer DNGs).
 
 ## Profiles
 
@@ -294,6 +321,7 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 | Catalogue, thumbnails, previews, embeddings | `~/.cache/riffle/` | Derived; safe to delete, `riffle index` rebuilds it (every profile's folders) |
 | `riffle.log` (downloadable builds only) | `~/.cache/riffle/` | The previous run's log is `riffle.log.1` |
 | CLIP model weights | `~/.cache/huggingface/` | Downloaded once |
+| RAW upscaling checkpoints | `~/.local/share/riffle/models/` | Copied there by you (see [RAW upscaling](#raw-upscaling-experimental)) |
 
 `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` are honoured. macOS uses `~/Library/Application Support/riffle` and `~/Library/Caches/riffle`; Windows uses `%APPDATA%\riffle` and `%LOCALAPPDATA%\riffle\Cache`.
 
