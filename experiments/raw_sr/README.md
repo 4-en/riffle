@@ -293,3 +293,22 @@ venv/bin/python experiments/raw_sr/eval_light.py --light experiments/raw_sr/chec
   black and white, the same real crops) plus seconds per frame, into `light_eval/`.
 - To ship it, it would need to be within about 0.3 dB of the Swin2SR model and look the same
   on the real crops, the high-ISO duck above all.
+
+## Experimental losses (`train_exp.py`)
+
+`train.py` with options for grain instead of colour noise and for edges whose position the
+input does not pin down; all off by default (then it trains exactly as `train.py`).
+
+- `--keep-noise-luma`: noise kept by partial denoising is brightness only (`dataset.py`,
+  `keep_noise_luma`; off for `train.py`): less denoising keeps grain, not coloured speckle.
+- `--chroma-weight` (e.g. 3), `--chroma-blur` (e.g. 1): the pixel loss on brightness and two
+  colour differences, colour weighted more and compared against a blurred target. Noise the
+  model cannot avoid (sharpening, recovered texture) then lands in brightness, and colour
+  stays smooth. In a test, colour noise cost 1.7× the same brightness noise at weight 3.
+- `--shadow-weight` (e.g. 1): errors in dark areas cost up to 1 + weight times as much.
+- `--shift-window` (e.g. 16), `--shift-anchor` (0.25): pixel and edge loss per window against
+  the target shifted by the best of −1, 0, +1 px (one shift per window, for all channels),
+  plus the anchor × the unshifted loss so the output does not drift. In a test, a 1 px shift
+  cost 0.036 against 0.128 for blurring (plain L1: 0.130 against 0.102, so blur won).
+
+A lower `--target-blur` made real images look worse (over-sharpened), so these leave it at 0.5.

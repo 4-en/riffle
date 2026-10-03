@@ -263,7 +263,7 @@ def keep_noise(noise, size):
 class BayerPatchDataset(Dataset):
     def __init__(self, patch_dir, patch_size=256, is_train=True, monochrome=False,
                  noise_gain=(0.7, 3.0), blur=(0.5, 3.5), target_blur=0.5, mix_prob=0.7,
-                 partial_denoise=0.5):
+                 partial_denoise=0.5, keep_noise_luma=False):
         """
         patch_dir:  .npz patches from prepare_dataset.py; its parent holds noise.json
         patch_size: target size (a multiple of 32; the packed input is a quarter of it)
@@ -278,6 +278,9 @@ class BayerPatchDataset(Dataset):
         mix_prob:   monochrome only: share of samples with random channel gains (see MONO_MIX)
         partial_denoise: share of samples where the model is to remove only part of the noise
                     (see keep_noise); the rest remove all of it
+        keep_noise_luma: the kept noise as brightness only (MONO_MIX of it after white balance,
+                    the same in every channel): colour noise is then always removed, and less
+                    denoising keeps grain, not coloured speckle
         Validation samples are deterministic per index (crop, noise, blur, gains).
         Returns (input, target, noise level, target noise): see model.BayerModelBase for the
         noise level; target noise is the target's own expected noise, for train.spectral_loss.
@@ -295,6 +298,7 @@ class BayerPatchDataset(Dataset):
         self.target_blur = target_blur
         self.mix_prob = mix_prob
         self.partial_denoise = partial_denoise
+        self.keep_noise_luma = keep_noise_luma
         with open(Path(patch_dir).parent / "noise.json") as f:
             self.noise_iso200 = json.load(f)  # {"a": …, "b": …}: pixel variance a·s + b at ISO 200
 
@@ -349,7 +353,12 @@ class BayerPatchDataset(Dataset):
         n_rest = rng.standard_normal(inp.shape, dtype=np.float32) * np.sqrt((added - keep) * unit)
         inp = np.clip(inp + n_keep + n_rest, 0, 1)
         if keep > 0:
-            target = target + keep_noise(n_keep, P)
+            kept = keep_noise(n_keep, P)  # per colour, before white balance
+            if self.keep_noise_luma:
+                wb3 = wb.astype(np.float32)[:, None, None]
+                luma = np.tensordot(MONO_MIX.astype(np.float32), kept * wb3, axes=1)  # after white balance
+                kept = luma[None] / wb3  # equal in every channel once white-balanced
+            target = target + kept
 
         # White balance, then clipped highlights made neutral, as upscale_raw.clip_highlights
         # does at inference: where a channel reached the white level, all channels capped at
