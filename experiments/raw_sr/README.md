@@ -247,7 +247,7 @@ the input channels before the model, as a colour filter in front of the lens doe
 **Loss: texture without its exact position (optional).** L1 and the edge loss compare each pixel
 with the same target pixel. Fine texture the input determines only to within a pixel is then
 cheaper blurred than placed slightly off: on a test texture, a 1 px shift cost L1 0.046,
-blurring it 0.035. Two options in `train.py`, off by default:
+blurring it 0.035. Two options, tried and dropped (still in `train_exp.py`, removed from `train.py`):
 - `--coarse-l1`: L1 and edge loss on the 2×-downscaled output, plus `--anchor-weight` (0.25)
   × full-resolution L1. What the input determines must still match.
 - `--spectral-weight`: L1 between the magnitude spectra of luma in overlapping windows
@@ -268,7 +268,7 @@ as passing the photo's own through. It looks at luma only, and with `--coarse-l1
 anchor holds colour at full resolution, so the generated noise took any colour. With full
 L1 the only way to match kept noise is the photo's own, where it is: the default model at
 `--denoise` 0.1 brings back texture that follows the bee's eye. So the smoothness was mostly
-the denoising, not L1's strictness about position. The options stay in `train.py`, off.
+the denoising, not L1's strictness about position.
 
 ## Lightweight model (separate, in progress)
 
@@ -312,3 +312,23 @@ input does not pin down; all off by default (then it trains exactly as `train.py
   cost 0.036 against 0.128 for blurring (plain L1: 0.130 against 0.102, so blur won).
 
 A lower `--target-blur` made real images look worse (over-sharpened), so these leave it at 0.5.
+
+**Results** (`compare_models.py`, every held-out patch and the real crops, `compare_exp/report.md`),
+each fine-tuned for 3 epochs from the colour model:
+
+| | PSNR | colour noise at denoise 0.1 | brightness noise at denoise 0.1 |
+|---|---:|---:|---:|
+| before | 44.09 | 3.38 | 10.65 |
+| `--keep-noise-luma --chroma-weight 3 --chroma-blur 1 --shadow-weight 1` | 44.07 | 2.09 | 10.67 |
+| `--shift-window 16` | 44.10 | 3.39 | 10.70 |
+| `--shift-window 8` | 44.10 | 3.38 | 10.67 |
+
+(noise: the high-pass part of the output's colour differences and brightness, ×1000.) The
+noise options remove 38 % of the colour noise left at low denoise, with the grain, the colour
+(measured on the ISO 4000 duck: the same at every setting) and PSNR unchanged; on the duck the
+coloured speckle turns into neutral grain. They are now `train.py`'s defaults (`--no-keep-noise-luma`,
+`--chroma-weight 1 --chroma-blur 0 --shadow-weight 0` for the old loss). The shift-tolerant loss
+changed nothing, neither in numbers nor on the palace and the owl: with the spectral result,
+the soft edges are not L1's strictness about position. It stays in `train_exp.py` only. So does
+the original sharpness-variance loss (`--sharp-weight`), removed from `train.py`: it rewards
+noise-like texture, and every run since the first used 0.
