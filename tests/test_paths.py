@@ -2,18 +2,18 @@
 
 from pathlib import Path
 
-from riffle import paths
-from riffle.config import load_config
+from imgmind import paths
+from imgmind.config import load_config
 
 
 def test_first_run_creates_user_config(isolated_user_dirs):
     cfg = load_config()
     home = isolated_user_dirs
-    assert cfg.path == home / "config" / "riffle" / "config.yaml"
-    assert (home / "config" / "riffle" / "vocabulary.yaml").is_file()  # editable copy
-    assert cfg.vocabulary_path == home / "config" / "riffle" / "vocabulary.yaml"
-    assert cfg.data_dir == home / "cache" / "riffle"  # derived: disposable
-    assert cfg.selections_path == home / "share" / "riffle" / "selections.sqlite3"  # user data
+    assert cfg.path == home / "config" / "imgmind" / "config.yaml"
+    assert (home / "config" / "imgmind" / "vocabulary.yaml").is_file()  # editable copy
+    assert cfg.vocabulary_path == home / "config" / "imgmind" / "vocabulary.yaml"
+    assert cfg.data_dir == home / "cache" / "imgmind"  # derived: disposable
+    assert cfg.selections_path == home / "share" / "imgmind" / "selections.sqlite3"  # user data
     assert cfg.sources == [] and cfg.location_history == []
 
 
@@ -23,7 +23,7 @@ def test_config_precedence(isolated_user_dirs, monkeypatch, tmp_path):
     assert paths.find_config() == local.resolve()
     other = tmp_path / "elsewhere.yaml"
     other.write_text("sources: []\n", encoding="utf-8")
-    monkeypatch.setenv("RIFFLE_CONFIG", str(other))
+    monkeypatch.setenv("IMGMIND_CONFIG", str(other))
     assert paths.find_config() == other.resolve()
     assert paths.find_config(local) == local.resolve()  # --config wins
 
@@ -47,7 +47,7 @@ def test_standalone_app_starts_with_the_faster_model(isolated_user_dirs, monkeyp
 
 
 def test_text_files_are_utf8_whatever_the_system(tmp_path):
-    from riffle.paths import read_text
+    from imgmind.paths import read_text
 
     f = tmp_path / "config.yaml"
     f.write_bytes("sources: [Größe, 出口]\n".encode("utf-8"))

@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle import custom_tags, selections
-from riffle.embed import load_embeddings, save_embeddings
-from riffle.server import create_app
+from imgmind import custom_tags, selections
+from imgmind.embed import load_embeddings, save_embeddings
+from imgmind.server import create_app
 from conftest import FakeClip, fake_index, photo
 
 DIM = FakeClip.DIM

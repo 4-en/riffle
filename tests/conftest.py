@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from riffle import db, paths
-from riffle.config import config_from_dict
+from imgmind import db, paths
+from imgmind.config import config_from_dict
 
 VOCAB = """
 templates: ["a photo of {}"]
@@ -31,10 +31,10 @@ def isolated_user_dirs(tmp_path_factory, monkeypatch):
         monkeypatch.setenv(var, str(home / sub))
     if not sys.platform.startswith("linux"):
         # Only Linux follows the XDG variables; elsewhere redirect the folders themselves.
-        monkeypatch.setattr(paths, "config_dir", lambda: home / "config" / "riffle")
-        monkeypatch.setattr(paths, "data_dir", lambda: home / "share" / "riffle")
-        monkeypatch.setattr(paths, "cache_dir", lambda: home / "cache" / "riffle")
-    monkeypatch.delenv("RIFFLE_CONFIG", raising=False)
+        monkeypatch.setattr(paths, "config_dir", lambda: home / "config" / "imgmind")
+        monkeypatch.setattr(paths, "data_dir", lambda: home / "share" / "imgmind")
+        monkeypatch.setattr(paths, "cache_dir", lambda: home / "cache" / "imgmind")
+    monkeypatch.delenv("IMGMIND_CONFIG", raising=False)
     monkeypatch.chdir(home)
     return home
 
@@ -159,14 +159,14 @@ def fake_clip():
 
 def fake_index(cfg, progress=None, report=print):
     """The full pipeline with the fake encoder (same signature as run_index)."""
-    from riffle.dupes import compute_phashes, group_duplicates
-    from riffle.profiles import indexed_roots
-    from riffle.embed import embed_photos, load_embeddings
-    from riffle.raws import match_raws
-    from riffle.scan import scan
-    from riffle.stacks import compute_stacks
-    from riffle.tags import tag_photos
-    from riffle.thumbs import build_thumbnails
+    from imgmind.dupes import compute_phashes, group_duplicates
+    from imgmind.profiles import indexed_roots
+    from imgmind.embed import embed_photos, load_embeddings
+    from imgmind.raws import match_raws
+    from imgmind.scan import scan
+    from imgmind.stacks import compute_stacks
+    from imgmind.tags import tag_photos
+    from imgmind.thumbs import build_thumbnails
 
     clip = FakeClip()
     conn = db.connect(cfg.db_path)

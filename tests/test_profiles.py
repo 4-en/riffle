@@ -6,8 +6,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle import profiles, selections
-from riffle.server import create_app
+from imgmind import profiles, selections
+from imgmind.server import create_app
 from conftest import FakeClip, photo
 
 

@@ -256,7 +256,7 @@
           <dd class="break-all font-mono text-[11px] text-neutral-300">
             {photo.path}
             {#if photo.offline}
-              <span class="block font-sans text-amber-300" title="Shown from Riffle's copy. Connect the drive to open or export the original."
+              <span class="block font-sans text-amber-300" title="Shown from ImgMind's copy. Connect the drive to open or export the original."
                 >Original not reachable (offline drive?)</span
               >
             {/if}

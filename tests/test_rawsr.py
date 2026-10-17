@@ -8,9 +8,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from riffle import rawsr
-from riffle.cli import _upscale_raw
-from riffle.export import ExportError, run_export
+from imgmind import rawsr
+from imgmind.cli import _upscale_raw
+from imgmind.export import ExportError, run_export
 from test_export import export, files_in, picked  # noqa: F401 (picked is a fixture)
 
 

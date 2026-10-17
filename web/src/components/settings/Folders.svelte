@@ -23,7 +23,7 @@
   }
   // For an offline folder that is not coming back: deleted, or moved (add the new place too).
   function forget(s) {
-    if (confirm(`Forget ${s.path} for good?\n\nUse this when the folder was deleted or moved, not when its drive is only unplugged. It leaves every profile, and the ${s.photos} photos catalogued in it are dropped from Riffle (thumbnails and AI data). Your flags, tags and captions are kept by content, so photos you add again from their new place get them back.`))
+    if (confirm(`Forget ${s.path} for good?\n\nUse this when the folder was deleted or moved, not when its drive is only unplugged. It leaves every profile, and the ${s.photos} photos catalogued in it are dropped from ImgMind (thumbnails and AI data). Your flags, tags and captions are kept by content, so photos you add again from their new place get them back.`))
       act(() => removeSource(s.path, true));
   }
   // path -> what the import found ('…' while it runs)
@@ -52,7 +52,7 @@
   shared. Originals are only read, never modified.
 </p>
 <p class="mb-3 text-xs text-neutral-400">
-  Captions, tags and read text saved beside the photos in the formats Riffle exports (XMP, text files, <span class="font-mono">metadata.jsonl</span>)
+  Captions, tags and read text saved beside the photos in the formats ImgMind exports (XMP, text files, <span class="font-mono">metadata.jsonl</span>)
   are imported when a folder is added, for photos that have none yet in this profile.
 </p>
 
@@ -80,7 +80,7 @@
           <button
             class="{btn} text-neutral-400 hover:bg-neutral-800 hover:text-red-300"
             disabled={busy || !sources.editable}
-            title="The folder was deleted or moved: drop its photos from Riffle"
+            title="The folder was deleted or moved: drop its photos from ImgMind"
             onclick={() => forget(s)}>Forget…</button
           >
         {/if}

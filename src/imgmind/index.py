@@ -1,4 +1,4 @@
-"""The `riffle index` and `riffle tag` pipelines."""
+"""The `imgmind index` and `imgmind tag` pipelines."""
 
 from __future__ import annotations
 

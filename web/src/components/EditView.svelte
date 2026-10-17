@@ -709,13 +709,13 @@
         <h3 class="font-semibold text-red-300">Write the edits into the file?</h3>
         <ul class="list-disc space-y-1 pl-5 text-xs text-neutral-300">
           <li><strong>The file itself changes</strong>: <span class="break-all font-mono">{info.rel_path}</span>. Other apps see the edited version.</li>
-          <li>The edit steps are done with: this cannot be undone in Riffle{baking.backup ? ', only by putting the backup back' : ''}.</li>
+          <li>The edit steps are done with: this cannot be undone in ImgMind{baking.backup ? ', only by putting the backup back' : ''}.</li>
           {#if info.has_raw}<li>Its RAW file is not edited.</li>{/if}
           <li>Your flags, tags and captions for it are kept.</li>
         </ul>
         <label class="flex items-start gap-2 text-xs text-neutral-300">
           <input type="checkbox" bind:checked={baking.backup} class="mt-0.5" />
-          <span>Keep the original as a backup (in Riffle's data folder, under originals-backup)</span>
+          <span>Keep the original as a backup (in ImgMind's data folder, under originals-backup)</span>
         </label>
         <div class="flex justify-end gap-2">
           <button class={btn} onclick={() => (baking = null)}>Cancel</button>

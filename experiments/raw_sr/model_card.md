@@ -13,9 +13,9 @@ tags:
   - photography
 ---
 
-# Riffle RAW SR: Bayer RAW → ×2 linear DNG
+# ImgMind RAW SR: Bayer RAW → ×2 linear DNG
 
-Two models that take a camera RAW's Bayer data and return the image at twice the resolution, doing demosaicing and upscaling in one step: one in colour, one in black and white. The result is written as a linear DNG that opens in a RAW developer (tested with darktable) like the original RAW: linear camera RGB, with the camera's colour matrix, white balance and EXIF. They are made for [Riffle](https://github.com/4-en/image-organizer), a local photo organiser, and work on their own with the files here.
+Two models that take a camera RAW's Bayer data and return the image at twice the resolution, doing demosaicing and upscaling in one step: one in colour, one in black and white. The result is written as a linear DNG that opens in a RAW developer (tested with darktable) like the original RAW: linear camera RGB, with the camera's colour matrix, white balance and EXIF. They are made for [ImgMind](https://github.com/4-en/image-organizer), a local photo organiser, and work on their own with the files here.
 
 > **Experimental.** Check the results before relying on them, and keep your RAWs.
 > - **Performance**: about 45 s per 20 MP RAW on an RTX 3090, minutes on a CPU; 3.5 GB of RAM; each DNG is about 490 MB (uncompressed 16-bit).
@@ -26,9 +26,9 @@ Two models that take a camera RAW's Bayer data and return the image at twice the
 
 | File | |
 |---|---|
-| `riffle-raw-sr-rgb.safetensors` | colour model |
-| `riffle-raw-sr-mono.safetensors` | black-and-white model |
-| `rawsr.py` | model, RAW reading and DNG writing (Riffle's own module; runs on its own) |
+| `imgmind-raw-sr-rgb.safetensors` | colour model |
+| `imgmind-raw-sr-mono.safetensors` | black-and-white model |
+| `rawsr.py` | model, RAW reading and DNG writing (ImgMind's own module; runs on its own) |
 | `upscale.py` | command line |
 | `results/` | the evaluation: per patch (`patches.csv`) and means (`summary.json`) |
 | `images/` | the comparisons below |
@@ -36,7 +36,7 @@ Two models that take a camera RAW's Bayer data and return the image at twice the
 ## Use
 
 ```sh
-hf download <user>/riffle-raw-sr --local-dir riffle-raw-sr && cd riffle-raw-sr
+hf download <user>/imgmind-raw-sr --local-dir imgmind-raw-sr && cd imgmind-raw-sr
 pip install -r requirements.txt
 python upscale.py P1234.ORF                        # → P1234.dng
 python upscale.py P1234.ORF --denoise 0.5          # remove more of the noise
@@ -46,14 +46,14 @@ python upscale.py P1234.ORF --bw --filter orange   # black and white → P1234_b
 - `--denoise` (0.05–1, default 0.3): the share of the noise the model removes, scaled by the ISO. Lower keeps the RAW's own grain and the fine texture it hides; 1 removes it all.
 - `--bw`: like panchromatic black-and-white film by default; `--filter yellow | orange | red | green | blue`, `--luminance` (brightness as the eye sees it), or `--mix r,g,b` (own weights on white-balanced camera RGB).
 
-From Python: `rawsr.convert("riffle-raw-sr-rgb.safetensors", "P1234.ORF", "P1234.dng", denoise=0.3)`.
+From Python: `rawsr.convert("imgmind-raw-sr-rgb.safetensors", "P1234.ORF", "P1234.dng", denoise=0.3)`.
 
-In Riffle (`riffle upscale-raw`, or **RAWs → ×2 DNG** in the export), set the checkpoints in `config.yaml`:
+In ImgMind (`imgmind upscale-raw`, or **RAWs → ×2 DNG** in the export), set the checkpoints in `config.yaml`:
 
 ```yaml
 editing:
-  raw_upscale: <user>/riffle-raw-sr:riffle-raw-sr-rgb.safetensors
-  raw_upscale_mono: <user>/riffle-raw-sr:riffle-raw-sr-mono.safetensors
+  raw_upscale: <user>/imgmind-raw-sr:imgmind-raw-sr-rgb.safetensors
+  raw_upscale_mono: <user>/imgmind-raw-sr:imgmind-raw-sr-mono.safetensors
 ```
 
 ## How it works
@@ -87,13 +87,13 @@ Black and white:
 
 Read these numbers with care. The test degradation is the one the models were trained on, and the ground truth keeps half the input blur, as the training target does, so this benchmark favours them by construction. The baselines were made for display images, not for a noisy, blurred Bayer input, and Real-ESRGAN draws texture that is plausible but not where it was, which costs PSNR. The real crops below, without ground truth, are the fairer comparison. One thing the numbers do show: the black-and-white model is no better than converting the colour model's output.
 
-Held-out patches (left to right: the input demosaiced and shown at the output size, Real-ESRGAN, Swin2SR, Riffle at denoise 1.0, ground truth):
+Held-out patches (left to right: the input demosaiced and shown at the output size, Real-ESRGAN, Swin2SR, ImgMind at denoise 1.0, ground truth):
 
 {{SYNTH_RGB}}
 
 {{SYNTH_BW}}
 
-**Held-out RAWs**: crops of real RAWs from the same held-out photos (no ground truth). The baselines start from LibRaw's AHD demosaic; Riffle runs at the default denoise 0.3. Every result is written as a DNG and developed by darktable with its default settings, so all are processed alike. The duck is ISO 4000, the others ISO 200; the flower is a 50 MP handheld High Res Shot.
+**Held-out RAWs**: crops of real RAWs from the same held-out photos (no ground truth). The baselines start from LibRaw's AHD demosaic; ImgMind runs at the default denoise 0.3. Every result is written as a DNG and developed by darktable with its default settings, so all are processed alike. The duck is ISO 4000, the others ISO 200; the flower is a 50 MP handheld High Res Shot.
 
 {{REAL_RGB}}
 
@@ -108,7 +108,7 @@ Held-out patches (left to right: the input demosaiced and shown at the output si
 
 ## License
 
-The weights: Apache-2.0, like the Swin2SR weights they are fine-tuned from. The code (`rawsr.py`, `upscale.py`): MIT, from Riffle.
+The weights: Apache-2.0, like the Swin2SR weights they are fine-tuned from. The code (`rawsr.py`, `upscale.py`): MIT, from ImgMind.
 
 ## Citation
 

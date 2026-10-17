@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle import clusters
-from riffle.embed import load_embeddings, save_embeddings
-from riffle.server import create_app
+from imgmind import clusters
+from imgmind.embed import load_embeddings, save_embeddings
+from imgmind.server import create_app
 from conftest import FakeClip, photo
 
 DIM = 16
@@ -302,7 +302,7 @@ def test_clusters_are_cached_on_disk(indexed, conn, monkeypatch):
 def test_layout_of_a_large_library_uses_a_sample(monkeypatch):
     """Above LAYOUT_DIRECT, t-SNE runs on a sample and the others are placed by it:
     every photo gets a place, and photos alike land near each other."""
-    from riffle import clusters
+    from imgmind import clusters
 
     monkeypatch.setattr(clusters, "LAYOUT_DIRECT", 60)
     rng = np.random.default_rng(0)

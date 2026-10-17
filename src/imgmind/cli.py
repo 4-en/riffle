@@ -1,4 +1,4 @@
-"""Command line entry point: `riffle index | tag | serve | paths | upscale-raw`."""
+"""Command line entry point: `imgmind index | tag | serve | paths | upscale-raw`."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def _raw_models(cfg) -> str:
 
 
 def _upscale_raw(cfg, args) -> int:
-    """`riffle upscale-raw`: each RAW to a DNG of its name; returns the exit code."""
+    """`imgmind upscale-raw`: each RAW to a DNG of its name; returns the exit code."""
     import time
     from pathlib import Path
 
@@ -110,13 +110,13 @@ def _upscale_raw(cfg, args) -> int:
 def main(argv: list[str] | None = None) -> None:
     multiprocessing.freeze_support()  # thumbnail workers in a frozen (standalone) build
     parser = argparse.ArgumentParser(
-        prog="riffle",
-        description="Riffle: find the best photos in your library. Without a command, "
+        prog="imgmind",
+        description="ImgMind: find the best photos in your library. Without a command, "
         "it starts (or reuses) the app and opens it in your browser.",
     )
     parser.add_argument(
         "-c", "--config", default=None,
-        help="config file (default: ./config.yaml if present, else the user config; see `riffle paths`)",
+        help="config file (default: ./config.yaml if present, else the user config; see `imgmind paths`)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command")
@@ -128,9 +128,9 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--reload", action="store_true", help="auto-reload on code changes")
     sub.add_parser("paths", help="show where the config, your flags and the derived data live")
     up = sub.add_parser(
-        "upscale-raw", help="RAWs to ×2 linear DNGs with Riffle's Bayer model (replaces demosaicing)",
+        "upscale-raw", help="RAWs to ×2 linear DNGs with ImgMind's Bayer model (replaces demosaicing)",
         description="Upscale RAWs ×2 into linear DNGs that open in darktable like the RAW. Needs the raw "
-        "extra and a checkpoint (see `riffle paths` and the README). Experimental: slow (about 45 s per "
+        "extra and a checkpoint (see `imgmind paths` and the README). Experimental: slow (about 45 s per "
         "20 MP RAW on a fast GPU) and large (about 500 MB per DNG); results may be soft or show artefacts; "
         "trained on one camera (OM-5 Mark II), RGGB Bayer RAWs only.",
     )
@@ -187,14 +187,14 @@ def main(argv: list[str] | None = None) -> None:
 
         run_tag(cfg)
     elif args.command == "serve":
-        os.environ["RIFFLE_CONFIG"] = str(cfg.path)
+        os.environ["IMGMIND_CONFIG"] = str(cfg.path)
         print(f"Serving on http://{args.host}:{args.port} (Ctrl+C to stop)")
         if args.reload:  # development: uvicorn re-imports the app on code changes
             import uvicorn
 
             try:
                 uvicorn.run(
-                    "riffle.server:create_app",
+                    "imgmind.server:create_app",
                     factory=True,
                     host=args.host,
                     port=args.port,

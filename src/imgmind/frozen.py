@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-LOG_NAME = "riffle.log"
+LOG_NAME = "imgmind.log"
 
 
 def is_frozen() -> bool:

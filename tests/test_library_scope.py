@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle import profiles, selections
-from riffle.embed import load_embeddings
-from riffle.server import create_app
+from imgmind import profiles, selections
+from imgmind.embed import load_embeddings
+from imgmind.server import create_app
 from conftest import FakeClip, _pattern, fake_index
 
 ALL = {"dupes": "all"}

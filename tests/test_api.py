@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle.server import create_app
+from imgmind.server import create_app
 from conftest import photo
 
 

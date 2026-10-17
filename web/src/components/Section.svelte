@@ -5,7 +5,7 @@
 
   let { id, title, defaultOpen = false, active = 0, children } = $props();
 
-  const key = `riffle.sidebar.${untrack(() => id)}`;
+  const key = `imgmind.sidebar.${untrack(() => id)}`;
   let open = $state(read(untrack(() => defaultOpen)));
 
   function read(fallback) {

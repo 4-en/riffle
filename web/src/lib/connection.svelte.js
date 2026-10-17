@@ -1,7 +1,7 @@
 // One live connection per tab (Server-Sent Events). The server counts open tabs
 // with it, which lets the one-click launch stop once the last tab is closed; the
 // page uses it to notice a stopped server. EventSource reconnects by itself, so a
-// reload, a short network blip, or a restarted Riffle heal on their own.
+// reload, a short network blip, or a restarted ImgMind heal on their own.
 
 // model: the AI model's state on the server ('loading' | 'ready' | 'failed'); log: the
 // standalone app's log file (null otherwise).

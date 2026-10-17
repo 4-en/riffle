@@ -3,12 +3,12 @@
     venv/bin/python experiments/raw_sr/make_release.py [--rgb PT] [--mono PT] [--out DIR]
 
 - Weights: the checkpoints as safetensors (checked to give the same output as the .pt).
-- Code: src/riffle/rawsr.py, copied (it runs on its own), beside upscale.py and requirements.txt.
+- Code: src/imgmind/rawsr.py, copied (it runs on its own), beside upscale.py and requirements.txt.
 - Evaluation on the held-out patches (data_binned/val, photos never trained on), with ground
   truth: the input as one real pixel's noise at the photo's ISO (noise gain 1), blurred by
   sigma 1.25-3.1 (the range measured on real ORFs), the target as in training. Compared:
   the input demosaiced (OpenCV, edge-aware) and enlarged bicubic; Real-ESRGAN ×2 and Swin2SR
-  ×2 on that demosaic; the Riffle models. PSNR and SSIM, colour and black and white (MONO_MIX
+  ×2 on that demosaic; the ImgMind models. PSNR and SSIM, colour and black and white (MONO_MIX
   of linear RGB; for the RGB methods converted the same way).
 - Images: grids of held-out patches, and crops of held-out RAWs (no ground truth: the real
   input) rendered by darktable from DNGs, so every method is developed the same way.
@@ -38,7 +38,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from compare import render  # noqa: E402  darktable-cli with a throwaway config
 from dataset import BayerPatchDataset  # noqa: E402
-from riffle import rawsr  # noqa: E402
+from imgmind import rawsr  # noqa: E402
 
 GAMMA = rawsr.GAMMA
 MIX = rawsr.MONO_MIX.astype(np.float32)
@@ -156,7 +156,7 @@ def export_weights(rgb_pt, mono_pt, out):
     names = {}
     for kind, pt in (("rgb", rgb_pt), ("mono", mono_pt)):
         state = torch.load(pt, map_location="cpu", weights_only=True)
-        name = f"riffle-raw-sr-{kind}.safetensors"
+        name = f"imgmind-raw-sr-{kind}.safetensors"
         save_file({k: v.contiguous() for k, v in state.items()}, out / name, metadata={"kind": kind, "format": "pt"})
         rawsr._models.clear()
         a, k_a, _ = rawsr.load(str(pt))
@@ -195,13 +195,13 @@ def evaluate(weights, out, base):
         }
         xt, nt = x[None].cuda(), n.view(1).cuda()
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16):
-            outs["riffle"] = m_rgb(xt, nt).float().clamp(0, 1)[0].permute(1, 2, 0).cpu().numpy()
-            outs["riffle_03"] = m_rgb(xt, nt + math.log2(0.3)).float().clamp(0, 1)[0].permute(1, 2, 0).cpu().numpy()
-            outs["riffle_mono"] = m_mono(xt, nt).float().clamp(0, 1)[0, 0].cpu().numpy()
+            outs["imgmind"] = m_rgb(xt, nt).float().clamp(0, 1)[0].permute(1, 2, 0).cpu().numpy()
+            outs["imgmind_03"] = m_rgb(xt, nt + math.log2(0.3)).float().clamp(0, 1)[0].permute(1, 2, 0).cpu().numpy()
+            outs["imgmind_mono"] = m_mono(xt, nt).float().clamp(0, 1)[0, 0].cpu().numpy()
         gt_m = mono(gt)
         row = {"patch": ds.patch_files[i].stem, "photo": photo}
         for k, o in outs.items():
-            if k != "riffle_mono":
+            if k != "imgmind_mono":
                 row[f"{k}_psnr"], row[f"{k}_ssim"] = psnr(o, gt), ssim(o, gt)
                 om = mono(o)
             else:
@@ -222,12 +222,12 @@ def synthetic_images(keep, out):
     names = []
     for photo, (_, dem, outs, gt) in sorted(keep.items(), key=lambda kv: -kv[1][0])[:4]:
         inp = cv2.resize(dem, (256, 256), interpolation=cv2.INTER_NEAREST)
-        cols = [inp, outs["esrgan"], outs["swin"], outs["riffle"], gt]
-        labels = ["Input (demosaiced)", "Real-ESRGAN x2", "Swin2SR x2", "Riffle RGB", "Ground truth"]
+        cols = [inp, outs["esrgan"], outs["swin"], outs["imgmind"], gt]
+        labels = ["Input (demosaiced)", "Real-ESRGAN x2", "Swin2SR x2", "ImgMind RGB", "Ground truth"]
         name = f"images/synthetic_rgb_{photo}.png"
         label_grid(cols, labels).save(out / name)
-        cols_m = [mono(inp), mono(outs["esrgan"]), mono(outs["swin"]), mono(outs["riffle"]), outs["riffle_mono"], mono(gt)]
-        labels_m = ["Input (demosaiced)", "Real-ESRGAN x2", "Swin2SR x2", "Riffle RGB to B&W", "Riffle B&W", "Ground truth"]
+        cols_m = [mono(inp), mono(outs["esrgan"]), mono(outs["swin"]), mono(outs["imgmind"]), outs["imgmind_mono"], mono(gt)]
+        labels_m = ["Input (demosaiced)", "Real-ESRGAN x2", "Swin2SR x2", "ImgMind RGB to B&W", "ImgMind B&W", "Ground truth"]
         name_m = f"images/synthetic_mono_{photo}.png"
         label_grid(cols_m, labels_m).save(out / name_m)
         names.append((photo, name, name_m))
@@ -248,7 +248,7 @@ def real_crops(weights, out, base):
     m_rgb, _, _ = rawsr.load(str(out / weights["rgb"]))
     m_mono, _, _ = rawsr.load(str(out / weights["mono"]))
     names = []
-    tmp = Path(tempfile.mkdtemp(prefix="riffle-release-"))
+    tmp = Path(tempfile.mkdtemp(prefix="imgmind-release-"))
     try:
         for stem, cx, cy, what in REAL_CROPS:
             raw_path = find_raw(stem)
@@ -288,13 +288,13 @@ def real_crops(weights, out, base):
                 "input": cv2.resize(native, None, fx=2, fy=2, interpolation=cv2.INTER_NEAREST),
                 "esrgan": base.run(native, "esrgan"),
                 "swin": base.run(native, "swin"),
-                "riffle": ours,
+                "imgmind": ours,
             }
             # Each as a DNG (linear camera RGB, neutral grey for black and white), rendered alike
             rendered = {}
-            variants = [(k, bw) for bw in (False, True) for k in results] + [("riffle_mono", True)]
+            variants = [(k, bw) for bw in (False, True) for k in results] + [("imgmind_mono", True)]
             for k, bw in variants:
-                lin = to_lin(trim(ours_m if k == "riffle_mono" else results[k])) * head
+                lin = to_lin(trim(ours_m if k == "imgmind_mono" else results[k])) * head
                 if lin.ndim == 2:
                     lin = np.repeat(lin[..., None], 3, axis=2)
                 elif bw:
@@ -305,12 +305,12 @@ def real_crops(weights, out, base):
                 with Image.open(tif) as im_t:
                     a = np.asarray(im_t)
                 rendered[(k, bw)] = a.astype(np.float32) / (65535 if a.dtype == np.uint16 else 255)
-            labels = ["Input (AHD demosaic)", "Real-ESRGAN x2", "Swin2SR x2", "Riffle RGB"]
-            cols = [rendered[(k, False)] for k in ("input", "esrgan", "swin", "riffle")]
+            labels = ["Input (AHD demosaic)", "Real-ESRGAN x2", "Swin2SR x2", "ImgMind RGB"]
+            cols = [rendered[(k, False)] for k in ("input", "esrgan", "swin", "imgmind")]
             name = f"images/real_rgb_{what}.png"
             label_grid(cols, labels).save(out / name)
-            labels_m = ["Input (AHD demosaic)", "Real-ESRGAN x2", "Swin2SR x2", "Riffle RGB to B&W", "Riffle B&W"]
-            cols_m = [rendered[(k, True)] for k in ("input", "esrgan", "swin", "riffle", "riffle_mono")]
+            labels_m = ["Input (AHD demosaic)", "Real-ESRGAN x2", "Swin2SR x2", "ImgMind RGB to B&W", "ImgMind B&W"]
+            cols_m = [rendered[(k, True)] for k in ("input", "esrgan", "swin", "imgmind", "imgmind_mono")]
             name_m = f"images/real_mono_{what}.png"
             label_grid(cols_m, labels_m).save(out / name_m)
             names.append((what, name, name_m))
@@ -324,8 +324,8 @@ METHODS = [
     ("input", "Input: OpenCV demosaic + bicubic ×2"),
     ("esrgan", "Real-ESRGAN ×2 (x2plus) on the demosaic"),
     ("swin", "Swin2SR classical ×2 on the demosaic"),
-    ("riffle_03", "Riffle RGB, denoise 0.3"),
-    ("riffle", "Riffle RGB, denoise 1.0"),
+    ("imgmind_03", "ImgMind RGB, denoise 0.3"),
+    ("imgmind", "ImgMind RGB, denoise 1.0"),
 ]
 
 
@@ -337,11 +337,11 @@ def tables(rows):
     for k, name in METHODS:
         rgb.append(f"| {name} | {mean(f'{k}_psnr'):.2f} | {mean(f'{k}_ssim'):.4f} |")
     bw = ["| Method | PSNR (dB) | SSIM |", "|---|---:|---:|"]
-    for k, name in [*METHODS, ("riffle_mono", "Riffle B&W (denoise 1.0)")]:
-        name = name if k == "riffle_mono" else f"{name}, to B&W"
+    for k, name in [*METHODS, ("imgmind_mono", "ImgMind B&W (denoise 1.0)")]:
+        name = name if k == "imgmind_mono" else f"{name}, to B&W"
         bw.append(f"| {name} | {mean(f'{k}_mono_psnr'):.2f} | {mean(f'{k}_mono_ssim'):.4f} |")
     summary = {k: {m: mean(f"{k}_{m}") for m in ("psnr", "ssim", "mono_psnr", "mono_ssim") if f"{k}_{m}" in rows[0]}
-               for k, _ in [*METHODS, ("riffle_mono", "")]}
+               for k, _ in [*METHODS, ("imgmind_mono", "")]}
     return "\n".join(rgb), "\n".join(bw), summary
 
 
@@ -356,7 +356,7 @@ def main():
     (out / "results").mkdir(exist_ok=True)
 
     weights = export_weights(a.rgb, a.mono, out)
-    shutil.copy2(ROOT / "src" / "riffle" / "rawsr.py", out / "rawsr.py")
+    shutil.copy2(ROOT / "src" / "imgmind" / "rawsr.py", out / "rawsr.py")
 
     base = Baselines()
     rows, keep = evaluate(weights, out, base)

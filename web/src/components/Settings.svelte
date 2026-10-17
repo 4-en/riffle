@@ -29,7 +29,7 @@
     ['flags', 'Flags & exports'],
     ['files', 'Files'],
   ];
-  const KEY = 'riffle.settings.page';
+  const KEY = 'imgmind.settings.page';
   const known = (p) => PAGES.some(([id]) => id === p);
 
   function remembered() {

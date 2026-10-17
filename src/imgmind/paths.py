@@ -2,14 +2,14 @@
 
 On Linux, honouring the XDG variables:
 
-- settings (config.yaml, vocabulary.yaml): ``~/.config/riffle``
-- user data (selections.sqlite3, the pick/reject flags): ``~/.local/share/riffle``
-- derived data (catalogue, thumbnails, previews, embeddings): ``~/.cache/riffle``,
+- settings (config.yaml, vocabulary.yaml): ``~/.config/imgmind``
+- user data (selections.sqlite3, the pick/reject flags): ``~/.local/share/imgmind``
+- derived data (catalogue, thumbnails, previews, embeddings): ``~/.cache/imgmind``,
   safe to delete and rebuilt by indexing
 
-macOS uses ``~/Library/Application Support/riffle`` and ``~/Library/Caches/riffle``;
-Windows ``%APPDATA%\\riffle`` (settings and flags, which roam with the user
-profile) and ``%LOCALAPPDATA%\\riffle\\Cache``.
+macOS uses ``~/Library/Application Support/imgmind`` and ``~/Library/Caches/imgmind``;
+Windows ``%APPDATA%\\imgmind`` (settings and flags, which roam with the user
+profile) and ``%LOCALAPPDATA%\\imgmind\\Cache``.
 """
 
 from __future__ import annotations
@@ -22,25 +22,44 @@ from pathlib import Path
 
 import platformdirs
 
-APP = "riffle"
+APP = "imgmind"
 
 
-# appauthor=False: no extra "author" folder on Windows (it would be riffle\riffle).
+LEGACY_APP = "riffle"  # the app's former name; its folders are moved over on first use
+
+
+def _migrated(func) -> Path:
+    """The folder for ``APP``; if only the one for the former name exists, move it
+    over first, so flags, tags, settings and the index survive the rename."""
+    new = Path(func(APP, appauthor=False, roaming=True) if func is not platformdirs.user_cache_dir
+               else func(APP, appauthor=False))
+    old = Path(func(LEGACY_APP, appauthor=False, roaming=True) if func is not platformdirs.user_cache_dir
+               else func(LEGACY_APP, appauthor=False))
+    if not new.exists() and old.is_dir():
+        try:
+            new.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(old), str(new))
+        except OSError:
+            return old  # could not move (permissions, a running copy): keep using the old one
+    return new
+
+
+# appauthor=False: no extra "author" folder on Windows (it would be imgmind\\imgmind).
 def config_dir() -> Path:
-    return Path(platformdirs.user_config_dir(APP, appauthor=False, roaming=True))
+    return _migrated(platformdirs.user_config_dir)
 
 
 def data_dir() -> Path:
-    return Path(platformdirs.user_data_dir(APP, appauthor=False, roaming=True))
+    return _migrated(platformdirs.user_data_dir)
 
 
 def cache_dir() -> Path:
-    return Path(platformdirs.user_cache_dir(APP, appauthor=False))
+    return _migrated(platformdirs.user_cache_dir)
 
 
 def default_file(name: str) -> Path:
     """A file shipped with the package (``defaults/``): config template, vocabulary."""
-    return Path(str(resources.files("riffle") / "defaults" / name))
+    return Path(str(resources.files("imgmind") / "defaults" / name))
 
 
 # The standalone app runs the model on the CPU (see packaging/), so it starts with
@@ -62,7 +81,7 @@ def standalone_defaults(template: str) -> str:
 
 
 def read_text(path: str | Path) -> str:
-    """A text file the user may have edited (config, vocabulary): UTF-8, which Riffle
+    """A text file the user may have edited (config, vocabulary): UTF-8, which ImgMind
     writes, else the system's encoding (e.g. saved by an old Windows editor).
     Without an explicit encoding Python uses the system's, cp1252 on Windows, which
     garbles or rejects UTF-8 (a folder or tag with ü or 出口)."""
@@ -73,10 +92,10 @@ def read_text(path: str | Path) -> str:
 
 
 def find_config(explicit: str | Path | None = None) -> Path:
-    """The config file to use: ``--config``, else ``$RIFFLE_CONFIG``, else
+    """The config file to use: ``--config``, else ``$IMGMIND_CONFIG``, else
     ``./config.yaml`` if one exists (a project-local setup), else the user's
     config, created from the template on first run."""
-    for candidate in (explicit, os.environ.get("RIFFLE_CONFIG")):
+    for candidate in (explicit, os.environ.get("IMGMIND_CONFIG") or os.environ.get("RIFFLE_CONFIG")):
         if candidate:
             return Path(candidate).expanduser().resolve()
     local = Path("config.yaml")

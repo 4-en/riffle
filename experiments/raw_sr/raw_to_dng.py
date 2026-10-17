@@ -1,7 +1,7 @@
-"""Upscale a Bayer RAW to a linear DNG (proof of concept, separate from Riffle).
+"""Upscale a Bayer RAW to a linear DNG (proof of concept, separate from ImgMind).
 
     venv/bin/python experiments/raw_sr/raw_to_dng.py IN.ORF -o OUT.dng --model swin2sr --scale 2 \
-        [--crop 0.3,0.2,0.4,0.3 --angle 1.5 | --riffle]
+        [--crop 0.3,0.2,0.4,0.3 --angle 1.5 | --imgmind]
 
 1. LibRaw (rawpy) demosaics the RAW to linear camera RGB, 16 bit: black level taken off,
    scaled to the white level, no white balance, no gamma, in the sensor's orientation.
@@ -10,8 +10,8 @@
 1c. With the camera's JPEG beside it (or --jpeg), the RAW is brought into the JPEG's
    geometry: a radial model (scale, rotation, offset, two distortion terms) fitted to SIFT
    matches between the two gives the camera's own distortion correction, and places a crop
-   set on the JPEG (--crop/--angle/--rot90/--flip, as Riffle's editor stores it, or
-   --riffle for the photo's own) exactly. The crop, with a margin trimmed after upscaling,
+   set on the JPEG (--crop/--angle/--rot90/--flip, as ImgMind's editor stores it, or
+   --imgmind for the photo's own) exactly. The crop, with a margin trimmed after upscaling,
    is cut out of the linear image in one resampling, so only it is upscaled: compute and
    file size shrink with its area. Without a JPEG, lensfun corrects the distortion too
    (its profile for the 12-100 mm at 12 mm corrected about 1.6 times as much as the camera).
@@ -125,7 +125,7 @@ def correct_lens(lin: np.ndarray, tiff: "RawTiff", distortion: bool = True) -> t
 
 
 def geometry_matrix(params: dict, size: tuple[int, int]) -> tuple[np.ndarray, tuple[int, int]]:
-    """Riffle's geometry (edits.apply_geometry) as a 3x3 matrix from the JPEG's upright
+    """ImgMind's geometry (edits.apply_geometry) as a 3x3 matrix from the JPEG's upright
     frame to the output, and the output's size (both in JPEG pixels)."""
     w, h = size
     M = np.eye(3)
@@ -230,7 +230,7 @@ def camera_geometry(jpeg: np.ndarray, raw_disp: np.ndarray, edge: int = 2400):
 
 
 def crop_raw(lin: np.ndarray, wb: np.ndarray, jpeg_path: Path, params: dict) -> tuple[np.ndarray, dict]:
-    """The part of the linear RAW that ``params`` (Riffle's geometry, on the JPEG; empty:
+    """The part of the linear RAW that ``params`` (ImgMind's geometry, on the JPEG; empty:
     all of it) shows, in the JPEG's geometry at the RAW's resolution, with MARGIN px of
     the surroundings on each side."""
     import cv2
@@ -253,12 +253,12 @@ def crop_raw(lin: np.ndarray, wb: np.ndarray, jpeg_path: Path, params: dict) -> 
     return np.clip(out, 0, None), info
 
 
-def riffle_geometry(raw_path: Path) -> tuple[dict, Path]:
-    """The geometry step of the Riffle photo this RAW belongs to, and that photo's file."""
+def imgmind_geometry(raw_path: Path) -> tuple[dict, Path]:
+    """The geometry step of the ImgMind photo this RAW belongs to, and that photo's file."""
     import sqlite3
 
-    from riffle import edits
-    from riffle.config import load_config
+    from imgmind import edits
+    from imgmind.config import load_config
 
     cfg = load_config()
     conn = sqlite3.connect(f"file:{cfg.db_path}?mode=ro", uri=True)
@@ -267,10 +267,10 @@ def riffle_geometry(raw_path: Path) -> tuple[dict, Path]:
            WHERE r.source = ? AND r.rel_path = ?""", (str(raw_path.parent), raw_path.name)).fetchone()
     conn.close()
     if row is None:
-        raise SystemExit("this RAW is not paired with a photo in Riffle's catalogue")
+        raise SystemExit("this RAW is not paired with a photo in ImgMind's catalogue")
     geo = next((e.params for e in edits.list_edits(cfg.selections_path, row[2]) if e.kind == "geometry" and e.enabled), None)
     if geo is None:
-        raise SystemExit("the photo has no crop in Riffle")
+        raise SystemExit("the photo has no crop in ImgMind")
     return geo, Path(row[0]) / row[1]
 
 
@@ -398,7 +398,7 @@ def write_dng(path: Path, lin: np.ndarray, info: dict, make: str, model: str) ->
     ]
     tifffile.imwrite(
         path, data, photometric=34892, planarconfig="contig", subfiletype=0, metadata=None,
-        software="riffle raw_sr proof of concept", rowsperstrip=64, extratags=tags,
+        software="imgmind raw_sr proof of concept", rowsperstrip=64, extratags=tags,
     )
 
 
@@ -585,12 +585,12 @@ def main(argv=None) -> None:
     ap.add_argument("--angle", type=float, default=0.0, help="straighten, degrees clockwise")
     ap.add_argument("--rot90", type=int, default=0, help="quarter turns clockwise")
     ap.add_argument("--flip", action="store_true")
-    ap.add_argument("--riffle", action="store_true", help="the crop of this photo in Riffle's editor")
+    ap.add_argument("--imgmind", action="store_true", help="the crop of this photo in ImgMind's editor")
     ap.add_argument("--jpeg", type=Path, help="the JPEG the crop was set on (default: beside the RAW)")
     a = ap.parse_args(argv)
     geometry, jpeg = None, a.jpeg
-    if a.riffle:
-        geometry, jpeg = riffle_geometry(a.raw.resolve())
+    if a.imgmind:
+        geometry, jpeg = imgmind_geometry(a.raw.resolve())
     elif a.crop or a.angle or a.rot90 or a.flip:
         geometry = {"crop": [float(v) for v in a.crop.split(",")] if a.crop else None, "angle": a.angle,
                     "rot90": a.rot90, "flip_h": a.flip}

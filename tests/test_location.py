@@ -8,11 +8,11 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle import db
-from riffle.config import load_config
-from riffle.locate import Locator, distance_m, locate_photos
-from riffle.server import create_app
-from riffle.timeline import HistoryError, load_file, parse_latlng
+from imgmind import db
+from imgmind.config import load_config
+from imgmind.locate import Locator, distance_m, locate_photos
+from imgmind.server import create_app
+from imgmind.timeline import HistoryError, load_file, parse_latlng
 from conftest import FakeClip, fake_index, photo
 
 STOCKHOLM = (59.3293, 18.0686)

@@ -5,8 +5,8 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from riffle.config import load_config, set_sources
-from riffle.server import create_app
+from imgmind.config import load_config, set_sources
+from imgmind.server import create_app
 from conftest import FakeClip, fake_index
 
 CONFIG = """\
@@ -134,7 +134,7 @@ def test_adding_a_folder_imports_exported_captions(client, tmp_path):
 
     from PIL import Image
 
-    from riffle.geotag import xmp_packet
+    from imgmind.geotag import xmp_packet
 
     new = tmp_path / "dataset"
     new.mkdir()

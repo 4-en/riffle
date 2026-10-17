@@ -5,14 +5,14 @@ import json
 import numpy as np
 from PIL import Image
 
-from riffle import sidecars
-from riffle.geotag import Meta, tag, xmp_packet
+from imgmind import sidecars
+from imgmind.geotag import Meta, tag, xmp_packet
 
 
 def test_xmp_gives_caption_tags_and_read_text():
     packet = xmp_packet(description="A shop front\n\nOFFEN\nOpen", keywords=["shop", "street"], text="OFFEN", translation="Open")
     assert sidecars.parse_xmp(packet) == sidecars.Found("A shop front", ["shop", "street"], "OFFEN", "Open")
-    # From before Riffle's own fields: the description is the caption.
+    # From before ImgMind's own fields: the description is the caption.
     assert sidecars.parse_xmp(xmp_packet(description="A shop front", keywords=["shop"])) == sidecars.Found("A shop front", ["shop"])
     # Only read text, no caption.
     assert sidecars.parse_xmp(xmp_packet(description="OFFEN", text="OFFEN")).caption == ""

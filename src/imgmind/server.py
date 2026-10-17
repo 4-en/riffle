@@ -431,7 +431,7 @@ def create_app(
     index_runner: Callable | None = None,
     auto_exit: AutoExit | None = None,
 ) -> FastAPI:
-    cfg = cfg or load_config()  # --config / $RIFFLE_CONFIG / ./config.yaml / the user's config
+    cfg = cfg or load_config()  # --config / $IMGMIND_CONFIG / ./config.yaml / the user's config
     def mid() -> str:
         """The current model's id (it can change at runtime: Settings → AI model)."""
         return cfg.model.model_id
@@ -733,9 +733,9 @@ def create_app(
         selections.ensure(sel_path())
         state["index"] = Index(cfg)
         if state["encoder"] is None:
-            threading.Thread(target=load_encoder, name="riffle-model", daemon=True).start()
-        threading.Thread(target=warm_caches, name="riffle-warm", daemon=True).start()
-        threading.Thread(target=recalibrate_taste, name="riffle-taste", daemon=True).start()
+            threading.Thread(target=load_encoder, name="imgmind-model", daemon=True).start()
+        threading.Thread(target=warm_caches, name="imgmind-warm", daemon=True).start()
+        threading.Thread(target=recalibrate_taste, name="imgmind-taste", daemon=True).start()
         watchdog = asyncio.create_task(watch_clients()) if auto_exit else None
         yield
         if watchdog:
@@ -847,7 +847,7 @@ def create_app(
         set_model(cfg, name, pretrained, stack)
         if not state.get("encoder_given"):
             state["encoder"], state["model"], state["model_error"] = None, "loading", ""
-            threading.Thread(target=load_encoder, name="riffle-model", daemon=True).start()
+            threading.Thread(target=load_encoder, name="imgmind-model", daemon=True).start()
         taste_store.use(sel_path(), state["profile"])
         for cache in (ctag_cache, cluster_cache, tag_vector_cache):
             cache.clear()
@@ -886,7 +886,7 @@ def create_app(
                 auto_exit.stop()
                 return
 
-    app = FastAPI(title="Riffle", lifespan=lifespan)
+    app = FastAPI(title="ImgMind", lifespan=lifespan)
     app.state.end_streams = lambda: state.__setitem__("stopping", True)
 
     def get_conn():
@@ -2397,7 +2397,7 @@ def create_app(
             raise caption_error(e)
         return {"previous": list(previous.values())}
 
-    def riffle_keywords(conn, index: Index, ids: list[int]) -> dict[int, dict]:
+    def imgmind_keywords(conn, index: Index, ids: list[int]) -> dict[int, dict]:
         """Keywords from the vocabulary tags (without "a"/"an", catch-all tags, or the
         kind when it is a photograph) and the learned tags."""
         from . import clusters
@@ -2420,7 +2420,7 @@ def create_app(
             for pid in members[t["id"]]:
                 if pid in wanted:
                     learned.setdefault(pid, []).append(t["name"])
-        return captioning.riffle_tags(vocab, learned, ids)
+        return captioning.imgmind_tags(vocab, learned, ids)
 
     def phrase_keywords(index: Index, ids: list[int]) -> dict[int, dict]:
         namer = cluster_namer(index)
@@ -2464,7 +2464,7 @@ def create_app(
 
     @app.post("/api/captioning", dependencies=[Depends(require_json)])
     def start_captioning(body: CaptioningIn, conn=Depends(get_conn), index: Index = Depends(get_index)):
-        """Generate captions and/or tags for these photos. Riffle's tags and scene
+        """Generate captions and/or tags for these photos. ImgMind's tags and scene
         phrases are stored at once; the models run as a background job."""
         method = captioning.METHODS.get(body.method)
         if method is None:
@@ -2486,7 +2486,7 @@ def create_app(
         ids = list(dict.fromkeys(body.ids))
         taglist = taglist_path(body.taglist)
         if not method.model:
-            results = riffle_keywords(conn, index, ids) if method.key == "riffle" else phrase_keywords(index, ids)
+            results = imgmind_keywords(conn, index, ids) if method.key == "imgmind" else phrase_keywords(index, ids)
             if taglist is not None:
                 tl = captioning.TagList.load(taglist)
                 for r in results.values():
@@ -2590,7 +2590,7 @@ def create_app(
         state["profile_version"] += 1
         ctag_cache.clear()
         taste_store.use(path, slug)
-        threading.Thread(target=recalibrate_taste, name="riffle-taste", daemon=True).start()
+        threading.Thread(target=recalibrate_taste, name="imgmind-taste", daemon=True).start()
         return {"active": slug}
 
     @app.post("/api/profiles/{slug}", dependencies=[Depends(require_json)])
@@ -2794,7 +2794,7 @@ def create_app(
                 # ASGI 2.4 does not listen for disconnects), so write a tiny comment
                 # every 2 s: the stream is then cancelled within ~2 s of the tab closing.
                 # On shutdown the stream ends by itself, so a graceful stop does not
-                # wait for open tabs (the page reconnects when Riffle is back).
+                # wait for open tabs (the page reconnects when ImgMind is back).
                 ticks = 0
                 while not state["stopping"]:
                     await asyncio.sleep(0.25)
@@ -2830,15 +2830,15 @@ def create_app(
 
     @app.get("/api/health")
     def health():
-        """Identifies a running Riffle (and which config it serves) for the launcher."""
+        """Identifies a running ImgMind (and which config it serves) for the launcher."""
         from importlib.metadata import PackageNotFoundError, version
 
         try:
-            v = version("riffle")
+            v = version("imgmind")
         except PackageNotFoundError:
             v = "dev"
         return {
-            "app": "riffle",
+            "app": "imgmind",
             "version": v,
             "config": str(cfg.path) if cfg.path else None,
             "tabs": state["clients"],  # open browser tabs (live /api/events streams)
@@ -2901,7 +2901,7 @@ def create_app(
         if not path.is_dir():
             raise HTTPException(400, f"not a folder: {path}")
         if path == cfg.data_dir or path.is_relative_to(cfg.data_dir):
-            raise HTTPException(400, "that is Riffle's own data folder")
+            raise HTTPException(400, "that is ImgMind's own data folder")
         library = current_library()
         try:
             new = profiles.with_folder(list(library.folders), path)
@@ -3430,12 +3430,12 @@ def run_server(app: FastAPI, host: str, port: int, *, on_created: Callable | Non
     ``on_created(server)`` gets the uvicorn server (e.g. for AutoExit)."""
     import uvicorn
 
-    class RiffleServer(uvicorn.Server):
+    class ImgMindServer(uvicorn.Server):
         def handle_exit(self, sig, frame):
             app.state.end_streams()
             super().handle_exit(sig, frame)
 
-    server = RiffleServer(
+    server = ImgMindServer(
         uvicorn.Config(app, host=host, port=port, log_level="warning", timeout_graceful_shutdown=3)
     )
     if on_created:
@@ -3444,4 +3444,4 @@ def run_server(app: FastAPI, host: str, port: int, *, on_created: Callable | Non
         server.run()
     except KeyboardInterrupt:
         pass  # uvicorn re-raises the Ctrl+C it handled; the server has already stopped
-    print("Riffle stopped.")
+    print("ImgMind stopped.")

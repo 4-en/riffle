@@ -13,7 +13,7 @@ checked for, in this order:
 4. a text file ``<name>.txt``.
 
 XMP gives the caption (``dc:description``), the tags (``dc:subject``) and, from
-Riffle's own fields, the read text and its translation; export also appends those to
+ImgMind's own fields, the read text and its translation; export also appends those to
 the description for photo apps, and the import takes them off again. A text file
 holds tags (comma-separated), a caption, or the caption and then the tags on the next
 line. Read text follows them there with nothing to mark it, so it is not taken from
@@ -37,13 +37,16 @@ from pathlib import Path
 from PIL import Image
 
 from . import selections
-from .geotag import RIFFLE_NS
+from .geotag import IMGMIND_NS
+
+LEGACY_NS = "urn:riffle:xmp:1.0"  # written by versions before the rename to ImgMind
 from .paths import read_text
 
 NS = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "dc": "http://purl.org/dc/elements/1.1/",
-    "riffle": RIFFLE_NS,
+    "imgmind": IMGMIND_NS,
+    "riffle": LEGACY_NS,
     "lr": "http://ns.adobe.com/lightroom/1.0/",
 }
 EMBEDDED = {".jpg", ".jpeg", ".png"}
@@ -115,7 +118,10 @@ def parse_xmp(data: bytes | str) -> Found:
                 if (li.text or "").strip() and li.text.strip() not in auto
             ]
         for name in ("text", "translation"):
-            value = desc.findtext(f"riffle:{name}", default=None, namespaces=NS) or desc.get(f"{{{RIFFLE_NS}}}{name}")
+            value = (
+                desc.findtext(f"imgmind:{name}", default=None, namespaces=NS) or desc.get(f"{{{IMGMIND_NS}}}{name}")
+                or desc.findtext(f"riffle:{name}", default=None, namespaces=NS) or desc.get(f"{{{LEGACY_NS}}}{name}")
+            )
             if value and not getattr(out, name):
                 setattr(out, name, value.strip())
     if out.caption and out.text:

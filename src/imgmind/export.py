@@ -18,7 +18,7 @@ text read from the photo (OCR) and its translation go along too: after the capti
 in the XMP description, on their own lines in the .txt (the JSONL always has them).
 Photos without any of it get nothing.
 
-With ``raw_upscale`` (rgb or mono), each RAW is exported as a ×2 linear DNG from Riffle's
+With ``raw_upscale`` (rgb or mono), each RAW is exported as a ×2 linear DNG from ImgMind's
 Bayer model (rawsr.py) instead of a copy, named like the RAW. It is written straight to its
 destination while copying (about 500 MB each, so not via a temporary folder). RAWs the
 model cannot read (not RGGB Bayer) are copied as they are.
@@ -99,7 +99,7 @@ def check_destination(cfg: Config, folder: Path, roots: list[Path] | None = None
         if folder == s or folder.is_relative_to(s):
             raise ExportError(f"the destination is inside the photo folder {s}; its copies would be indexed again")
     if folder == cfg.data_dir or folder.is_relative_to(cfg.data_dir):
-        raise ExportError("the destination is inside Riffle's data folder")
+        raise ExportError("the destination is inside ImgMind's data folder")
     if folder.exists() and not folder.is_dir():
         raise ExportError(f"not a folder: {folder}")
 
@@ -171,7 +171,7 @@ def add_metadata(
     """Positions (``locations``) and captions/keywords (``texts``: {id: (caption,
     keywords)}) for the copies: into JPEG/PNG copies where possible (captions only
     with ``embed_text``), else one XMP sidecar per photo and name. ``read``: {id:
-    (text, translation)} in Riffle's own XMP fields as well (see xmp_packet)."""
+    (text, translation)} in ImgMind's own XMP fields as well (see xmp_packet)."""
     read = read or {}
     sidecars: list[_File] = []
     seen: set[tuple[int, Path, str]] = set()

@@ -1,4 +1,4 @@
-"""Bayer RAW → ×2 linear DNG with Riffle's Bayer models (trained in experiments/raw_sr).
+"""Bayer RAW → ×2 linear DNG with ImgMind's Bayer models (trained in experiments/raw_sr).
 
 The model replaces demosaicing and upscaling in one step: it takes the RAW's packed Bayer
 data (R, G1, G2, B at half the resolution) and returns RGB, or black and white, at twice the
@@ -18,10 +18,10 @@ it. Whole frames, upright; RGGB sensors only (the models are trained on an OM-5 
 
 Checkpoints (.pt or .safetensors): ``editing.raw_upscale`` and ``editing.raw_upscale_mono`` in
 the config, a path or a Hub file ("org/repo:file"); by default ``models/raw-upscale.pt`` and
-``models/raw-upscale-mono.pt`` in Riffle's data folder (``riffle paths``). Whether a
+``models/raw-upscale-mono.pt`` in ImgMind's data folder (``imgmind paths``). Whether a
 checkpoint is colour or black and white is read from it.
 
-This module also works on its own, outside Riffle (the published model ships it):
+This module also works on its own, outside ImgMind (the published model ships it):
 ``convert(checkpoint, src, dst, ...)`` needs no config.
 """
 
@@ -485,7 +485,7 @@ def write_dng(path: Path, lin: np.ndarray, info: dict, make: str, model: str) ->
     ]
     tifffile.imwrite(
         path, data, photometric=34892, planarconfig="contig", subfiletype=0, metadata=None,
-        software="Riffle", rowsperstrip=64, extratags=tags,
+        software="ImgMind", rowsperstrip=64, extratags=tags,
     )
 
 

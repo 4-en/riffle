@@ -1,11 +1,11 @@
-"""`riffle` without arguments: start (or find) the server and open the browser.
+"""`imgmind` without arguments: start (or find) the server and open the browser.
 
 A small ``server.json`` in the data folder records the running instance, so a
 second launch just opens another browser tab. It is only trusted if that URL
-answers ``/api/health`` as Riffle, for the same config.
+answers ``/api/health`` as ImgMind, for the same config.
 
-Launched this way, Riffle also stops by itself once its last browser tab has
-been closed for a while (server.AutoExit); `riffle serve` never does.
+Launched this way, ImgMind also stops by itself once its last browser tab has
+been closed for a while (server.AutoExit); `imgmind serve` never does.
 """
 
 from __future__ import annotations
@@ -36,11 +36,11 @@ def health(url: str, timeout: float = 1.0) -> dict | None:
             data = json.load(r)
     except (OSError, ValueError):
         return None
-    return data if isinstance(data, dict) and data.get("app") == "riffle" else None
+    return data if isinstance(data, dict) and data.get("app") == "imgmind" else None
 
 
 def running_url(cfg: Config) -> str | None:
-    """The URL of a Riffle already serving this config, if any."""
+    """The URL of a ImgMind already serving this config, if any."""
     try:
         url = json.loads(runtime_file(cfg).read_text(encoding="utf-8"))["url"]
     except (OSError, ValueError, KeyError, TypeError):
@@ -69,13 +69,13 @@ def open_when_ready(url: str, timeout: float = 180.0) -> None:
             webbrowser.open(url)
             return
         time.sleep(0.3)
-    print(f"Riffle did not start within {timeout:.0f} s; open {url} yourself once it is up.")
+    print(f"ImgMind did not start within {timeout:.0f} s; open {url} yourself once it is up.")
 
 
 def launch(cfg: Config, open_browser: bool = True) -> None:
     url = running_url(cfg)
     if url:
-        print(f"Riffle is already running at {url}")
+        print(f"ImgMind is already running at {url}")
         if open_browser:
             webbrowser.open(url)
         return
@@ -87,11 +87,11 @@ def launch(cfg: Config, open_browser: bool = True) -> None:
     rt = runtime_file(cfg)
     rt.parent.mkdir(parents=True, exist_ok=True)
     rt.write_text(json.dumps({"url": url, "pid": os.getpid()}), encoding="utf-8")
-    os.environ["RIFFLE_CONFIG"] = str(cfg.path)
+    os.environ["IMGMIND_CONFIG"] = str(cfg.path)
     server = None
 
     def stop() -> None:
-        print("The last Riffle tab was closed: stopping. Run `riffle` to start it again.")
+        print("The last ImgMind tab was closed: stopping. Run `imgmind` to start it again.")
         server.should_exit = True
 
     def created(s) -> None:
@@ -102,7 +102,7 @@ def launch(cfg: Config, open_browser: bool = True) -> None:
     if open_browser:
         threading.Thread(target=open_when_ready, args=(url,), daemon=True).start()
     print(
-        f"Riffle is starting at {url} (the browser opens when it is ready).\n"
+        f"ImgMind is starting at {url} (the browser opens when it is ready).\n"
         f"It stops by itself {IDLE_EXIT_SECONDS} s after its last browser tab is closed, or press Ctrl+C."
     )
     try:

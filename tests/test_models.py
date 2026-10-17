@@ -9,10 +9,10 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle import models
-from riffle.config import load_config, set_model
-from riffle.embed import embedding_paths
-from riffle.server import create_app
+from imgmind import models
+from imgmind.config import load_config, set_model
+from imgmind.embed import embedding_paths
+from imgmind.server import create_app
 from conftest import FakeClip, fake_index
 
 

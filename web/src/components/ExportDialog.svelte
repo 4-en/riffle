@@ -15,7 +15,7 @@
 
   function setting(key, fallback) {
     try {
-      const v = localStorage.getItem(`riffle.export.${key}`) ?? localStorage.getItem(`archive.export.${key}`);
+      const v = localStorage.getItem(`imgmind.export.${key}`) ?? localStorage.getItem(`archive.export.${key}`);
       return v === null ? fallback : JSON.parse(v);
     } catch {
       return fallback;
@@ -41,7 +41,7 @@
   // Edited photos (edits.py) are exported with their edits unless originals is on; upscale 2 | 4 enlarges every image.
   let originals = $state(false);
   let upscale = $state(0);
-  // RAWs as ×2 DNGs from Riffle's Bayer model: '' (as they are) | rgb | mono, how much of the
+  // RAWs as ×2 DNGs from ImgMind's Bayer model: '' (as they are) | rgb | mono, how much of the
   // noise it removes, and for black and white the base mix (film | luminance) and a filter.
   let rawUpscale = $state(setting('rawUpscale', ''));
   let rawDenoise = $state(setting('rawDenoise', 0.3));
@@ -224,7 +224,7 @@
               <option value="mono" disabled={!rawModels?.mono.available}>×2 DNG, black and white</option>
             </select>
             <span class="text-xs text-neutral-500">
-              Riffle's RAW model replaces demosaicing; the DNG opens in darktable like the RAW. About a minute and 500 MB per photo.
+              ImgMind's RAW model replaces demosaicing; the DNG opens in darktable like the RAW. About a minute and 500 MB per photo.
             </span>
           </label>
           {#if rawUnavailable.length}

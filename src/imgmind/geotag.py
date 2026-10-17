@@ -146,7 +146,7 @@ class Meta:
     accuracy_m: float | None = None
     description: str = ""
     keywords: tuple[str, ...] = ()
-    text: str = ""  # text read from the photo and its translation, in Riffle's own fields
+    text: str = ""  # text read from the photo and its translation, in ImgMind's own fields
     translation: str = ""
 
     @property
@@ -158,7 +158,7 @@ class Meta:
         return bool(self.description or self.keywords)
 
 
-RIFFLE_NS = "urn:riffle:xmp:1.0"  # Riffle's own XMP fields (sidecars.py reads them back)
+IMGMIND_NS = "urn:imgmind:xmp:1.0"  # ImgMind's own XMP fields (sidecars.py reads them back)
 
 
 def xmp_packet(
@@ -166,7 +166,7 @@ def xmp_packet(
     text: str = "", translation: str = "",
 ) -> bytes:
     """An XMP packet with a GPS position and/or dc:description and dc:subject; ``text``
-    and ``translation`` (read from the photo) go into riffle:text / riffle:translation,
+    and ``translation`` (read from the photo) go into imgmind:text / imgmind:translation,
     so an import can tell them from the caption they also follow in the description."""
     attrs, body = "", ""
     if lat is not None and lon is not None:
@@ -183,9 +183,9 @@ def xmp_packet(
         items = "".join(f"<rdf:li>{escape(k)}</rdf:li>" for k in keywords)
         body += f"   <dc:subject><rdf:Bag>{items}</rdf:Bag></dc:subject>\n"
     if text:
-        body += f"   <riffle:text>{escape(text)}</riffle:text>\n"
+        body += f"   <imgmind:text>{escape(text)}</imgmind:text>\n"
     if translation:
-        body += f"   <riffle:translation>{escape(translation)}</riffle:translation>\n"
+        body += f"   <imgmind:translation>{escape(translation)}</imgmind:translation>\n"
     close = f">\n{body}  </rdf:Description>\n" if body else "/>\n"
     return (
         '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
@@ -193,7 +193,7 @@ def xmp_packet(
         ' <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
         '  <rdf:Description rdf:about="" xmlns:exif="http://ns.adobe.com/exif/1.0/"'
         f' xmlns:dc="http://purl.org/dc/elements/1.1/"'
-        f'{f" xmlns:riffle=\"{RIFFLE_NS}\"" if text or translation else ""}{attrs}{close}'
+        f'{f" xmlns:imgmind=\"{IMGMIND_NS}\"" if text or translation else ""}{attrs}{close}'
         " </rdf:RDF>\n"
         "</x:xmpmeta>\n"
         '<?xpacket end="w"?>'

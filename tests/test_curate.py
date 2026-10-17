@@ -6,9 +6,9 @@ from pathlib import Path
 import numpy as np
 from fastapi.testclient import TestClient
 
-from riffle import curate, db, selections
-from riffle.filters import PhotoFilter
-from riffle.server import create_app
+from imgmind import curate, db, selections
+from imgmind.filters import PhotoFilter
+from imgmind.server import create_app
 from conftest import FakeClip
 
 DIM = 16
@@ -368,8 +368,8 @@ def _wait(c):
 
 
 def test_curate_api_with_a_search(indexed):
-    from riffle.embed import load_embeddings
-    from riffle.query import query_vectors, score
+    from imgmind.embed import load_embeddings
+    from imgmind.query import query_vectors, score
 
     enc = FakeClip().encode_text
     with TestClient(create_app(indexed, text_encoder=enc)) as c:

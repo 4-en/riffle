@@ -8,7 +8,7 @@ scaled to its peak, gamma 2.2, as in training) and returns RGB, or monochrome, a
 RAW's resolution. The result is turned upright afterwards (turning the mosaic first would move
 its colours to other places in the 2×2 quad). The DNG opens in darktable like the RAW: linear
 camera RGB, the camera's colour matrix and white balance, its EXIF. A monochrome result is
-written as neutral grey in that space. No lens corrections or Riffle crop (raw_to_dng.py has
+written as neutral grey in that space. No lens corrections or ImgMind crop (raw_to_dng.py has
 those for the other models).
 """
 import argparse

@@ -16,7 +16,7 @@ export function activeFilterCount(f) {
 // Per-browser preferences (not in the URL).
 function loadPref(key, fallback) {
   try {
-    const v = localStorage.getItem(`riffle.${key}`);
+    const v = localStorage.getItem(`imgmind.${key}`);
     return v === null ? fallback : JSON.parse(v);
   } catch {
     return fallback;
@@ -34,7 +34,7 @@ export const TILE_SIZES = { small: 112, medium: 168, large: 260 };
 export function setPref(key, value) {
   prefs[key] = value;
   try {
-    localStorage.setItem(`riffle.${key}`, JSON.stringify(value));
+    localStorage.setItem(`imgmind.${key}`, JSON.stringify(value));
   } catch {}
 }
 
