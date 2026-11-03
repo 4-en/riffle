@@ -13,7 +13,7 @@ checked for, in this order:
 4. a text file ``<name>.txt``.
 
 XMP gives the caption (``dc:description``), the tags (``dc:subject``) and, from
-ImgMind's own fields, the read text and its translation; export also appends those to
+Deep Gallery's own fields, the read text and its translation; export also appends those to
 the description for photo apps, and the import takes them off again. A text file
 holds tags (comma-separated), a caption, or the caption and then the tags on the next
 line. Read text follows them there with nothing to mark it, so it is not taken from
@@ -37,15 +37,17 @@ from pathlib import Path
 from PIL import Image
 
 from . import selections
-from .geotag import IMGMIND_NS
+from .geotag import DEEP_GALLERY_NS
 
-LEGACY_NS = "urn:riffle:xmp:1.0"  # written by versions before the rename to ImgMind
+LEGACY_IMGMIND_NS = "urn:imgmind:xmp:1.0"
+LEGACY_NS = "urn:riffle:xmp:1.0"  # written by versions before the rename
 from .paths import read_text
 
 NS = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "dc": "http://purl.org/dc/elements/1.1/",
-    "imgmind": IMGMIND_NS,
+    "deepgallery": DEEP_GALLERY_NS,
+    "imgmind": LEGACY_IMGMIND_NS,
     "riffle": LEGACY_NS,
     "lr": "http://ns.adobe.com/lightroom/1.0/",
 }
@@ -119,7 +121,8 @@ def parse_xmp(data: bytes | str) -> Found:
             ]
         for name in ("text", "translation"):
             value = (
-                desc.findtext(f"imgmind:{name}", default=None, namespaces=NS) or desc.get(f"{{{IMGMIND_NS}}}{name}")
+                desc.findtext(f"deepgallery:{name}", default=None, namespaces=NS) or desc.get(f"{{{DEEP_GALLERY_NS}}}{name}")
+                or desc.findtext(f"imgmind:{name}", default=None, namespaces=NS) or desc.get(f"{{{LEGACY_IMGMIND_NS}}}{name}")
                 or desc.findtext(f"riffle:{name}", default=None, namespaces=NS) or desc.get(f"{{{LEGACY_NS}}}{name}")
             )
             if value and not getattr(out, name):

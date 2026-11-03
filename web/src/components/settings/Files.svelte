@@ -21,7 +21,7 @@
 </script>
 
 <h3 class="text-base font-semibold text-neutral-100">Files</h3>
-<p class="mb-3 mt-1 text-xs text-neutral-400">Where ImgMind keeps things. Your originals are only read; nothing is written next to them.</p>
+<p class="mb-3 mt-1 text-xs text-neutral-400">Where Deep Gallery keeps things. Your originals are only read; nothing is written next to them.</p>
 
 {#if !sources}
   <p class="text-neutral-500">Loading…</p>
@@ -36,7 +36,7 @@
     {/each}
   </dl>
 {/if}
-<p class="mt-3 text-xs text-neutral-500"><span class="font-mono">imgmind paths</span> prints the same in a terminal.</p>
+<p class="mt-3 text-xs text-neutral-500"><span class="font-mono">deep-gallery paths</span> prints the same in a terminal.</p>
 
 <h4 class="mb-1 mt-6 text-xs font-semibold uppercase tracking-wider text-neutral-500">Clean up</h4>
 <p class="text-xs text-neutral-400">

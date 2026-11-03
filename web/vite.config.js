@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [svelte(), tailwindcss()],
   // The bundled country outlines (~760 kB, loaded only with the map) are expected to be large.
   // The built UI goes into the Python package, so every install (and a future binary) carries it.
-  build: { outDir: '../src/imgmind/web', emptyOutDir: true, chunkSizeWarningLimit: 800 },
+  build: { outDir: '../src/deep_gallery/web', emptyOutDir: true, chunkSizeWarningLimit: 800 },
   server: {
     proxy: { '/api': api, '/thumbs': api, '/previews': api },
   },

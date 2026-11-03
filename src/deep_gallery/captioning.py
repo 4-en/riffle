@@ -2,7 +2,7 @@
 
 Methods, photos first:
 
-- ``imgmind``: the photo's vocabulary tags and learned tags as keywords (no model).
+- ``deep_gallery``: the photo's vocabulary tags and learned tags as keywords (no model).
 - ``phrases``: the phrases of the cluster-name vocabulary that stand out for the
   photo: similarity minus the library's mean similarity (CLIP text vectors).
 - ``joycaption``: a caption and/or keywords from JoyCaption Beta One (an 8B vision
@@ -97,7 +97,7 @@ class Method:
 METHODS = {
     m.key: m
     for m in (
-        Method("imgmind", "ImgMind's tags", "photo", ("tags",), ""),
+        Method("deep_gallery", "Deep Gallery's tags", "photo", ("tags",), ""),
         Method("phrases", "Scene phrases", "photo", ("tags",), "needs the AI model"),
         Method("joycaption", "JoyCaption", "photo", ("caption", "tags"), "", "16 GB", JOY_REPO, True),
         Method("ocr", "Read text", "photo", ("text",), "", "17 GB", QWEN_REPO, True),
@@ -130,9 +130,12 @@ def _cached(repo: str) -> bool:
 # ---- cheap methods (no model) -----------------------------------------------------
 
 
-def imgmind_tags(vocabulary: dict[int, list[str]], learned: dict[int, list[str]], ids: list[int]) -> dict[int, dict]:
-    """Keywords from what ImgMind already knows: vocabulary tags, then learned tags."""
+def deep_gallery_tags(vocabulary: dict[int, list[str]], learned: dict[int, list[str]], ids: list[int]) -> dict[int, dict]:
+    """Keywords from what Deep Gallery already knows: vocabulary tags, then learned tags."""
     return {i: {"tags": [*vocabulary.get(i, []), *learned.get(i, [])]} for i in ids}
+
+
+imgmind_tags = deep_gallery_tags
 
 
 PHRASE_MARGIN = 0.04  # above the library's mean similarity to the phrase

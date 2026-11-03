@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from imgmind import db, paths
-from imgmind.config import config_from_dict
+from deep_gallery import db, paths
+from deep_gallery.config import config_from_dict
 
 VOCAB = """
 templates: ["a photo of {}"]
@@ -31,9 +31,10 @@ def isolated_user_dirs(tmp_path_factory, monkeypatch):
         monkeypatch.setenv(var, str(home / sub))
     if not sys.platform.startswith("linux"):
         # Only Linux follows the XDG variables; elsewhere redirect the folders themselves.
-        monkeypatch.setattr(paths, "config_dir", lambda: home / "config" / "imgmind")
-        monkeypatch.setattr(paths, "data_dir", lambda: home / "share" / "imgmind")
-        monkeypatch.setattr(paths, "cache_dir", lambda: home / "cache" / "imgmind")
+        monkeypatch.setattr(paths, "config_dir", lambda: home / "config" / "deep-gallery")
+        monkeypatch.setattr(paths, "data_dir", lambda: home / "share" / "deep-gallery")
+        monkeypatch.setattr(paths, "cache_dir", lambda: home / "cache" / "deep-gallery")
+    monkeypatch.delenv("DEEP_GALLERY_CONFIG", raising=False)
     monkeypatch.delenv("IMGMIND_CONFIG", raising=False)
     monkeypatch.chdir(home)
     return home
@@ -159,14 +160,14 @@ def fake_clip():
 
 def fake_index(cfg, progress=None, report=print):
     """The full pipeline with the fake encoder (same signature as run_index)."""
-    from imgmind.dupes import compute_phashes, group_duplicates
-    from imgmind.profiles import indexed_roots
-    from imgmind.embed import embed_photos, load_embeddings
-    from imgmind.raws import match_raws
-    from imgmind.scan import scan
-    from imgmind.stacks import compute_stacks
-    from imgmind.tags import tag_photos
-    from imgmind.thumbs import build_thumbnails
+    from deep_gallery.dupes import compute_phashes, group_duplicates
+    from deep_gallery.profiles import indexed_roots
+    from deep_gallery.embed import embed_photos, load_embeddings
+    from deep_gallery.raws import match_raws
+    from deep_gallery.scan import scan
+    from deep_gallery.stacks import compute_stacks
+    from deep_gallery.tags import tag_photos
+    from deep_gallery.thumbs import build_thumbnails
 
     clip = FakeClip()
     conn = db.connect(cfg.db_path)

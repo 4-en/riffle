@@ -10,7 +10,7 @@
   <div>
     <h3 class="text-base font-semibold text-neutral-100">Indexing</h3>
     <p class="mt-1 text-xs text-neutral-400">
-      Finds new and changed photos in your folders and computes what ImgMind needs: thumbnails, the AI model's view of each photo,
+      Finds new and changed photos in your folders and computes what Deep Gallery needs: thumbnails, the AI model's view of each photo,
       tags, duplicates and stacks, sharpness, colours, and locations. A run only fills in what is missing, so it is quick when
       little has changed. It covers every profile's folders, so switching profiles never waits for it, and it runs by itself after
       adding a folder no profile had.
@@ -41,7 +41,7 @@
   {:else if status?.finished_at}
     <p class="text-neutral-400">Last run finished {new Date(status.finished_at * 1000).toLocaleTimeString()}.</p>
   {:else}
-    <p class="text-neutral-500">Not run since the server started. Use <span class="font-mono">imgmind index</span> or <em>Index now</em>.</p>
+    <p class="text-neutral-500">Not run since the server started. Use <span class="font-mono">deep-gallery index</span> or <em>Index now</em>.</p>
   {/if}
   {#if status?.lines?.length}
     <pre class="mt-3 max-h-72 overflow-y-auto rounded bg-neutral-950 p-2 text-[11px] leading-relaxed text-neutral-400">{status.lines.join('\n')}</pre>

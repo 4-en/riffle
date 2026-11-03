@@ -465,9 +465,9 @@
 {#if connection.down}
   <div class="fixed inset-x-0 top-0 z-50 border-b border-amber-800 bg-amber-950 px-4 py-2 text-center text-sm text-amber-100">
     {#if connection.autoExit}
-      ImgMind has stopped (its tabs were closed). Start ImgMind again to continue; this page reconnects by itself.
+      Deep Gallery has stopped (its tabs were closed). Start Deep Gallery again to continue; this page reconnects by itself.
     {:else}
-      The ImgMind server is not reachable. This page reconnects by itself once it is back.
+      The Deep Gallery server is not reachable. This page reconnects by itself once it is back.
     {/if}
   </div>
 {/if}
@@ -481,7 +481,7 @@
   {:else if connection.model === 'failed' && !connection.down}
     <div class="border-b border-red-900 bg-red-950/70 px-4 py-1.5 text-center text-xs text-red-200">
       The AI model could not be loaded, so search is off: {connection.modelError}.
-      {connection.log ? `Details: ${connection.log}` : 'See the terminal for details.'} Restart ImgMind to try again (it needs an internet connection the first time).
+      {connection.log ? `Details: ${connection.log}` : 'See the terminal for details.'} Restart Deep Gallery to try again (it needs an internet connection the first time).
     </div>
   {/if}
   <TopBar bind:this={topBar} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} {profiles} />

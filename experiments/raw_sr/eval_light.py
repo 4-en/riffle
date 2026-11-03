@@ -6,7 +6,7 @@ the release.
 
 The same protocol as make_release.py: every held-out patch (noise gain 1, blur sigma
 1.25-3.1, denoise 1.0), PSNR and SSIM in colour and black and white; seconds per 20 MP frame
-for the network; grids of a few patches and crops of held-out RAWs (ImgMind default denoise
+for the network; grids of a few patches and crops of held-out RAWs (Deep Gallery default denoise
 0.3), developed by darktable from DNGs. Writes report.md, metrics.json and images/.
 """
 
@@ -24,7 +24,7 @@ from PIL import Image
 import make_release as R
 from dataset import BayerPatchDataset
 from model_light import load_light, seconds_per_frame
-from imgmind import rawsr
+from deep_gallery import rawsr
 
 HERE = Path(__file__).parent
 
@@ -38,8 +38,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--light", type=Path, required=True, help="light colour checkpoint")
     ap.add_argument("--light-mono", type=Path, help="light black-and-white checkpoint")
-    ap.add_argument("--big", default=str(HERE / "huggingface" / "imgmind-raw-sr-rgb.safetensors"))
-    ap.add_argument("--big-mono", default=str(HERE / "huggingface" / "imgmind-raw-sr-mono.safetensors"))
+    ap.add_argument("--big", default=str(HERE / "huggingface" / "deepgallery-raw-sr-rgb.safetensors"))
+    ap.add_argument("--big-mono", default=str(HERE / "huggingface" / "deepgallery-raw-sr-mono.safetensors"))
     ap.add_argument("--out", type=Path, default=HERE / "light_eval")
     a = ap.parse_args()
     (a.out / "images").mkdir(parents=True, exist_ok=True)
@@ -94,7 +94,7 @@ def main():
         images.append(name)
 
     # Real crops: the same held-out RAWs as the release, both models, developed by darktable
-    tmp = Path(tempfile.mkdtemp(prefix="imgmind-light-"))
+    tmp = Path(tempfile.mkdtemp(prefix="deepgallery-light-"))
     try:
         for stem, cx, cy, what in R.REAL_CROPS:
             raw_path = R.find_raw(stem)

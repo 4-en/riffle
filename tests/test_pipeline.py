@@ -1,11 +1,11 @@
 import numpy as np
 from PIL import Image
 
-from imgmind.dupes import group_pairs, hamming
-from imgmind.embed import embed_photos, load_embeddings
-from imgmind.raws import match_raws
-from imgmind.scan import scan
-from imgmind.tags import Label, assign, label_similarities, load_vocabulary, tag_photos
+from deep_gallery.dupes import group_pairs, hamming
+from deep_gallery.embed import embed_photos, load_embeddings
+from deep_gallery.raws import match_raws
+from deep_gallery.scan import scan
+from deep_gallery.tags import Label, assign, label_similarities, load_vocabulary, tag_photos
 from conftest import photo
 
 
@@ -112,8 +112,8 @@ def test_label_similarity_is_max_over_phrases():
 def test_duplicates_need_clips_agreement(indexed, conn):
     """Close perceptual hashes alone matched unrelated flat images in large libraries:
     a pair is a duplicate only if CLIP also rates it as alike as a stack."""
-    from imgmind.dupes import group_duplicates
-    from imgmind.embed import load_embeddings, save_embeddings
+    from deep_gallery.dupes import group_duplicates
+    from deep_gallery.embed import load_embeddings, save_embeddings
 
     a, b = photo(conn, "IMG_0002.jpg")["id"], photo(conn, "IMG_0002_edit.png")["id"]
     assert photo(conn, "IMG_0002.jpg")["dupe_group"] == photo(conn, "IMG_0002_edit.png")["dupe_group"] is not None
@@ -132,7 +132,7 @@ def test_duplicates_need_clips_agreement(indexed, conn):
 def test_duplicate_grouping_is_skipped_when_nothing_changed(indexed, conn):
     """Comparing every pair of hashes takes a while in a large library: an index run with
     no new hashes or embeddings leaves the groups as they are."""
-    from imgmind.dupes import group_duplicates
+    from deep_gallery.dupes import group_duplicates
 
     a = photo(conn, "IMG_0002.jpg")["id"]
     groups = group_duplicates(conn, indexed)

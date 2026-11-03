@@ -217,7 +217,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# ImgMind
+# Deep Gallery
 # The Python template above ignores every lib/ folder; the UI's source lives in one.
 !web/src/lib/
 data/
@@ -231,6 +231,6 @@ Records.json
 *.gpx
 web/node_modules/
 web/dist/
-src/imgmind/web/
+src/deep_gallery/web/
 # The PyInstaller template ignores *.spec; ours is written by hand.
-!packaging/imgmind.spec
+!packaging/deepgallery.spec

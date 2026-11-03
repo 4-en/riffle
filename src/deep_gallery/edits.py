@@ -3,7 +3,7 @@
 Edits are the user's work, so they live with the user data (next to the flags, in their
 own file because every profile shares them): ``edits.sqlite3`` and the pixel assets in
 ``edits/<sha256>/``. They are keyed by file content, like the flags: a moved file keeps
-them; a file changed outside ImgMind (new content) leaves them behind.
+them; a file changed outside Deep Gallery (new content) leaves them behind.
 
 Kinds:
 
@@ -371,7 +371,7 @@ def bake(conn: sqlite3.Connection, cfg, photo_id: int, backup: bool = True) -> d
     if not any(e.enabled for e in edit_list):
         raise ValueError("the photo has no edits to bake in")
     im = render(path, edit_list)
-    tmp = path.with_name(f".{path.name}.imgmind-bake{path.suffix}")
+    tmp = path.with_name(f".{path.name}.deepgallery-bake{path.suffix}")
     _save_like(im, path, tmp)
     kept = None
     if backup:

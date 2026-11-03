@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from imgmind import custom_tags, selections
-from imgmind.embed import load_embeddings, save_embeddings
-from imgmind.server import create_app
+from deep_gallery import custom_tags, selections
+from deep_gallery.embed import load_embeddings, save_embeddings
+from deep_gallery.server import create_app
 from conftest import FakeClip, fake_index, photo
 
 DIM = FakeClip.DIM

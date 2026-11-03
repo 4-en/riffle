@@ -26,7 +26,7 @@ from PIL import Image
 
 import make_release as R
 from dataset import BayerPatchDataset
-from imgmind import rawsr
+from deep_gallery import rawsr
 
 HERE = Path(__file__).parent
 
@@ -145,7 +145,7 @@ def main():
     table = "\n".join(lines)
 
     images = []
-    tmp = Path(tempfile.mkdtemp(prefix="imgmind-compare-"))
+    tmp = Path(tempfile.mkdtemp(prefix="deepgallery-compare-"))
     try:
         crops = [(s, cx, cy, w, 0.3) for s, cx, cy, w in R.REAL_CROPS] + [(s, cx, cy, w, 0.1) for s, cx, cy, w in R.REAL_CROPS if w == "duck"]
         for stem, cx, cy, what, dn in crops:

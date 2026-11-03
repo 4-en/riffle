@@ -1,4 +1,4 @@
-"""The `imgmind index` and `imgmind tag` pipelines."""
+"""The `deep-gallery index` and `deep-gallery tag` pipelines."""
 
 from __future__ import annotations
 

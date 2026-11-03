@@ -1,8 +1,8 @@
-"""Entry point of the standalone app (PyInstaller): `imgmind` without a console.
+"""Entry point of the standalone app (PyInstaller): `deep-gallery` without a console.
 
 Double-clicked, it runs the one-click launch (server + browser, stops when the
-last tab is closed). Arguments work as for the `imgmind` command, but output goes
-to the log file (see imgmind.frozen).
+last tab is closed). Arguments work as for the `deep-gallery` command, but output goes
+to the log file (see deep_gallery.frozen).
 """
 
 import multiprocessing
@@ -12,7 +12,7 @@ import traceback
 # First: spawned worker processes (thumbnails) re-run this executable.
 multiprocessing.freeze_support()
 
-from imgmind import frozen  # noqa: E402
+from deep_gallery import frozen  # noqa: E402
 
 frozen.setup()
 
@@ -20,18 +20,18 @@ frozen.setup()
 sys.argv = [a for a in sys.argv if not a.startswith("-psn_")]
 
 try:
-    from imgmind.cli import main
+    from deep_gallery.cli import main
 
     main()
 except SystemExit as e:
     if e.code not in (None, 0):
-        message = e.code if isinstance(e.code, str) else f"ImgMind stopped with exit code {e.code}."
+        message = e.code if isinstance(e.code, str) else f"Deep Gallery stopped with exit code {e.code}."
         print(message, file=sys.stderr)
-        frozen.show_error("ImgMind", f"{message}\n\nDetails: {frozen.log_path()}")
+        frozen.show_error("Deep Gallery", f"{message}\n\nDetails: {frozen.log_path()}")
     raise
 except KeyboardInterrupt:
     pass
 except Exception as e:
     traceback.print_exc()
-    frozen.show_error("ImgMind could not start", f"{type(e).__name__}: {e}\n\nDetails: {frozen.log_path()}")
+    frozen.show_error("Deep Gallery could not start", f"{type(e).__name__}: {e}\n\nDetails: {frozen.log_path()}")
     sys.exit(1)

@@ -1,23 +1,23 @@
 # RAW to upscaled linear DNG (proof of concept)
 
-A standalone experiment, not part of ImgMind: take one Bayer RAW, correct its lens, cut
+A standalone experiment, not part of Deep Gallery: take one Bayer RAW, correct its lens, cut
 out the crop set on its JPEG, upscale only that ×2, and write a linear DNG that a RAW
 developer (darktable) opens like the original.
 
 ## Use
 
 ```sh
-venv/bin/pip install rawpy tifffile lensfunpy     # not in ImgMind's dependencies
+venv/bin/pip install rawpy tifffile lensfunpy     # not in Deep Gallery's dependencies
 venv/bin/python experiments/raw_sr/raw_to_dng.py IN.ORF -o OUT.dng --model swin2sr \
-    [--crop 0.3,0.1,0.4,0.3 --angle 3 | --imgmind]
+    [--crop 0.3,0.1,0.4,0.3 --angle 3 | --deep-gallery]
 venv/bin/python experiments/raw_sr/compare.py IN.ORF OUT.dng [MORE.dng …] --out DIR --crop 0.6,0.2,260
 ```
 
 - `raw_to_dng.py`:
   - `--model swin2sr | swinir | realesrgan | lanczos | none` (none: scale 1)
   - `--crop x,y,w,h` (fractions of the JPEG's frame after turning and straightening),
-    `--angle` (degrees clockwise), `--rot90`, `--flip`: a crop as ImgMind's editor stores it;
-    `--imgmind` reads the photo's own from ImgMind's edit list (read only); `--jpeg` if the
+    `--angle` (degrees clockwise), `--rot90`, `--flip`: a crop as Deep Gallery's editor stores it;
+    `--deep-gallery` reads the photo's own from Deep Gallery's edit list (read only); `--jpeg` if the
     JPEG is not beside the RAW
   - `--no-lens` (no corrections), `--chroma N` (colour smoothing, default 3; 0 off),
     `--demosaic AHD | AAHD | DHT | DCB | PPG | VNG`, `--median N`
@@ -35,7 +35,7 @@ venv/bin/python experiments/raw_sr/compare.py IN.ORF OUT.dng [MORE.dng …] --ou
 3. **Geometry from the JPEG**: with the camera's JPEG beside the RAW, a radial model (scale,
    rotation, offset, two distortion terms) is fitted to SIFT matches between the two. That
    is the camera's own distortion correction, and it maps the JPEG's pixels to the RAW's.
-   The crop (ImgMind's geometry: quarter turns, straightening, crop, flip) is chained with
+   The crop (Deep Gallery's geometry: quarter turns, straightening, crop, flip) is chained with
    it, and the crop plus a 32 px margin is resampled once (Lanczos) out of the linear RAW.
    Without a JPEG, lensfun corrects the distortion as well.
 4. **Colour smoothing**: a 3 px median over the colour differences (YCrCb), against the
@@ -66,7 +66,7 @@ venv/bin/python experiments/raw_sr/compare.py IN.ORF OUT.dng [MORE.dng …] --ou
   centre and 0.7 px in the corners. The DNG rendered by darktable drifts 1 px at most from
   the JPEG across the frame.
 - **The crop lands exactly**: a crop of 40 × 30 % of the frame, straightened 3°, upscaled
-  ×2, matches ImgMind's crop of the JPEG (`edits.apply_geometry`) at scale 2.0035 (the RAW
+  ×2, matches Deep Gallery's crop of the JPEG (`edits.apply_geometry`) at scale 2.0035 (the RAW
   is 0.15 % larger than the JPEG), rotation 0.000°, offset under 1 px, 0.76 px residual.
 - **Cropping first pays**: that crop (12 % of the frame) took 30 s to upscale with Swin2SR
   and is 60 MB, against 219 s and 493 MB for the whole frame.
@@ -94,8 +94,8 @@ venv/bin/python experiments/raw_sr/compare.py IN.ORF OUT.dng [MORE.dng …] --ou
 2. RAWs without a JPEG: lensfun's distortion profile (see above) or the correction data in
    the maker note, which darktable can use for Olympus.
 3. fp16 inference; smaller files.
-4. In ImgMind: done for whole frames with the trained Bayer models (`src/imgmind/rawsr.py`:
-   `imgmind upscale-raw` and the export). Still open: the photo's crop from ImgMind's editor
+4. In Deep Gallery: done for whole frames with the trained Bayer models (`src/deep_gallery/rawsr.py`:
+   `deep-gallery upscale-raw` and the export). Still open: the photo's crop from Deep Gallery's editor
    (the JPEG geometry fit above), and lens corrections.
 
 ## Plan: a Bayer → ×2 RGB model, trained on this camera
@@ -162,7 +162,7 @@ venv/bin/python experiments/raw_sr/upscale_raw.py IN.ORF [-o OUT.dng] [--model r
 `checkpoints_mono/`) on the packed Bayer data and writes a ×2 linear DNG with the RAW's colour
 matrix, white balance and EXIF; a monochrome result is neutral grey in it. `--crop` takes
 fractions of the upright frame; the image is turned upright after the model (turning the
-mosaic first would move its colours within the quad). No lens corrections or ImgMind crop yet.
+mosaic first would move its colours within the quad). No lens corrections or Deep Gallery crop yet.
 **Noise level.** The models take the input's noise level as a second input (log2 of its
 variance relative to one pixel at ISO 200: in training the noise gain × ISO / 200, at
 inference ISO / 200 × `--denoise`). Without it the model has to guess, and since training
@@ -280,7 +280,7 @@ Swin2SR model, predicting the difference to a bilinear enlargement of the quads.
 
 ```sh
 venv/bin/python experiments/raw_sr/train_light.py [--monochrome] \
-    [--teacher experiments/raw_sr/huggingface/imgmind-raw-sr-rgb.safetensors]
+    [--teacher experiments/raw_sr/huggingface/deepgallery-raw-sr-rgb.safetensors]
 venv/bin/python experiments/raw_sr/eval_light.py --light experiments/raw_sr/checkpoints_light/best_psnr.pt \
     [--light-mono experiments/raw_sr/checkpoints_light_mono/best_psnr.pt]
 ```

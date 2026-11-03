@@ -146,7 +146,7 @@ class Meta:
     accuracy_m: float | None = None
     description: str = ""
     keywords: tuple[str, ...] = ()
-    text: str = ""  # text read from the photo and its translation, in ImgMind's own fields
+    text: str = ""  # text read from the photo and its translation, in Deep Gallery's own fields
     translation: str = ""
 
     @property
@@ -158,7 +158,8 @@ class Meta:
         return bool(self.description or self.keywords)
 
 
-IMGMIND_NS = "urn:imgmind:xmp:1.0"  # ImgMind's own XMP fields (sidecars.py reads them back)
+DEEP_GALLERY_NS = "urn:deepgallery:xmp:1.0"  # Deep Gallery's own XMP fields (sidecars.py reads them back)
+IMGMIND_NS = DEEP_GALLERY_NS  # backward compatibility alias
 
 
 def xmp_packet(
@@ -166,7 +167,7 @@ def xmp_packet(
     text: str = "", translation: str = "",
 ) -> bytes:
     """An XMP packet with a GPS position and/or dc:description and dc:subject; ``text``
-    and ``translation`` (read from the photo) go into imgmind:text / imgmind:translation,
+    and ``translation`` (read from the photo) go into deepgallery:text / deepgallery:translation,
     so an import can tell them from the caption they also follow in the description."""
     attrs, body = "", ""
     if lat is not None and lon is not None:
@@ -183,9 +184,9 @@ def xmp_packet(
         items = "".join(f"<rdf:li>{escape(k)}</rdf:li>" for k in keywords)
         body += f"   <dc:subject><rdf:Bag>{items}</rdf:Bag></dc:subject>\n"
     if text:
-        body += f"   <imgmind:text>{escape(text)}</imgmind:text>\n"
+        body += f"   <deepgallery:text>{escape(text)}</deepgallery:text>\n"
     if translation:
-        body += f"   <imgmind:translation>{escape(translation)}</imgmind:translation>\n"
+        body += f"   <deepgallery:translation>{escape(translation)}</deepgallery:translation>\n"
     close = f">\n{body}  </rdf:Description>\n" if body else "/>\n"
     return (
         '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
@@ -193,7 +194,7 @@ def xmp_packet(
         ' <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
         '  <rdf:Description rdf:about="" xmlns:exif="http://ns.adobe.com/exif/1.0/"'
         f' xmlns:dc="http://purl.org/dc/elements/1.1/"'
-        f'{f" xmlns:imgmind=\"{IMGMIND_NS}\"" if text or translation else ""}{attrs}{close}'
+        f'{f" xmlns:deepgallery=\"{DEEP_GALLERY_NS}\"" if text or translation else ""}{attrs}{close}'
         " </rdf:RDF>\n"
         "</x:xmpmeta>\n"
         '<?xpacket end="w"?>'

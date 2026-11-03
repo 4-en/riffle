@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from imgmind import edits
+from deep_gallery import edits
 
 
 @pytest.fixture
@@ -89,7 +89,7 @@ import time
 
 from fastapi.testclient import TestClient
 
-from imgmind.server import create_app
+from deep_gallery.server import create_app
 from conftest import FakeClip, fake_index, photo
 
 
@@ -273,7 +273,7 @@ def test_filter_by_edited(client, conn):
 def test_keep_detail_restores_what_the_edit_left_alone():
     """A whole-photo edit is made at a lower resolution: the photo's own fine detail comes
     back where the edit did not change the picture, and not where it did."""
-    from imgmind.editing import keep_detail
+    from deep_gallery.editing import keep_detail
 
     rng = np.random.default_rng(0)
     a = np.full((400, 600, 3), 120, np.float32) + rng.normal(0, 20, (400, 600, 3))  # fine texture
@@ -301,7 +301,7 @@ class FakeInstructPipe:
 
 
 def test_prompt_edit_whole_photo_or_painted_area(client, indexed, conn, monkeypatch):
-    from imgmind import editing
+    from deep_gallery import editing
 
     pipe = FakeInstructPipe()
     monkeypatch.setattr(editing, "availability", lambda tool, choice=None: {"available": True, "reason": "", "spec": "fake"})
@@ -339,7 +339,7 @@ def test_prompt_edit_whole_photo_or_painted_area(client, indexed, conn, monkeypa
 
 def test_retouch_regions_does_each_area_on_its_own():
     """Things far apart are filled one by one (each with its own context) into one patch."""
-    from imgmind import editing
+    from deep_gallery import editing
 
     a = np.full((600, 900, 3), 120, np.uint8)
     a[50:90, 60:100] = (250, 0, 0)  # a red square top left…
@@ -360,7 +360,7 @@ def test_retouch_regions_does_each_area_on_its_own():
 
 
 def test_find_and_remove_in_many_photos(client, indexed, conn, monkeypatch):
-    from imgmind import editing, segment
+    from deep_gallery import editing, segment
 
     first, second = photo(conn, "IMG_0003.png")["id"], photo(conn, "IMG_0001.jpg")["id"]
     first_sha = photo(conn, "IMG_0003.png")["sha256"]
@@ -405,7 +405,7 @@ def test_find_and_remove_in_many_photos(client, indexed, conn, monkeypatch):
 
 
 def test_mask_blur_sets_how_softly_a_result_blends_in():
-    from imgmind import editing
+    from deep_gallery import editing
 
     image = Image.new("RGB", (1600, 1200), (120, 120, 120))
     mask = Image.new("L", image.size, 0)
@@ -419,7 +419,7 @@ def test_mask_blur_sets_how_softly_a_result_blends_in():
 
 def test_prefill_under_the_mask():
     """What Replace below full denoising starts from: the photo, a heal, or noise."""
-    from imgmind import editing
+    from deep_gallery import editing
 
     a = np.full((200, 300, 3), (40, 90, 160), np.uint8)
     a[80:120, 130:170] = (250, 250, 0)  # a yellow thing to replace
@@ -447,7 +447,7 @@ def test_replace_options_are_checked(client, conn):
 
 def test_context_grows_to_the_models_working_area():
     """A small mask's context is grown (1:1, costing no resolution) to what the model works at."""
-    from imgmind import editing
+    from deep_gallery import editing
 
     cx, cy, cw, ch = editing._grow((1000, 1000, 512, 512), (4000, 3000), 1024 * 1024)
     assert (cw, ch) == (1024, 1024) and (cx + cw // 2, cy + ch // 2) == (1256, 1256)  # around the same centre

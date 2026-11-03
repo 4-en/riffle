@@ -6,8 +6,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from imgmind import profiles, selections
-from imgmind.server import create_app
+from deep_gallery import profiles, selections
+from deep_gallery.server import create_app
 from conftest import FakeClip, photo
 
 

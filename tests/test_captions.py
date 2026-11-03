@@ -9,10 +9,10 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from imgmind import captioning, selections
-from imgmind.export import caption_text
-from imgmind.geotag import Meta, tag
-from imgmind.server import create_app
+from deep_gallery import captioning, selections
+from deep_gallery.export import caption_text
+from deep_gallery.geotag import Meta, tag
+from deep_gallery.server import create_app
 from conftest import FakeClip, photo
 
 
@@ -119,11 +119,11 @@ def test_search_puts_tag_and_caption_matches_first(client, conn):
 
 def test_cheap_methods(client, conn, monkeypatch):
     a = pid(conn, "IMG_0001.jpg")
-    res = client.post("/api/captioning", json={"ids": [a], "method": "imgmind"}).json()
+    res = client.post("/api/captioning", json={"ids": [a], "method": "deep_gallery"}).json()
     assert res["done"] and res["photos"] == 1
     tags = captions(client, a)[str(a)]["tags"]
     detail = client.get(f"/api/photos/{a}").json()
-    from imgmind.clusters import CATCH_ALL
+    from deep_gallery.clusters import CATCH_ALL
 
     expected = [
         t["name"].removeprefix("a ").removeprefix("an ")
@@ -131,9 +131,9 @@ def test_cheap_methods(client, conn, monkeypatch):
         if t["name"] not in CATCH_ALL and not (t["family"] == "kind" and "photo" in t["name"])
     ]
     assert tags == expected and expected
-    one = client.post("/api/captioning", json={"ids": [a], "method": "imgmind", "mode": "replace_all", "limit_kind": "tags", "limit": 1})
+    one = client.post("/api/captioning", json={"ids": [a], "method": "deep_gallery", "mode": "replace_all", "limit_kind": "tags", "limit": 1})
     assert one.status_code == 200 and captions(client, a)[str(a)]["tags"] == expected[:1]
-    assert client.post("/api/captioning", json={"ids": [a], "method": "imgmind", "limit_kind": "words"}).status_code == 400
+    assert client.post("/api/captioning", json={"ids": [a], "method": "deep_gallery", "limit_kind": "words"}).status_code == 400
     assert client.post("/api/captioning", json={"ids": [a], "method": "nope"}).status_code == 400
     phrases = client.post("/api/captioning", json={"ids": [a], "method": "phrases", "mode": "replace_all"})
     assert phrases.status_code == 200
@@ -154,7 +154,7 @@ def test_model_method_runs_as_a_job(client, conn, monkeypatch):
 
     monkeypatch.setitem(captioning.LOADERS, "wd", fake_load)
     status = client.get("/api/captioning").json()
-    assert {m["key"] for m in status["methods"]} == {"imgmind", "phrases", "joycaption", "ocr", "qwen", "wd"}
+    assert {m["key"] for m in status["methods"]} == {"deep_gallery", "phrases", "joycaption", "ocr", "qwen", "wd"}
     res = client.post("/api/captioning", json={"ids": [a, b], "method": "wd", "mode": "add"})
     assert res.status_code == 200 and res.json()["done"] is False
     deadline = time.time() + 10

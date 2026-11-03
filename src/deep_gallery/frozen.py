@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-LOG_NAME = "imgmind.log"
+LOG_NAME = "deep-gallery.log"
 
 
 def is_frozen() -> bool:

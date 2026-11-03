@@ -64,16 +64,16 @@ jobs:
         run: python -m pytest -q -n auto # in parallel, one worker per core
 
       - name: Build the app
-        run: pyinstaller packaging/imgmind.spec --noconfirm
+        run: pyinstaller packaging/deepgallery.spec --noconfirm
 
       - name: Smoke test
         env:
           HF_HUB_OFFLINE: "1" # the model is not downloaded here; the server must run without it
         run: |
           case "${{ matrix.target }}" in
-            macos-*) exe=dist/ImgMind.app/Contents/MacOS/ImgMind ;;
-            windows-*) exe=dist/ImgMind/ImgMind.exe ;;
-            *) exe=dist/ImgMind/ImgMind ;;
+            macos-*) exe=dist/DeepGallery.app/Contents/MacOS/DeepGallery ;;
+            windows-*) exe=dist/DeepGallery/DeepGallery.exe ;;
+            *) exe=dist/DeepGallery/DeepGallery ;;
           esac
           "$exe" serve --port 8765 &
           pid=$!
@@ -84,7 +84,7 @@ jobs:
           done
           cat health.json || true; echo
           test -n "$ok"
-          grep -q '"app":"imgmind"' health.json
+          grep -q '"app":"deep-gallery"' health.json
           curl -sf http://127.0.0.1:8765/ | grep -qi "<!doctype html"
           curl -sf http://127.0.0.1:8765/api/tags > /dev/null
           # The model status arrives once loading failed (offline): the server keeps running.
@@ -93,21 +93,21 @@ jobs:
             sleep 1
           done
           curl -s http://127.0.0.1:8765/api/health; echo
-          if [ "${{ runner.os }}" = "Windows" ]; then taskkill //F //IM ImgMind.exe; else kill "$pid"; fi
+          if [ "${{ runner.os }}" = "Windows" ]; then taskkill //F //IM DeepGallery.exe; else kill "$pid"; fi
 
       - name: Show the app's log
         if: failure()
-        run: cat "$(python -c 'from imgmind.paths import cache_dir; print(cache_dir())')/imgmind.log" || true
+        run: cat "$(python -c 'from deep_gallery.paths import cache_dir; print(cache_dir())')/deep-gallery.log" || true
 
       - name: Package
         id: package
         run: |
           version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
-          name="ImgMind-${version}-${{ matrix.target }}"
+          name="DeepGallery-${version}-${{ matrix.target }}"
           case "${{ matrix.target }}" in
-            macos-*) ditto -c -k --keepParent dist/ImgMind.app "$name.zip"; file="$name.zip" ;;
-            windows-*) (cd dist && 7z a -tzip -mx=5 "../$name.zip" ImgMind > /dev/null); file="$name.zip" ;; # -mx=7 took 86 s; the libraries hardly compress further
-            *) tar czf "$name.tar.gz" -C dist ImgMind; file="$name.tar.gz" ;; # keeps the executable bit
+            macos-*) ditto -c -k --keepParent dist/DeepGallery.app "$name.zip"; file="$name.zip" ;;
+            windows-*) (cd dist && 7z a -tzip -mx=5 "../$name.zip" DeepGallery > /dev/null); file="$name.zip" ;; # -mx=7 took 86 s; the libraries hardly compress further
+            *) tar czf "$name.tar.gz" -C dist DeepGallery; file="$name.tar.gz" ;; # keeps the executable bit
           esac
           ls -l "$file"
           echo "file=$file" >> "$GITHUB_OUTPUT"
@@ -144,6 +144,6 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
           body: |
-            Download the file for your system, unpack it, and start **ImgMind** (`ImgMind.exe` on Windows, `ImgMind.app` on macOS). It opens in your browser and stops by itself when you close its tab. The first start downloads the AI model (about 0.6 GB).
+            Download the file for your system, unpack it, and start **Deep Gallery** (`DeepGallery.exe` on Windows, `DeepGallery.app` on macOS). It opens in your browser and stops by itself when you close its tab. The first start downloads the AI model (about 0.6 GB).
 
             These builds run the AI model on the CPU (on a Mac also on its GPU). For an NVIDIA GPU, install with pip instead (see the README). They are not signed: see the README for how to open them the first time.

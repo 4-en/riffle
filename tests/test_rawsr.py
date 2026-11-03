@@ -8,9 +8,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from imgmind import rawsr
-from imgmind.cli import _upscale_raw
-from imgmind.export import ExportError, run_export
+from deep_gallery import rawsr
+from deep_gallery.cli import _upscale_raw
+from deep_gallery.export import ExportError, run_export
 from test_export import export, files_in, picked  # noqa: F401 (picked is a fixture)
 
 

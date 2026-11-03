@@ -42,7 +42,7 @@
       view.photo = null;
     }}
   >
-    ImgMind
+    Deep Gallery
   </button>
 
   <form class="flex-1" {onsubmit}>

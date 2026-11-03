@@ -2,14 +2,14 @@
 
 On Linux, honouring the XDG variables:
 
-- settings (config.yaml, vocabulary.yaml): ``~/.config/imgmind``
-- user data (selections.sqlite3, the pick/reject flags): ``~/.local/share/imgmind``
-- derived data (catalogue, thumbnails, previews, embeddings): ``~/.cache/imgmind``,
+- settings (config.yaml, vocabulary.yaml): ``~/.config/deep-gallery``
+- user data (selections.sqlite3, the pick/reject flags): ``~/.local/share/deep-gallery``
+- derived data (catalogue, thumbnails, previews, embeddings): ``~/.cache/deep-gallery``,
   safe to delete and rebuilt by indexing
 
-macOS uses ``~/Library/Application Support/imgmind`` and ``~/Library/Caches/imgmind``;
-Windows ``%APPDATA%\\imgmind`` (settings and flags, which roam with the user
-profile) and ``%LOCALAPPDATA%\\imgmind\\Cache``.
+macOS uses ``~/Library/Application Support/deep-gallery`` and ``~/Library/Caches/deep-gallery``;
+Windows ``%APPDATA%\\deep-gallery`` (settings and flags, which roam with the user
+profile) and ``%LOCALAPPDATA%\\deep-gallery\\Cache``.
 """
 
 from __future__ import annotations
@@ -22,29 +22,32 @@ from pathlib import Path
 
 import platformdirs
 
-APP = "imgmind"
+APP = "deep-gallery"
 
 
-LEGACY_APP = "riffle"  # the app's former name; its folders are moved over on first use
+LEGACY_APPS = ("imgmind", "riffle")  # former app names; folders are moved over on first use
 
 
 def _migrated(func) -> Path:
-    """The folder for ``APP``; if only the one for the former name exists, move it
+    """The folder for ``APP``; if only one for a former name exists, move it
     over first, so flags, tags, settings and the index survive the rename."""
     new = Path(func(APP, appauthor=False, roaming=True) if func is not platformdirs.user_cache_dir
                else func(APP, appauthor=False))
-    old = Path(func(LEGACY_APP, appauthor=False, roaming=True) if func is not platformdirs.user_cache_dir
-               else func(LEGACY_APP, appauthor=False))
-    if not new.exists() and old.is_dir():
-        try:
-            new.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(old), str(new))
-        except OSError:
-            return old  # could not move (permissions, a running copy): keep using the old one
+    if not new.exists():
+        for legacy in LEGACY_APPS:
+            old = Path(func(legacy, appauthor=False, roaming=True) if func is not platformdirs.user_cache_dir
+                       else func(legacy, appauthor=False))
+            if old.is_dir():
+                try:
+                    new.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(old), str(new))
+                    break
+                except OSError:
+                    return old  # could not move (permissions, a running copy): keep using the old one
     return new
 
 
-# appauthor=False: no extra "author" folder on Windows (it would be imgmind\\imgmind).
+# appauthor=False: no extra "author" folder on Windows (it would be deep-gallery\\deep-gallery).
 def config_dir() -> Path:
     return _migrated(platformdirs.user_config_dir)
 
@@ -59,7 +62,7 @@ def cache_dir() -> Path:
 
 def default_file(name: str) -> Path:
     """A file shipped with the package (``defaults/``): config template, vocabulary."""
-    return Path(str(resources.files("imgmind") / "defaults" / name))
+    return Path(str(resources.files("deep_gallery") / "defaults" / name))
 
 
 # The standalone app runs the model on the CPU (see packaging/), so it starts with
@@ -81,7 +84,7 @@ def standalone_defaults(template: str) -> str:
 
 
 def read_text(path: str | Path) -> str:
-    """A text file the user may have edited (config, vocabulary): UTF-8, which ImgMind
+    """A text file the user may have edited (config, vocabulary): UTF-8, which Deep Gallery
     writes, else the system's encoding (e.g. saved by an old Windows editor).
     Without an explicit encoding Python uses the system's, cp1252 on Windows, which
     garbles or rejects UTF-8 (a folder or tag with ü or 出口)."""
@@ -92,10 +95,13 @@ def read_text(path: str | Path) -> str:
 
 
 def find_config(explicit: str | Path | None = None) -> Path:
-    """The config file to use: ``--config``, else ``$IMGMIND_CONFIG``, else
+    """The config file to use: ``--config``, else ``$DEEP_GALLERY_CONFIG``, else
     ``./config.yaml`` if one exists (a project-local setup), else the user's
     config, created from the template on first run."""
-    for candidate in (explicit, os.environ.get("IMGMIND_CONFIG") or os.environ.get("RIFFLE_CONFIG")):
+    for candidate in (
+        explicit,
+        os.environ.get("DEEP_GALLERY_CONFIG") or os.environ.get("IMGMIND_CONFIG") or os.environ.get("RIFFLE_CONFIG"),
+    ):
         if candidate:
             return Path(candidate).expanduser().resolve()
     local = Path("config.yaml")

@@ -87,7 +87,7 @@ def main():
 
     teacher = None
     if a.teacher:
-        from imgmind import rawsr
+        from deep_gallery import rawsr
 
         teacher, kind, conditioned = rawsr.load(a.teacher)
         if kind != ("mono" if a.monochrome else "rgb") or not conditioned:
