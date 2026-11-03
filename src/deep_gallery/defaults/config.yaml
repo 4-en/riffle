@@ -1,0 +1,57 @@
+# Deep Gallery settings. Created on first run; `deep-gallery paths` shows where this
+# and everything else lives. Relative paths are resolved against this file's folder.
+
+# Photo folders (read only). Easiest to manage in the UI: Library.
+sources: []
+exclude:
+  - "**/.Trashes/**"
+image_extensions: [.jpg, .jpeg, .png, .tif, .tiff, .heic]
+raw_extensions: [.cr2, .cr3, .nef, .arw, .raf, .dng, .orf, .rw2]
+raw_search_dirs: [".", "RAW", "../RAW"]   # relative to each image's folder
+
+# Storage. By default (Linux; macOS and Windows use their usual equivalents):
+#   derived data  ~/.cache/deep-gallery     catalogue, thumbnails, embeddings: safe to delete
+#   your flags    ~/.local/share/deep-gallery selections.sqlite3: back it up
+#   this file     ~/.config/deep-gallery    with vocabulary.yaml (tags; edit freely)
+# Uncomment to override:
+# data_dir: /path/to/derived-data
+# selections: /path/to/selections.sqlite3
+# vocabulary: vocabulary.yaml
+
+# CLIP model for search, tags, stacks, and the quality hint. Each model keeps its
+# own embeddings, so you can switch back and forth; after switching, run
+# `deep-gallery index` (embeds everything once) and check stacks.min_similarity.
+#   Default:     ViT-L-14-quickgelu / dfn2b   good quality; fine on a GPU, slower to index on a laptop CPU
+#   Faster:      ViT-B-16 / dfn2b             ~4x faster indexing, ~0.6 GB; a good choice for laptops
+#   Max quality: ViT-H-14-quickgelu / dfn5b   best search and tags; ~2.5x slower than the default, ~4 GB RAM
+model:
+  name: ViT-L-14-quickgelu
+  pretrained: dfn2b
+  device: auto        # cuda, mps, or cpu
+  batch_size: 32
+
+tags:
+  softmax_scale: 100
+  subject: { min_prob: 0.15, max_tags: 3 }
+  scene:   { min_prob: 0.30, max_tags: 1 }
+  look:    { min_prob: 0.30, max_tags: 2 }
+  kind:    { min_prob: 0.70, max_tags: 1 }   # photograph, illustration, painting, document
+
+dupes:
+  phash_max_distance: 8
+
+# Stacks: bursts and near-identical shots, for choosing the best of several.
+# Consecutive photos at most max_gap_seconds apart with CLIP similarity >= min_similarity.
+# Similarity values depend on the model: 0.92 for the default ViT-L-14, about 0.90
+# for ViT-B-16 (the models rate the same shots differently).
+stacks:
+  max_gap_seconds: 30
+  min_similarity: 0.92
+
+# Where you were, from your phone: Google Timeline exports (Timeline.json), old
+# Takeout Records.json, or GPX tracks. Read in place, never uploaded; add them in
+# the UI (Library) or here. Photos without camera GPS are placed by capture time.
+location:
+  max_gap_minutes: 30   # outside visits and routes, use a position at most this far in time
+  min_population: 0     # place names: nearest town/village with at least this many inhabitants
+location_history: []

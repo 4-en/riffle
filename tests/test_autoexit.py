@@ -8,8 +8,8 @@ import httpx
 import pytest
 import uvicorn
 
-from riffle.launch import free_port, health
-from riffle.server import AutoExit, create_app
+from deep_gallery.launch import free_port, health
+from deep_gallery.server import AutoExit, create_app
 from conftest import FakeClip
 
 
@@ -135,7 +135,7 @@ def test_one_ctrl_c_stops_cleanly_with_tabs_open(indexed, caplog):
     import logging
     import signal
 
-    from riffle.server import run_server
+    from deep_gallery.server import run_server
 
     servers = []
     port = free_port(0)

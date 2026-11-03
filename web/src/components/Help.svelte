@@ -95,7 +95,7 @@
         </li>
         <li>
           <strong class="text-neutral-100">Caption (optional).</strong> Select photos and click <em>Caption…</em>: write a caption and
-          tags for each, or generate them (from Riffle's own tags, or with JoyCaption if it is installed). Rename or remove a tag in all
+          tags for each, or generate them (from Deep Gallery's own tags, or with JoyCaption if it is installed). Rename or remove a tag in all
           of them at once. The tags appear under <em>Fixed tags</em> on the left, and search finds words in captions and tags.
         </li>
         <li>
@@ -109,10 +109,10 @@
 
       <div class="rounded border border-neutral-800 bg-neutral-950/50 p-3 text-xs text-neutral-400">
         Your picks and rejects, tags, and captions are saved in <span class="font-mono">selections.sqlite3</span> in your user data folder
-        (<span class="font-mono">~/.local/share/riffle</span> on Linux): back it up. The derived data (thumbnails,
-        embeddings, tags) is in your cache folder (<span class="font-mono">~/.cache/riffle</span>) and can be deleted;
-        indexing rebuilds it. Settings: <span class="font-mono">~/.config/riffle</span>. <em>Settings → Files</em> shows the exact
-        places, and so does <span class="font-mono">riffle paths</span>.
+        (<span class="font-mono">~/.local/share/deep-gallery</span> on Linux): back it up. The derived data (thumbnails,
+        embeddings, tags) is in your cache folder (<span class="font-mono">~/.cache/deep-gallery</span>) and can be deleted;
+        indexing rebuilds it. Settings: <span class="font-mono">~/.config/deep-gallery</span>. <em>Settings → Files</em> shows the exact
+        places, and so does <span class="font-mono">deep-gallery paths</span>.
       </div>
 
       <section>

@@ -29,7 +29,11 @@
   // (Per profile; the default profile keeps the original keys, so older drafts remain.)
   const key = untrack(() => {
     const profile = connection.profile && connection.profile !== 'default' ? `${connection.profile}.` : '';
-    return `riffle.curate.${profile}${hash(JSON.stringify(curateKey()))}`;
+    return `deep-gallery.curate.${profile}${hash(JSON.stringify(curateKey()))}`;
+  });
+  const legacyKey = untrack(() => {
+    const profile = connection.profile && connection.profile !== 'default' ? `${connection.profile}.` : '';
+    return `imgmind.curate.${profile}${hash(JSON.stringify(curateKey()))}`;
   });
   const saved = load();
   // A search on the main page comes along (it scores the candidates; it does not filter).
@@ -70,7 +74,7 @@
 
   function load() {
     try {
-      return JSON.parse(localStorage.getItem(key)) ?? {};
+      return JSON.parse(localStorage.getItem(key) ?? localStorage.getItem(legacyKey)) ?? {};
     } catch {
       return {};
     }

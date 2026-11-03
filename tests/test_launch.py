@@ -1,4 +1,4 @@
-"""`riffle` without arguments: finding a running instance, ports, health."""
+"""`deep-gallery` without arguments: finding a running instance, ports, health."""
 
 import json
 import socket
@@ -8,14 +8,14 @@ import time
 import pytest
 import uvicorn
 
-from riffle.launch import free_port, health, running_url, runtime_file
-from riffle.server import create_app
+from deep_gallery.launch import free_port, health, running_url, runtime_file
+from deep_gallery.server import create_app
 from conftest import FakeClip
 
 
 @pytest.fixture
 def server(indexed):
-    """A real Riffle server on a free port (fake encoder), stopped afterwards."""
+    """A real Deep Gallery server on a free port (fake encoder), stopped afterwards."""
     indexed.path = indexed.root / "config.yaml"  # the identity the launcher compares
     port = free_port(0)
     srv = uvicorn.Server(uvicorn.Config(create_app(indexed, text_encoder=FakeClip().encode_text), host="127.0.0.1", port=port, log_level="warning"))
@@ -31,10 +31,10 @@ def server(indexed):
     thread.join(timeout=5)
 
 
-def test_health_identifies_riffle_and_its_config(server):
+def test_health_identifies_deep_gallery_and_its_config(server):
     cfg, url = server
     info = health(url)
-    assert info["app"] == "riffle" and info["config"] == str(cfg.path)
+    assert info["app"] == "deep-gallery" and info["config"] == str(cfg.path)
     assert health("http://127.0.0.1:1") is None  # nothing there
 
 
@@ -70,7 +70,7 @@ def test_free_port_falls_back_when_taken():
 def test_model_loads_in_the_background(indexed, monkeypatch):
     from fastapi.testclient import TestClient
 
-    import riffle.embed
+    import deep_gallery.embed
 
     release = threading.Event()
 
@@ -79,7 +79,9 @@ def test_model_loads_in_the_background(indexed, monkeypatch):
             release.wait(10)  # e.g. the first-start download
             self.encode_text = FakeClip().encode_text
 
-    monkeypatch.setattr(riffle.embed, "Clip", SlowClip)
+    import deep_gallery.embed
+
+    monkeypatch.setattr(deep_gallery.embed, "Clip", SlowClip)
     with TestClient(create_app(indexed)) as c:
         info = c.get("/api/health").json()
         assert info["model"] == "loading" and info["log"] is None  # not the standalone app
@@ -99,12 +101,12 @@ def test_model_loads_in_the_background(indexed, monkeypatch):
 def test_model_failure_is_reported(indexed, monkeypatch):
     from fastapi.testclient import TestClient
 
-    import riffle.embed
+    import deep_gallery.embed
 
     def broken(*args, **kwargs):
         raise OSError("no internet connection")
 
-    monkeypatch.setattr(riffle.embed, "Clip", broken)
+    monkeypatch.setattr(deep_gallery.embed, "Clip", broken)
     with TestClient(create_app(indexed)) as c:
         for _ in range(100):
             info = c.get("/api/health").json()

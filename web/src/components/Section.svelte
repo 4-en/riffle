@@ -5,12 +5,13 @@
 
   let { id, title, defaultOpen = false, active = 0, children } = $props();
 
-  const key = `riffle.sidebar.${untrack(() => id)}`;
+  const key = `deep-gallery.sidebar.${untrack(() => id)}`;
+  const legacyKey = `imgmind.sidebar.${untrack(() => id)}`;
   let open = $state(read(untrack(() => defaultOpen)));
 
   function read(fallback) {
     try {
-      const v = localStorage.getItem(key);
+      const v = localStorage.getItem(key) ?? localStorage.getItem(legacyKey);
       return v === null ? fallback : v === '1';
     } catch {
       return fallback;

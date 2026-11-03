@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle.embed import load_embeddings
-from riffle.query import NEGATIVE_WEIGHT, parse, query_vectors, score
-from riffle.server import create_app
+from deep_gallery.embed import load_embeddings
+from deep_gallery.query import NEGATIVE_WEIGHT, parse, query_vectors, score
+from deep_gallery.server import create_app
 from conftest import FakeClip
 
 
@@ -71,7 +71,7 @@ def test_search_with_alternatives_and_exclusions(indexed):
 
 # ---- file and folder names --------------------------------------------------------
 
-from riffle.query import name_matcher, name_matches, name_words  # noqa: E402
+from deep_gallery.query import name_matcher, name_matches, name_words  # noqa: E402
 
 
 @pytest.mark.parametrize(

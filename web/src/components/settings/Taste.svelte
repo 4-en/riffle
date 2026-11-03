@@ -23,8 +23,8 @@
   <div>
     <h3 class="text-base font-semibold text-neutral-100">Your taste</h3>
     <p class="mt-1 text-xs text-neutral-400">
-      Riffle can learn what you tend to keep from your picks, rejects and exports, and sort by it. Curate uses it too. It only
-      orders photos; it never flags anything. Once calibrated, it recalibrates by itself when Riffle starts if your flags changed.
+      Deep Gallery can learn what you tend to keep from your picks, rejects and exports, and sort by it. Curate uses it too. It only
+      orders photos; it never flags anything. Once calibrated, it recalibrates by itself when Deep Gallery starts if your flags changed.
     </p>
   </div>
   <button

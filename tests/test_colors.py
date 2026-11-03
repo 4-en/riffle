@@ -6,8 +6,8 @@ from PIL import Image
 
 import json
 
-from riffle.colors import HUES, accent_affinity, accents_of, color_stats, hue_affinity, hue_name
-from riffle.server import create_app
+from deep_gallery.colors import HUES, accent_affinity, accents_of, color_stats, hue_affinity, hue_name
+from deep_gallery.server import create_app
 from conftest import FakeClip, photo
 
 

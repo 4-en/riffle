@@ -217,7 +217,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Riffle
+# Deep Gallery
 # The Python template above ignores every lib/ folder; the UI's source lives in one.
 !web/src/lib/
 data/
@@ -231,6 +231,6 @@ Records.json
 *.gpx
 web/node_modules/
 web/dist/
-src/riffle/web/
+src/deep_gallery/web/
 # The PyInstaller template ignores *.spec; ours is written by hand.
-!packaging/riffle.spec
+!packaging/deepgallery.spec

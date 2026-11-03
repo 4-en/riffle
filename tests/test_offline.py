@@ -6,10 +6,10 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle import db
-from riffle.embed import load_embeddings
-from riffle.scan import scan
-from riffle.server import create_app
+from deep_gallery import db
+from deep_gallery.embed import load_embeddings
+from deep_gallery.scan import scan
+from deep_gallery.server import create_app
 from conftest import FakeClip, fake_index
 
 ALL = {"dupes": "all"}

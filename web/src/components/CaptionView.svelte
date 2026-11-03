@@ -1,7 +1,7 @@
 <script>
   // Captions & tags for a set of photos (opened from a selection): each photo's
   // caption and fixed tags, editable; bulk tag edits; and generating them with
-  // Riffle's own tags, scene phrases, or JoyCaption (photos first). Booru tags (the
+  // Deep Gallery's own tags, scene phrases, or JoyCaption (photos first). Booru tags (the
   // WD tagger, JoyCaption's Danbooru preset, a master tag list) are tucked away
   // under "Illustrations / booru tags". Ctrl+Z undoes edits made here.
   //
@@ -197,7 +197,7 @@
   let skippedLast = 0; // photos the text check left out of the running job
   let lists = $state([]);
   const setting = (k, fallback) => loadSetting(`caption.${k}`, fallback);
-  let choice = $state(setting('choice', 'riffle')); // riffle | phrases | joy | wd | joy-booru
+  let choice = $state(setting('choice', 'deep_gallery') === 'imgmind' ? 'deep_gallery' : setting('choice', 'deep_gallery')); // deep_gallery | phrases | joy | wd | joy-booru
   let mode = $state(setting('mode', 'add'));
   let scope = $state(setting('scope', 'all')); // all | empty (only when adding)
   let joyCaption = $state(setting('joyCaption', 'medium')); // '' | short | medium | detailed
@@ -220,7 +220,7 @@
 
   const method = (key) => methods.find((m) => m.key === key);
   const booru = $derived(choice === 'wd' || choice === 'joy-booru');
-  const chosen = $derived(method({ riffle: 'riffle', phrases: 'phrases', joy: 'joycaption', ocr: 'ocr', qwen: 'qwen', wd: 'wd', 'joy-booru': 'joycaption' }[choice]));
+  const chosen = $derived(method({ deep_gallery: 'deep_gallery', imgmind: 'deep_gallery', phrases: 'phrases', joy: 'joycaption', ocr: 'ocr', qwen: 'qwen', wd: 'wd', 'joy-booru': 'joycaption' }[choice]));
   const makesCaption = $derived((choice === 'joy' && !!joyCaption) || choice === 'qwen');
   const makesText = $derived(choice === 'ocr' || choice === 'qwen');
   const makesTags = $derived(choice !== 'ocr' && (choice !== 'joy' || joyKeywords));
@@ -265,7 +265,7 @@
 
   async function generate() {
     const body = { ids: targets, mode, options: {}, at: tagAt };
-    if (choice === 'riffle' || choice === 'phrases') body.method = choice;
+    if (choice === 'deep_gallery' || choice === 'imgmind' || choice === 'phrases') body.method = choice === 'imgmind' ? 'deep_gallery' : choice;
     else if (choice === 'joy') {
       body.method = 'joycaption';
       body.options = { caption: joyCaption || null, tags: joyKeywords ? 'keywords' : null, prompt: joyPrompt };
@@ -359,7 +359,7 @@
     <aside class="w-72 shrink-0 space-y-5 overflow-y-auto border-r border-neutral-800 bg-neutral-900/60 p-4 text-xs">
       <section class="space-y-2">
         <h3 class="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Generate for {workLabel}</h3>
-        {@render methodCard('riffle', 'riffle', "Riffle's tags", 'Keywords from the tags in the sidebar and your learned tags. Instant.')}
+        {@render methodCard('deep_gallery', 'deep_gallery', "Deep Gallery's tags", 'Keywords from the tags in the sidebar and your learned tags. Instant.')}
         {@render methodCard('phrases', 'phrases', 'Scene phrases', 'Keywords from a list of ~500 subjects and settings that stand out for each photo. Instant.')}
         {@render methodCard('joycaption', 'joy', 'JoyCaption', 'A written caption and/or keywords from a vision language model. A few seconds per photo.')}
         {#if choice === 'joy'}

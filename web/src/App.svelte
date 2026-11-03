@@ -21,6 +21,7 @@
   import Curate from './components/Curate.svelte';
   import TagDialog from './components/TagDialog.svelte';
   import CaptionView from './components/CaptionView.svelte';
+  import EditView from './components/EditView.svelte';
   import Discover from './components/Discover.svelte';
   // The map (d3 + country outlines) loads only when it is first shown.
   const loadMap = () => import('./components/MapView.svelte');
@@ -199,6 +200,13 @@
       loadSidebar();
       if (view.filters.ftags.length || view.filters.exclude_ftags.length || (view.q && prefs.nameMatch)) reset();
     }, 400);
+  }
+
+  // Edits changed a photo's look: the grid reloads (new thumbnails) once editing pauses.
+  let editTimer;
+  function editsChanged() {
+    clearTimeout(editTimer);
+    editTimer = setTimeout(reset, 800);
   }
 
   /** A custom tag was created, edited, or deleted: refresh the sidebar, and the grid
@@ -392,6 +400,7 @@
       else if (view.discover) {
         if (!view.discover.replaying) view.discover = null; // a replay handles its own Esc
       }
+      else if (view.editing) typing ? e.target.blur() : (view.editing = null);
       else if (view.captioning) typing ? e.target.blur() : (view.captioning = null);
       else if (view.curate) view.curate = false;
       else if (typing) e.target.blur();
@@ -400,6 +409,7 @@
     }
     if (typing || view.exporting || view.settings || view.raws || view.help) return;
     if (view.captioning && view.photo == null) return; // the Captions & tags view has the keyboard
+    if (view.editing && view.photo == null) return; // so does the editor
     if (view.discover && view.photo == null) return; // so does Discover
     if (key === '?') {
       view.help = true;
@@ -455,9 +465,9 @@
 {#if connection.down}
   <div class="fixed inset-x-0 top-0 z-50 border-b border-amber-800 bg-amber-950 px-4 py-2 text-center text-sm text-amber-100">
     {#if connection.autoExit}
-      Riffle has stopped (its tabs were closed). Start Riffle again to continue; this page reconnects by itself.
+      Deep Gallery has stopped (its tabs were closed). Start Deep Gallery again to continue; this page reconnects by itself.
     {:else}
-      The Riffle server is not reachable. This page reconnects by itself once it is back.
+      The Deep Gallery server is not reachable. This page reconnects by itself once it is back.
     {/if}
   </div>
 {/if}
@@ -471,7 +481,7 @@
   {:else if connection.model === 'failed' && !connection.down}
     <div class="border-b border-red-900 bg-red-950/70 px-4 py-1.5 text-center text-xs text-red-200">
       The AI model could not be loaded, so search is off: {connection.modelError}.
-      {connection.log ? `Details: ${connection.log}` : 'See the terminal for details.'} Restart Riffle to try again (it needs an internet connection the first time).
+      {connection.log ? `Details: ${connection.log}` : 'See the terminal for details.'} Restart Deep Gallery to try again (it needs an internet connection the first time).
     </div>
   {/if}
   <TopBar bind:this={topBar} {indexStatus} textSearch={tags?.text_search ?? true} picks={tags?.picks ?? 0} {profiles} />
@@ -533,6 +543,10 @@
 
 {#if view.captioning}
   <CaptionView onchange={captionsChanged} />
+{/if}
+
+{#if view.editing}
+  <EditView onchange={editsChanged} />
 {/if}
 
 {#if view.curate}

@@ -1,4 +1,4 @@
-# Riffle
+# Deep Gallery
 
 A local tool for finding the best photos in a large archive and exporting them for editing, sharing, or printing.
 
@@ -9,32 +9,34 @@ You search and browse by image content, cull by picking and rejecting photos, co
 - **Search** by text (`red lanterns at night`) or by example ("find similar"). Exclude terms with a minus (`street -people`), match either of several with `|` (`beach | lake`).
 - **Tags** for subject, scene, look, and kind of image (photograph, illustration, painting, document), from an editable vocabulary with alternative phrases per tag. Click a tag to include it, Alt+click (or hover and click **−**) to exclude it.
 - **Your tags**: select a few photos, right-click → **Learn a tag**, and photos like them get the tag. Works like the other tags in the sidebar and in every filter.
-- **Captions & tags**: a written caption and keywords per photo, typed or generated (from Riffle's own tags, or by JoyCaption, a local vision language model), edited one by one or in bulk, searchable, and exported as XMP (in the copies or as sidecars), `.txt` files, or `metadata.jsonl`. **Text in the photo** (signs, menus, documents; any script, e.g. Chinese) is read with an English translation, and searchable in both.
+- **Captions & tags**: a written caption and keywords per photo, typed or generated (from Deep Gallery's own tags, or by JoyCaption, a local vision language model), edited one by one or in bulk, searchable, and exported as XMP (in the copies or as sidecars), `.txt` files, or `metadata.jsonl`. **Text in the photo** (signs, menus, documents; any script, e.g. Chinese) is read with an English translation, and searchable in both.
 - **Filters** for flag, folder, date, camera, lens, focal length, aperture, ISO, resolution (megapixels), orientation, and location. Counts reflect the other active filters; filters that can't narrow the result are hidden.
 - **Grouping** by day, month, year, place, region, country, or folder, with a calendar or map overview; or by **Similar** content (clusters of alike photos, Broad · Medium · Fine), named after their tags, with a map of the library by similarity.
 - **Thumbnails** in three sizes (S · M · L next to Sort).
 - **Culling**: pick or reject one photo at a time in the loupe or many at once in the grid, with undo.
 - **Stacks**: bursts and near-identical shots are grouped automatically and compared side by side, with sharpness, clipping warnings, and a suggested keeper.
-- **Taste model**: once you have flagged enough, Riffle can sort by what you tend to keep. It only orders photos; it never flags them.
+- **Taste model**: once you have flagged enough, Deep Gallery can sort by what you tend to keep. It only orders photos; it never flags them.
 - **Curate**: drafts a small, varied selection (photo book, exhibition) from the current filters, steered by size, variety, time and place spread, uniqueness, search, colour, and style.
 - **Discover**: a walk through the library from one photo to others related in one way each (subject, light, colour, composition, place, time), with the path kept for a slideshow, export, or Curate.
+- **Editing** (experimental): crop and straighten, heal, remove things or people, replace with a prompt, and upscale on export, without ever changing your files (unless you bake edits in).
 - **Export** of picks, or of any selection, as images, images + RAWs, or RAWs only. Copies only; originals are never touched.
+- **RAW upscaling** (experimental): RAWs to ×2 linear DNGs that open in darktable like the RAW, in colour or black and white, with Deep Gallery's own Bayer model, which replaces demosaicing. From the command line or on export.
 - **Location from your phone**: a Google Timeline, Records.json, or GPX export places photos without GPS, and can add the position to exported copies.
 - Duplicate detection (perceptual hash), RAW matching by file name, EXIF metadata.
 
-Originals are read-only. Everything Riffle derives lives in a cache folder and can be deleted and rebuilt. What you create by hand (pick/reject flags, your tags, captions and fixed tags) lives separately in `selections.sqlite3`; it survives re-indexing, deleting the cache, and moving files. Back it up.
+Originals are read-only. Everything Deep Gallery derives lives in a cache folder and can be deleted and rebuilt. What you create by hand (pick/reject flags, your tags, captions and fixed tags) lives separately in `selections.sqlite3`; it survives re-indexing, deleting the cache, and moving files. Back it up.
 
 ## Install
 
 ### Download
 
-Builds for Windows, macOS (Apple silicon), and Linux are on the [Releases](https://github.com/4-en/riffle/releases) page. No Python needed: unpack and start `Riffle` (`Riffle.exe`, `Riffle.app`). It opens in your browser and has no window of its own.
+Builds for Windows, macOS (Apple silicon), and Linux are on the [Releases](https://github.com/4-en/deep-gallery/releases) page. No Python needed: unpack and start `Deep Gallery` (`DeepGallery.exe`, `DeepGallery.app`). It opens in your browser and has no window of its own.
 
 - The first start downloads the CLIP model (about 0.6 GB). You can browse meanwhile; search and indexing start working once it's ready.
 - About 300 MB to download, 1 GB unpacked.
 - The Windows and Linux builds run the model on the CPU (macOS also uses the GPU), so they default to the faster ViT-B-16 model: about 11 photos per second on a desktop CPU. For an NVIDIA GPU, install from source instead.
-- The builds are unsigned. On macOS, right-click → **Open**, or System Settings → Privacy & Security → **Open Anyway**, or `xattr -dr com.apple.quarantine Riffle.app`. On Windows, SmartScreen → **More info** → **Run anyway**.
-- Problems are logged to `riffle.log` in the cache folder (see [Files](#files)).
+- The builds are unsigned. On macOS, right-click → **Open**, or System Settings → Privacy & Security → **Open Anyway**, or `xattr -dr com.apple.quarantine DeepGallery.app`. On Windows, SmartScreen → **More info** → **Run anyway**.
+- Problems are logged to `deep-gallery.log` in the cache folder (see [Files](#files)).
 - On macOS, opening the app again while it runs does nothing; keep the tab or bookmark it.
 - The command-line subcommands work with the executable too, but their output goes to the log. Use a source install for command-line work.
 
@@ -45,7 +47,7 @@ Requires Python 3.12+ and Node.js 20.19+ or 22.12+. A GPU or Apple silicon helps
 ```sh
 python3.12 -m venv venv
 venv/bin/pip install -e ".[dev]"                  # HEIC support: ".[dev,heic]"; generated captions: ".[dev,captions]"
-cd web && npm install && npm run build && cd ..   # builds the UI into src/riffle/web/
+cd web && npm install && npm run build && cd ..   # builds the UI into src/deep_gallery/web/
 ```
 
 The default model (ViT-L-14) downloads on first use, about 1.7 GB.
@@ -53,14 +55,15 @@ The default model (ViT-L-14) downloads on first use, about 1.7 GB.
 ## Usage
 
 ```sh
-venv/bin/riffle            # start and open in the browser
-venv/bin/riffle serve      # server only, http://127.0.0.1:8000 (--host, --port, --reload)
-venv/bin/riffle index      # index from the command line (incremental)
-venv/bin/riffle tag        # re-tag from stored embeddings after editing the vocabulary
-venv/bin/riffle paths      # show where config, flags, and derived data live
+venv/bin/deep-gallery            # start and open in the browser
+venv/bin/deep-gallery serve      # server only, http://127.0.0.1:8000 (--host, --port, --reload)
+venv/bin/deep-gallery index      # index from the command line (incremental)
+venv/bin/deep-gallery tag        # re-tag from stored embeddings after editing the vocabulary
+venv/bin/deep-gallery paths      # show where config, flags, and derived data live
+venv/bin/deep-gallery upscale-raw IN OUT   # RAWs to ×2 DNGs (see RAW upscaling)
 ```
 
-`riffle` uses port 8000, or a free port if that is taken. Running it again while it runs opens another tab. It stops by itself 30 seconds after the last tab is closed; it never stops in its first minute or during indexing or export. `riffle serve` runs until stopped. Global options: `--config PATH`, `-v` for debug logging.
+`deep-gallery` uses port 8000, or a free port if that is taken. Running it again while it runs opens another tab. It stops by itself 30 seconds after the last tab is closed; it never stops in its first minute or during indexing or export. `deep-gallery serve` runs until stopped. Global options: `--config PATH`, `-v` for debug logging.
 
 Open **Settings** (top right, or Ctrl+,) → **Photo folders** to add folders; **Indexing** runs and follows the index. Settings opens by itself on first start. The default profile's folders are saved to `sources` in `config.yaml`; each other profile keeps its own list (see [Profiles](#profiles)).
 
@@ -94,7 +97,7 @@ With a location history configured, exports add the position to photos without G
 - JPEG and PNG copies get it appended to their EXIF, so nothing else in the file changes.
 - RAWs and other files get an `.xmp` sidecar instead.
 
-Stacks link photos at most `stacks.max_gap_seconds` apart that are at least `stacks.min_similarity` alike. If they're too eager or too strict, adjust these and rerun `riffle index`; it doesn't re-embed. The right similarity depends on the model (see [Model](#model)).
+Stacks link photos at most `stacks.max_gap_seconds` apart that are at least `stacks.min_similarity` alike. If they're too eager or too strict, adjust these and rerun `deep-gallery index`; it doesn't re-embed. The right similarity depends on the model (see [Model](#model)).
 
 ## Taste model
 
@@ -102,7 +105,7 @@ Stacks link photos at most `stacks.max_gap_seconds` apart that are at least `sta
 
 Once calibrated, **Sort → Likely keepers first** shows promising photos first, and **Likely rejects first** helps clear out misses. It rates scenes (a burst counts once), so this sort also turns on Stacks. Picking the best frame within a burst is left to sharpness and the suggested keeper.
 
-Once calibrated, it keeps itself up to date: when Riffle starts (and when you switch profiles), it recalibrates if flags changed since, and keeps the previous model if the new one would not pass the check. That page shows how well it works for you and how many flags changed since the last calibration. The model is stored in the cache folder and never flags anything by itself.
+Once calibrated, it keeps itself up to date: when Deep Gallery starts (and when you switch profiles), it recalibrates if flags changed since, and keeps the previous model if the new one would not pass the check. That page shows how well it works for you and how many flags changed since the last calibration. The model is stored in the cache folder and never flags anything by itself.
 
 ## Curate
 
@@ -151,21 +154,66 @@ Tags taught by example: select one or more photos, right-click → **Learn a tag
 
 ## Captions and tags
 
-Select photos and click **Caption…** in the selection bar (or right-click → **Caption N photos…**, or **Add…** in the photo view). Each photo gets a caption and a list of **fixed tags**: written on the photo, unlike the tags Riffle computes.
+Select photos and click **Caption…** in the selection bar (or right-click → **Caption N photos…**, or **Add…** in the photo view). Each photo gets a caption and a list of **fixed tags**: written on the photo, unlike the tags Deep Gallery computes.
 
 - **Edit** a caption in place (saved when you click away); add tags with Enter or a comma, remove with **×**, drag to reorder. On wide screens the photos sit in several columns.
 - **New tags** go after the existing ones or before them (e.g. a trigger word first), both when generating and when adding a tag to all.
 - **Check** photos (the box on each, Shift+click for a range, or *all* / *this page* / *without caption or tags*) to work on just those; with nothing checked, everything on the left applies to all of them. The panel lists their tags: add a tag to them, replace one with another everywhere (onto an existing tag: merged), remove one, or clear all tags or captions. **Ctrl+Z** undoes.
 - **Generate**:
-  - **Riffle's tags**: the sidebar tags and your learned tags as keywords. Instant.
+  - **Deep Gallery's tags**: the sidebar tags and your learned tags as keywords. Instant.
   - **Scene phrases**: the subjects and settings of the Similar grouping's vocabulary that stand out for each photo. Instant; rougher.
   - **JoyCaption**: a caption (short, medium, detailed, or your own prompt) and/or keywords from a vision language model that runs locally. Needs `pip install -e ".[captions]"` and an NVIDIA GPU; downloads 16 GB on first use; about 4 s per photo on an RTX 3090.
   - **Read text**: the text in the photo, as written and in its own script (Chinese, Japanese, …), with an English translation, in its own two fields on each photo. Qwen3-VL-8B, same requirements as JoyCaption (17 GB download); about 2 s per photo with text, 1.3 s without. After editing the text, **Translate the current text again** updates the translation. **Skip photos that probably have no text** first leaves out photos that CLIP says have none: about 20% faster, but it misses some small text (1 in 20 signs in testing, and many signatures on illustrations), so it's off by default; skipped photos are marked and can be read later.
   - **Caption, keywords and text**: all three in one pass of Qwen3-VL, about 4 s per photo, roughly 20% faster than running them separately. For text alone, **Read text** is much quicker on photos without any.
   - **Existing**: keep what's there and add new tags; replace what was generated but keep what you typed; or replace everything. By default only photos still missing a caption or tags are done.
 - **Fixed tags** in the sidebar filter like the other tags. Search puts photos whose tag, caption, or read text (or its translation) contains the search words first, after file and folder name matches (the **Names** switch turns all of these off). Chinese or Japanese words match anywhere in the text: `北京` finds `欢迎来到北京`.
-- **Export** (off by default): the caption and tags into the copies' XMP (`dc:description`, `dc:subject`, which photo apps read; a sidecar where that is not possible), as `.xmp` sidecars, as a `.txt` with the image's name (tags, the caption, or both; optionally with spaces instead of `_`), or as one `metadata.jsonl` (Hugging Face imagefolder, with the read text as `ocr_text` and `ocr_translation`). **Text in the photo and its translation** adds the read text to the others as well: after the caption in the XMP description, or on their own lines in the `.txt`.
+- **Export** (off by default): the caption and tags into the copies' XMP (`dc:description`, `dc:subject`, which photo apps read; a sidecar where that is not possible), as `.xmp` sidecars, as a `.txt` with the image's name (tags, the caption, or both; optionally with spaces instead of `_`), or as one `metadata.jsonl` (Hugging Face imagefolder, with the read text as `ocr_text` and `ocr_translation`). **Text in the photo and its translation** adds the read text to the others as well: after the caption in the XMP description (and in Deep Gallery's own XMP fields), or on their own lines in the `.txt`.
+- **Import**: adding a folder brings along what is saved beside its photos in these formats: `metadata.jsonl`, `.xmp` sidecars (also darktable's and Lightroom's keywords and descriptions), XMP inside JPEG and PNG files, and `.txt` files. Only what a photo does not have yet in the profile is filled in. Read text comes back from the JSONL and from XMP written by Deep Gallery; in a `.txt` it cannot be told from the rest, so it is left out. **Import captions** next to a folder in Settings → Photo folders does it again.
 - Stored in `selections.sqlite3` by file content, per profile.
+
+## Editing (experimental)
+
+Select photos and click **Edit…** (or **✎ Edit…** in the photo view). Edits never change your files: each photo keeps an edit list on top of its untouched original, and the library, search, and exports show the edited version.
+
+- **Brush**, then **Heal** (spots, dust, small blemishes; OpenCV, instant), **Remove** (objects and people, filled with what would be behind them; LaMa), or **Replace** (Stable Diffusion XL inpainting, 1–4 candidates to choose from; describe what should be there, or leave the prompt empty to fill from the surroundings; **Denoising** from 1, painting from scratch, down to keeping most of what is under the mask; below 1, **Start from** sets what is under the mask when it starts: the original, a heal from the edges, a LaMa fill, or noise in the surrounding colours (for something new; needs 0.8 and up)). **Mask blur** sets how softly any result blends into the photo.
+- **Edit with a prompt** (Qwen-Image 2.1): say what to change ("remove the tray at the bottom right", "make it golden hour"). With nothing painted it edits the whole photo; with an area painted only that area changes, and the rest stays pixel for pixel. The model works at about 1 megapixel, in the aspect ratio of its own closest to the photo's; the photo's own fine detail is put back wherever the edit left it unchanged. Results vary with the wording and the seed, so ask for 2–4 candidates.
+- **Find** (`F`; or **Find & replace…** in the selection bar or right-click menu): say what to find ("people", "cars, bicycles", "power lines"); every photo in the editor is searched and its masks are shown for review (untick a photo to leave it out). Then **Remove** (filled from the surroundings; LaMa) or **Replace** (the Replace model, with the same prompt, denoising and mask blur settings) in all of them at once: one step in each photo's edit list, undone right there or in the list. **Refine** takes one photo's mask to the brush, to correct it and use any tool on it. Finding uses Grounding DINO and SAM 2.1 (3.7 GB, about half a second per photo on a GPU).
+- **Crop**: quarter turns, straightening, a crop with aspect presets, a flip.
+- **View**: the result; hold `\` for the original (also in the photo view).
+- **Steps**: every edit can be turned off or deleted; **Restore original** turns them all off.
+- **Bake into file…** writes the edits into the file itself, after a warning. The original is kept in `originals-backup/` in your data folder unless you switch that off; your flags, tags and captions move with it to the new file content.
+- **Export** writes edited photos with their edits, or as originals; **Upscale ×2 / ×4** enlarges every exported image (Real-ESRGAN). RAW files are never edited (see [RAW upscaling](#raw-upscaling-experimental) for RAWs as ×2 DNGs).
+
+Each tool offers recommended models and accepts another: a Hugging Face repository, a file in one (`org/repo:file.pt`), or a local path (Settings are stored under `editing:` in `config.yaml`). Heal and Crop work out of the box; the AI tools need `pip install -e ".[edit]"`, and Replace and Edit with a prompt an NVIDIA GPU. Models download on first use (LaMa 0.2 GB, SDXL inpainting 6.9 GB, Real-ESRGAN 67 MB, Qwen-Image 2.1 about 23 GB, Grounding DINO + SAM 2.1 3.7 GB).
+
+Qwen-Image 2.1 needs a diffusers newer than 0.40 (until one is released: `pip install git+https://github.com/huggingface/diffusers`). By default it uses a 4-bit GGUF of the official weights with the official text encoder, which waits in system memory while the image model runs (about 18 GB of RAM): about a minute per candidate on an RTX 3090. The Q8_0 file, the full model, or any GGUF or safetensors transformer file can be chosen instead.
+
+Edits are shared by all profiles and stored with your data (`edits.sqlite3` and `edits/` next to `selections.sqlite3`), by file content like the flags.
+
+## RAW upscaling (experimental)
+
+> **Experimental.** Check the results before relying on them, and keep your RAWs.
+> - **Performance**: about 45 s per 20 MP RAW on an RTX 3090, minutes on a CPU; 3.5 GB of RAM; each DNG is about 490 MB.
+> - **Quality**: the models are trained on synthetic pairs made from one camera's photos. They can come out soft, or with artefacts the RAW does not have; the lens's chromatic aberration stays, and clipped highlights are made neutral white.
+> - **Compatibility**: RGGB Bayer RAWs only. Trained on an OM-5 Mark II; other cameras are untested, and the noise setting is calibrated to that sensor. The DNGs are tested with darktable only.
+
+A RAW becomes a ×2 linear DNG: Deep Gallery's Bayer model takes the sensor data and returns the image at twice the resolution, doing the demosaicing and the upscaling in one step. The DNG opens in darktable like the RAW (linear camera RGB, the camera's colour matrix, white balance and EXIF), so it is developed as usual.
+
+```sh
+venv/bin/deep-gallery upscale-raw P1234.ORF big.dng
+venv/bin/deep-gallery upscale-raw ~/Pictures/trip ~/Pictures/trip-x2 -r   # a folder (-r: and its subfolders)
+venv/bin/deep-gallery upscale-raw IN OUT --bw --filter orange             # black and white
+```
+
+- `--denoise` (0.05–1, default 0.3): the share of the noise the model removes, scaled by the ISO. Lower keeps the RAW's own grain and the fine texture it hides; 1 removes it all.
+- `--bw`: black and white, like panchromatic film by default; `--filter yellow | orange | red | green | blue` (yellow to red darken skies), `--luminance` for brightness as the eye sees it, or `--mix r,g,b` for own weights.
+- Existing DNGs are skipped (`--overwrite` to replace them); RAWs the model cannot read are skipped and named.
+
+**Export**: with **Images + RAWs** or **RAWs only**, **RAWs → ×2 DNG, colour** or **black and white** exports each RAW as a DNG instead of a copy, named like it; the same settings as above. RAWs the model cannot read are copied as they are.
+
+**Setup**: `pip install -e ".[raw]"`, and the checkpoints from training (`experiments/raw_sr/`) as `raw-upscale.pt` (colour) and `raw-upscale-mono.pt` (black and white) in the RAW models folder (`deep-gallery paths`; on Linux `~/.local/share/deep-gallery/models/`), or anywhere with `editing: {raw_upscale: PATH, raw_upscale_mono: PATH}` in `config.yaml` (a path or `org/repo:file.pt`). Whether a checkpoint is colour or black and white is read from it.
+
+**Limits**: whole frames only (crop in darktable), no lens corrections, RGGB Bayer sensors only. The models are trained on an OM-5 Mark II; other RGGB cameras should work but are untested, and the noise setting is calibrated to that sensor. A 20 MP RAW takes about 45 s on an RTX 3090 (minutes on a CPU) and 3.5 GB of RAM, and gives a 490 MB DNG (uncompressed 16-bit: darktable does not read compressed 16-bit integer DNGs).
 
 ## Profiles
 
@@ -227,7 +275,7 @@ The CLIP model drives search, tags, stacks, Curate, and the quality hint. Choose
 
 Any other model OpenCLIP can load works too (Settings → AI model → *Another OpenCLIP model*), including Hugging Face repositories in OpenCLIP's format (`hf-hub:<repo>`).
 
-Each model keeps its own embeddings and tags, so you can switch back and forth. Switching in Settings reads every photo with the new model first, in the background, while the current one stays in use; a model used before switches at once. Similarity values differ between models, so switching also sets `stacks.min_similarity`: 0.92 for ViT-L-14, 0.90 for ViT-B-16, and for other models a value fitted to your camera bursts (photos taken within two seconds of each other). When editing `config.yaml` by hand, run `riffle index` and set it yourself.
+Each model keeps its own embeddings and tags, so you can switch back and forth. Switching in Settings reads every photo with the new model first, in the background, while the current one stays in use; a model used before switches at once. Similarity values differ between models, so switching also sets `stacks.min_similarity`: 0.92 for ViT-L-14, 0.90 for ViT-B-16, and for other models a value fitted to your camera bursts (photos taken within two seconds of each other). When editing `config.yaml` by hand, run `deep-gallery index` and set it yourself.
 
 ## Tags
 
@@ -239,7 +287,7 @@ subject:
   - cats: [a cat, a kitten, a cat sleeping]
 ```
 
-A photo scores a tag by its best-matching phrase. Tags within a family compete through a softmax, so avoid overlaps: prefer "cats", "dogs", "birds" over a general "animals". Per-family thresholds (`min_prob`, `max_tags`) are in `config.yaml`. After editing either file, run `riffle tag` (seconds; reuses stored embeddings).
+A photo scores a tag by its best-matching phrase. Tags within a family compete through a softmax, so avoid overlaps: prefer "cats", "dogs", "birds" over a general "animals". Per-family thresholds (`min_prob`, `max_tags`) are in `config.yaml`. After editing either file, run `deep-gallery tag` (seconds; reuses stored embeddings).
 
 The `kind` family (photograph, illustration or drawing, painting, document) says what sort of image a file is, so illustrations or scans can be filtered in or out. It only tags when confident (`min_prob` 0.7). Its phrases are scored without the "a photo of …" templates (`family_templates:` in `vocabulary.yaml`), which confused it: with them, 167 ordinary photos counted as screenshots.
 
@@ -264,40 +312,41 @@ The `kind` family (photograph, illustration or drawing, painting, document) says
 
 ## Files
 
-`riffle paths` prints the exact locations. On Linux:
+`deep-gallery paths` prints the exact locations. On Linux:
 
 | What | Where | Notes |
 |---|---|---|
-| `config.yaml`, `vocabulary.yaml` | `~/.config/riffle/` | Created on first run from `src/riffle/defaults/` |
-| `selections.sqlite3` (flags, export history, your tags) | `~/.local/share/riffle/` | Your data: back it up. Other profiles: `profiles/*.sqlite3` next to it |
-| Catalogue, thumbnails, previews, embeddings | `~/.cache/riffle/` | Derived; safe to delete, `riffle index` rebuilds it (every profile's folders) |
-| `riffle.log` (downloadable builds only) | `~/.cache/riffle/` | The previous run's log is `riffle.log.1` |
+| `config.yaml`, `vocabulary.yaml` | `~/.config/deep-gallery/` | Created on first run from `src/deep_gallery/defaults/` |
+| `selections.sqlite3` (flags, export history, your tags) | `~/.local/share/deep-gallery/` | Your data: back it up. Other profiles: `profiles/*.sqlite3` next to it |
+| Catalogue, thumbnails, previews, embeddings | `~/.cache/deep-gallery/` | Derived; safe to delete, `deep-gallery index` rebuilds it (every profile's folders) |
+| `deep-gallery.log` (downloadable builds only) | `~/.cache/deep-gallery/` | The previous run's log is `deep-gallery.log.1` |
 | CLIP model weights | `~/.cache/huggingface/` | Downloaded once |
+| RAW upscaling checkpoints | `~/.local/share/deep-gallery/models/` | Copied there by you (see [RAW upscaling](#raw-upscaling-experimental)) |
 
-`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` are honoured. macOS uses `~/Library/Application Support/riffle` and `~/Library/Caches/riffle`; Windows uses `%APPDATA%\riffle` and `%LOCALAPPDATA%\riffle\Cache`.
+`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` are honoured. macOS uses `~/Library/Application Support/deep-gallery` and `~/Library/Caches/deep-gallery`; Windows uses `%APPDATA%\deep-gallery` and `%LOCALAPPDATA%\deep-gallery\Cache`.
 
-Config lookup order: `--config PATH`, `$RIFFLE_CONFIG`, `./config.yaml` in the working directory, then the user config. `data_dir`, `selections`, and `vocabulary` in the config override the default locations.
+Config lookup order: `--config PATH`, `$DEEP_GALLERY_CONFIG`, `./config.yaml` in the working directory, then the user config. `data_dir`, `selections`, and `vocabulary` in the config override the default locations.
 
 ## Development
 
 Run the API and the Vite dev server side by side; Vite proxies `/api`, `/thumbs`, and `/previews` to port 8000:
 
 ```sh
-venv/bin/riffle serve --reload
+venv/bin/deep-gallery serve --reload
 cd web && npm run dev
 ```
 
-Without the dev server, run `npm run build` after changing `web/src/`. The build goes into `src/riffle/web/`, which the server serves and the Python package ships. Build it before `pip wheel` or `python -m build`.
+Without the dev server, run `npm run build` after changing `web/src/`. The build goes into `src/deep_gallery/web/`, which the server serves and the Python package ships. Build it before `pip wheel` or `python -m build`.
 
 Tests: `venv/bin/pytest -n auto` (in parallel; plain `venv/bin/pytest` works too). They use synthetic images and a fake encoder, so no model download is needed.
 
-Releases are built by GitHub Actions (`.github/workflows/release.yml`) with PyInstaller. Pushing a tag `v<version>` that matches `pyproject.toml` builds all three platforms and publishes a release; running the workflow manually only builds. For a local build: `pip install . pyinstaller`, build the UI, then `pyinstaller packaging/riffle.spec`. PyInstaller needs a Python built with a shared library, which the official installers and `actions/setup-python` provide.
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) with PyInstaller. Pushing a tag `v<version>` that matches `pyproject.toml` builds all three platforms and publishes a release; running the workflow manually only builds. For a local build: `pip install . pyinstaller`, build the UI, then `pyinstaller packaging/deepgallery.spec`. PyInstaller needs a Python built with a shared library, which the official installers and `actions/setup-python` provide.
 
 ## Project layout
 
 ```text
-src/riffle/             indexer, CLI, API server
-src/riffle/defaults/    default config.yaml and vocabulary.yaml
+src/deep_gallery/             indexer, CLI, API server
+src/deep_gallery/defaults/    default config.yaml and vocabulary.yaml
 web/                    Svelte 5 + Tailwind 4 UI (Vite, no SvelteKit)
 packaging/              PyInstaller entry point and spec
 tests/

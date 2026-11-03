@@ -1,0 +1,115 @@
+"""`deep-gallery` without arguments: start (or find) the server and open the browser.
+
+A small ``server.json`` in the data folder records the running instance, so a
+second launch just opens another browser tab. It is only trusted if that URL
+answers ``/api/health`` as Deep Gallery, for the same config.
+
+Launched this way, Deep Gallery also stops by itself once its last browser tab has
+been closed for a while (server.AutoExit); `deep-gallery serve` never does.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import threading
+import time
+import urllib.request
+import webbrowser
+from pathlib import Path
+
+from .config import Config
+
+HOST = "127.0.0.1"
+PREFERRED_PORT = 8000
+IDLE_EXIT_SECONDS = 30  # after the last tab closed (a reload reconnects well within this)
+
+
+def runtime_file(cfg: Config) -> Path:
+    return cfg.data_dir / "server.json"
+
+
+def health(url: str, timeout: float = 1.0) -> dict | None:
+    try:
+        with urllib.request.urlopen(f"{url}/api/health", timeout=timeout) as r:
+            data = json.load(r)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("app") in ("deep-gallery", "deepgallery", "imgmind") else None
+
+
+def running_url(cfg: Config) -> str | None:
+    """The URL of Deep Gallery already serving this config, if any."""
+    try:
+        url = json.loads(runtime_file(cfg).read_text(encoding="utf-8"))["url"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    info = health(url)
+    return url if info and info.get("config") == str(cfg.path) else None
+
+
+def free_port(preferred: int = PREFERRED_PORT) -> int:
+    """``preferred`` if it is free, else any free port."""
+    for port in (preferred, 0):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((HOST, port))
+            except OSError:
+                continue
+            return s.getsockname()[1]
+    raise OSError("no free port")
+
+
+def open_when_ready(url: str, timeout: float = 180.0) -> None:
+    """Open the browser once the server answers (the model loads first)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if health(url):
+            webbrowser.open(url)
+            return
+        time.sleep(0.3)
+    print(f"Deep Gallery did not start within {timeout:.0f} s; open {url} yourself once it is up.")
+
+
+def launch(cfg: Config, open_browser: bool = True) -> None:
+    url = running_url(cfg)
+    if url:
+        print(f"Deep Gallery is already running at {url}")
+        if open_browser:
+            webbrowser.open(url)
+        return
+
+    from .server import AutoExit, create_app, run_server
+
+    port = free_port()
+    url = f"http://{HOST}:{port}"
+    rt = runtime_file(cfg)
+    rt.parent.mkdir(parents=True, exist_ok=True)
+    rt.write_text(json.dumps({"url": url, "pid": os.getpid()}), encoding="utf-8")
+    os.environ["DEEP_GALLERY_CONFIG"] = str(cfg.path)
+    server = None
+
+    def stop() -> None:
+        print("The last Deep Gallery tab was closed: stopping. Run `deep-gallery` to start it again.")
+        server.should_exit = True
+
+    def created(s) -> None:
+        nonlocal server
+        server = s
+
+    app = create_app(cfg, auto_exit=AutoExit(stop=stop, idle_seconds=IDLE_EXIT_SECONDS))
+    if open_browser:
+        threading.Thread(target=open_when_ready, args=(url,), daemon=True).start()
+    print(
+        f"Deep Gallery is starting at {url} (the browser opens when it is ready).\n"
+        f"It stops by itself {IDLE_EXIT_SECONDS} s after its last browser tab is closed, or press Ctrl+C."
+    )
+    try:
+        run_server(app, HOST, port, on_created=created)
+    finally:
+        try:
+            if json.loads(rt.read_text(encoding="utf-8")).get("pid") == os.getpid():
+                rt.unlink()
+        except (OSError, ValueError):
+            pass

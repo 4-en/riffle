@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from riffle import db, selections, taste
-from riffle.embed import save_embeddings
-from riffle.server import create_app
+from deep_gallery import db, selections, taste
+from deep_gallery.embed import save_embeddings
+from deep_gallery.server import create_app
 from conftest import FakeClip
 
 DIM = 16
@@ -136,7 +136,7 @@ def test_recalibrated_by_itself_when_flags_changed(cfg):
     recalibration that does not pass the check keeps the previous model."""
     import time
 
-    from riffle import selections
+    from deep_gallery import selections
 
     conn, E, ids, picks = make_library(cfg)
     with TestClient(create_app(cfg, text_encoder=FakeClip().encode_text)) as c:

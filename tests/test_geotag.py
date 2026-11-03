@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from riffle import selections
-from riffle.export import run_export
-from riffle.geotag import tag
-from riffle.raws import match_raws
-from riffle.scan import scan, sha256_file
+from deep_gallery import selections
+from deep_gallery.export import run_export
+from deep_gallery.geotag import tag
+from deep_gallery.raws import match_raws
+from deep_gallery.scan import scan, sha256_file
 from conftest import _pattern, fake_index, photo
 
 POS = (59.3293, 18.0686, 50.0)

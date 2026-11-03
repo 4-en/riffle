@@ -28,7 +28,7 @@
   }
 
   async function forgetExports() {
-    if (!confirm(`Forget that ${tags.exported} photos were exported?\n\nThe exported files are not touched. Riffle stops marking these photos as exported, and "only new" exports include them again. This cannot be undone.`)) return;
+    if (!confirm(`Forget that ${tags.exported} photos were exported?\n\nThe exported files are not touched. Deep Gallery stops marking these photos as exported, and "only new" exports include them again. This cannot be undone.`)) return;
     try {
       const { cleared } = await postResetExported(view, 'all');
       note = `Forgot the export history of ${cleared} photo${cleared === 1 ? '' : 's'}.`;
@@ -57,7 +57,7 @@
   <button
     class={danger}
     disabled={!tags?.exported}
-    title="Photos stay exported on disk; Riffle just stops marking them (↗) and 'only new' exports include them again"
+    title="Photos stay exported on disk; Deep Gallery just stops marking them (↗) and 'only new' exports include them again"
     onclick={forgetExports}>Forget export history ({tags?.exported ?? 0})…</button
   >
 </div>

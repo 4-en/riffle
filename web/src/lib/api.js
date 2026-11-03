@@ -91,6 +91,8 @@ export function startExport(view, body) {
   return send('POST', qs ? `/api/export?${qs}` : '/api/export', body);
 }
 export const fetchExportStatus = () => get('/api/export');
+/** Whether RAWs can be exported as ×2 DNGs: {rgb, mono: {available, reason, checkpoint}, filters}. */
+export const fetchRawUpscale = () => get('/api/raw-upscale');
 /** Forget which photos were exported: all, or those within the current filters. */
 export function postResetExported(view, scope) {
   const qs = scope === 'filtered' ? query(filterParams(view)) : '';
@@ -166,6 +168,8 @@ export const deleteProfile = (slug) => send('DELETE', `/api/profiles/${slug}`);
 export const fetchSources = () => get('/api/sources');
 export const addSource = (path) => send('POST', '/api/sources', { path });
 /** forget: the folder was deleted or moved: off every profile, its photos' data dropped. */
+export const importSource = (path) => send('POST', '/api/sources/import', { path });
+export const fetchImport = () => get('/api/sources/import');
 export const removeSource = (path, forget = false) => send('DELETE', '/api/sources', { path, forget });
 /** Delete the indexed data of photos in no profile's folders (or whose files are gone). */
 export const cleanUp = () => send('POST', '/api/cleanup', {});
@@ -176,3 +180,21 @@ export const startIndex = () => send('POST', '/api/index');
 export const fetchModels = () => get('/api/models');
 /** Switch model: the photos are embedded with it first (an index run), then it is used. */
 export const chooseModel = (name, pretrained = '') => send('POST', '/api/model', { name, pretrained });
+
+/** Editing (edits.py, editing.py). */
+export const fetchEditingTools = () => get('/api/editing/tools');
+export const chooseEditModel = (tool, model) => send('POST', `/api/editing/tools/${tool}`, { model });
+export const fetchEdits = (id) => get(`/api/edits/${id}`);
+export const setGeometry = (id, geometry) => send('POST', `/api/edits/${id}/geometry`, geometry);
+/** Start a tool on a painted mask (a PNG data URL); poll fetchEditJob for its candidates. */
+export const runEditTool = (id, body) => send('POST', `/api/edits/${id}/run`, body);
+export const fetchEditJob = () => get('/api/edits/job');
+/** Find & replace across photos: find (poll fetchBatchJob for the masks), then apply. */
+export const batchFind = (body) => send('POST', '/api/batch/find', body);
+export const batchApply = (body) => send('POST', '/api/batch/apply', body);
+export const fetchBatchJob = () => get('/api/batch/job');
+export const keepCandidate = (id, token, index) => send('POST', `/api/edits/${id}/keep`, { token, index });
+export const toggleEdit = (editId, enabled) => send('POST', `/api/edits/item/${editId}`, { enabled });
+export const deleteEdit = (editId) => send('DELETE', `/api/edits/item/${editId}`);
+export const restoreOriginal = (id) => send('POST', `/api/edits/${id}/restore`, {});
+export const bakeEdits = (id, backup) => send('POST', `/api/edits/${id}/bake`, { backup });

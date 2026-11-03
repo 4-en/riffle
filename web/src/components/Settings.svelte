@@ -29,12 +29,13 @@
     ['flags', 'Flags & exports'],
     ['files', 'Files'],
   ];
-  const KEY = 'riffle.settings.page';
+  const KEY = 'deep-gallery.settings.page';
+  const LEGACY_KEY = 'imgmind.settings.page';
   const known = (p) => PAGES.some(([id]) => id === p);
 
   function remembered() {
     try {
-      const p = localStorage.getItem(KEY);
+      const p = localStorage.getItem(KEY) ?? localStorage.getItem(LEGACY_KEY);
       return known(p) ? p : 'folders';
     } catch {
       return 'folders';

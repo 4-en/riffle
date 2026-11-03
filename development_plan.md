@@ -1,14 +1,14 @@
-# Riffle: Development Plan
+# Deep Gallery: Development Plan
 
 Design notes, measurements, and open work. User-facing documentation is in the README.
 
-Started 25 September 2026 as "Computational Photo Archive"; renamed to Riffle on 26 September 2026.
+Started 25 September 2026 as "Computational Photo Archive"; renamed to Deep Gallery on 26 September 2026, and to Deep Gallery in November 2026.
 
 **Status:** MVP, culling and export, location history, taste model, Curate, and standalone releases are implemented. The search and tag evaluation (§14) is still open.
 
 ## 1. Goal
 
-Riffle is for **making a selection** from a large photo library (several thousand photos from trips): find the good ones, pick or reject quickly, and export the picks for editing, sharing, or printing.
+Deep Gallery is for **making a selection** from a large photo library (several thousand photos from trips): find the good ones, pick or reject quickly, and export the picks for editing, sharing, or printing.
 
 It makes the library searchable by image content (CLIP embeddings, zero-shot tags) without training, labelled data, or manual annotation. The first question was whether CLIP search and tagging make an archive noticeably easier to explore. The culling workflow (§8) is built on that.
 
@@ -38,16 +38,16 @@ flowchart LR
     F -. background thread .-> B
 ```
 
-- **Indexer** (`index.py`): scan, metadata, thumbnails, embeddings, tags, duplicates, quality and colour measures, stacks, locations. Incremental and restartable. Runs from the CLI (`riffle index`) or in a background thread of the server; both use the same pipeline and report progress through callbacks.
+- **Indexer** (`index.py`): scan, metadata, thumbnails, embeddings, tags, duplicates, quality and colour measures, stacks, locations. Incremental and restartable. Runs from the CLI (`deep-gallery index`) or in a background thread of the server; both use the same pipeline and report progress through callbacks.
 - **Server** (`server.py`, FastAPI): serves the JSON API, thumbnails, previews, and the built UI on one port. It keeps the embedding matrix in memory and reloads it when the files change, so re-indexing needs no restart. The CLIP text encoder loads in a background thread; until it is ready (on the first start that includes the download), browsing works and search reports that the model is loading.
-- **UI** (`web/`, Svelte 5 + Tailwind 4, built with Vite, no SvelteKit): a single-page app. `npm run build` writes it into the Python package (`src/riffle/web/`), so every install includes it.
-- **Launcher** (`launch.py`): `riffle` without arguments starts the server on 127.0.0.1 (port 8000, or a free port), waits for `/api/health`, and opens the browser. A `server.json` in the cache folder records the running instance; a second launch that finds it answering for the same config only opens a tab.
+- **UI** (`web/`, Svelte 5 + Tailwind 4, built with Vite, no SvelteKit): a single-page app. `npm run build` writes it into the Python package (`src/deep_gallery/web/`), so every install includes it.
+- **Launcher** (`launch.py`): `deep-gallery` without arguments starts the server on 127.0.0.1 (port 8000, or a free port), waits for `/api/health`, and opens the browser. A `server.json` in the cache folder records the running instance; a second launch that finds it answering for the same config only opens a tab.
 
 There is no vector database: search is one matrix–vector product over the in-memory matrix.
 
 ### Stopping with the last tab
 
-The one-click launch stops once no tab is open. Each tab keeps a Server-Sent Events stream (`/api/events`); a watchdog stops the server 30 s after the last one closes, or after 5 minutes if none ever connected. It never stops within the first minute, or while indexing or exporting. `riffle serve` never stops by itself.
+The one-click launch stops once no tab is open. Each tab keeps a Server-Sent Events stream (`/api/events`); a watchdog stops the server 30 s after the last one closes, or after 5 minutes if none ever connected. It never stops within the first minute, or while indexing or exporting. `deep-gallery serve` never stops by itself.
 
 Why an open connection:
 
@@ -81,26 +81,26 @@ Deliberately not used: SQLAlchemy, Alembic, FAISS, OpenCV, pyvips, ExifTool, a c
 
 ## 5. Files and configuration
 
-Per-user files follow platform conventions (`paths.py`; Linux shown, XDG variables honoured; `riffle paths` prints them):
+Per-user files follow platform conventions (`paths.py`; Linux shown, XDG variables honoured; `deep-gallery paths` prints them):
 
 ```text
-~/.config/riffle/
-  config.yaml            # sources, model, thresholds (created from src/riffle/defaults/)
+~/.config/deep-gallery/
+  config.yaml            # sources, model, thresholds (created from src/deep_gallery/defaults/)
   vocabulary.yaml        # tags and Curate styles
-~/.local/share/riffle/
+~/.local/share/deep-gallery/
   selections.sqlite3     # flags, export history, your tags: user data (§6.2)
-~/.cache/riffle/         # derived, safe to delete (config: data_dir)
+~/.cache/deep-gallery/         # derived, safe to delete (config: data_dir)
   catalogue.sqlite3
   thumbs/                # 320 px long edge
   previews/              # 1600 px long edge
   embeddings/<model_id>.npy, <model_id>.ids.npy, <model_id>.taste.npz
   server.json            # the running instance (one-click launch)
-  riffle.log             # standalone builds only
+  deep-gallery.log        # standalone builds only
 ```
 
-macOS uses `~/Library/Application Support/riffle` and `~/Library/Caches/riffle`. Windows uses `%APPDATA%\riffle` (settings and flags, which roam with the profile) and `%LOCALAPPDATA%\riffle\Cache`.
+macOS uses `~/Library/Application Support/deep-gallery` and `~/Library/Caches/deep-gallery`. Windows uses `%APPDATA%\deep-gallery` (settings and flags, which roam with the profile) and `%LOCALAPPDATA%\deep-gallery\Cache`.
 
-The config is looked up in this order: `--config`, `$RIFFLE_CONFIG`, `./config.yaml`, then the user config (created on first run). In the standalone app, the first-run config defaults to the faster model (§13). `data_dir`, `selections`, and `vocabulary` override the default locations. Relative paths resolve against the config file's folder.
+The config is looked up in this order: `--config`, `$DEEP_GALLERY_CONFIG`, `./config.yaml`, then the user config (created on first run). In the standalone app, the first-run config defaults to the faster model (§13). `data_dir`, `selections`, and `vocabulary` override the default locations. Relative paths resolve against the config file's folder.
 
 ```yaml
 sources: [/Volumes/Photos/China]        # written by Settings → Photo folders; comments elsewhere are kept
@@ -139,8 +139,8 @@ The model id is `<name>__<pretrained>`. Each model gets its own embedding file a
 Source layout:
 
 ```text
-src/riffle/
-  cli.py, __main__.py    # riffle [index | tag | serve | paths]
+src/deep_gallery/
+  cli.py, __main__.py    # deep-gallery [index | tag | serve | paths]
   launch.py              # one-click launch
   frozen.py              # standalone-app setup: log file, error dialogs
   paths.py, config.py    # locations; config loading and the sources rewrite
@@ -167,7 +167,7 @@ web/src/
   components/            # TopBar, ViewBar, Sidebar, Filters, Section, Grid, Detail,
                          # ContextMenu, SelectionBar, Compare, Curate, TagDialog, ExportDialog,
                          # Settings (+ settings/ pages), FolderBrowser, Calendar, MapView, Help, UnmatchedRaws
-packaging/               # PyInstaller entry point (riffle_app.py) and riffle.spec
+packaging/               # PyInstaller entry point (deepgallery_app.py) and deepgallery.spec
 .github/workflows/release.yml
 ```
 
@@ -251,7 +251,7 @@ CREATE TABLE custom_tags (            -- v3: tags taught by example photos (§10
 );
 CREATE TABLE custom_tag_examples (tag_id, sha256, source, rel_path, added_at);
 CREATE TABLE captions (               -- v5: written captions (§11.2 Captions & tags)
-  sha256 TEXT PRIMARY KEY, text TEXT, method TEXT, -- manual | riffle | phrases | joycaption | wd
+  sha256 TEXT PRIMARY KEY, text TEXT, method TEXT, -- manual | deep_gallery | phrases | joycaption | wd
   edited INTEGER,                     -- changed by hand: kept when generating again
   source TEXT, rel_path TEXT, updated_at REAL
 );
@@ -273,7 +273,7 @@ CREATE TABLE photo_text (             -- v6: text read from the photo (OCR)
   - New profiles start empty or copy chosen tables (flags, exported, custom tags, captions and fixed tags) with `ATTACH` + `INSERT … SELECT`.
   - Switching is refused while indexing or an export runs, and an export records history in the file it started with.
   - Deleted profiles move to `profiles/deleted/`. Curate drafts are keyed per profile.
-- **Folders per profile** (28 Sep 2026; selections v8 `folders` and `profile_settings`): the default profile's folders are `sources` in config.yaml (so `riffle index` and existing setups are unchanged); other profiles keep theirs in their file (a file from before v8 gets the config's folders once, so upgrading changes nothing). New profiles start with none, or copy them (`PARTS["folders"]`).
+- **Folders per profile** (28 Sep 2026; selections v8 `folders` and `profile_settings`): the default profile's folders are `sources` in config.yaml (so `deep-gallery index` and existing setups are unchanged); other profiles keep theirs in their file (a file from before v8 gets the config's folders once, so upgrading changes nothing). New profiles start with none, or copy them (`PARTS["folders"]`).
   - **The scope** (`library.py`): `Library(folders, roots).sql()` is `status = 'ok'` and `source IN (…)` for folders that are indexed roots, or a path-prefix match (`substr`, not `LIKE`) for a folder inside another profile's. `PhotoFilter.where` starts from it (`resolved_filter` sets `flt.library`), and so do the totals, Discover's tag rarity, and the location counts.
   - **The embeddings**: `get_index()` returns a `ScopedIndex`, the base index limited to the library's ids, rebuilt when the embeddings, the profile's folders or the catalogue (an index run) change. Everything comparing photos uses it, so clusters, the map (`<model>.map.<library key>.npz`), Discover, uniqueness, your tags and taste are per library. Caches keyed by the id set split per profile by themselves.
   - **Adding** a folder is instant when it lies within an indexed root; otherwise it starts indexing. Removing starts indexing only when no profile has the folder any more (its photos become `hidden`).
@@ -286,7 +286,7 @@ CREATE TABLE photo_text (             -- v6: text read from the photo (OCR)
 
 ## 7. Index pipeline
 
-`riffle index` (or **Index now**) runs every step incrementally. Each step only processes photos that need it, and the CLIP model loads only when something needs embedding or tagging. Measured on the development machine (RTX 3090): 37 large 16-bit PNGs (1.5 GB) indexed in 7–17 s including model load; a no-change run finishes immediately.
+`deep-gallery index` (or **Index now**) runs every step incrementally. Each step only processes photos that need it, and the CLIP model loads only when something needs embedding or tagging. Measured on the development machine (RTX 3090): 37 large 16-bit PNGs (1.5 GB) indexed in 7–17 s including model load; a no-change run finishes immediately.
 
 ### 7.1 Scan
 
@@ -322,7 +322,7 @@ Zero-shot, from `vocabulary.yaml` (§10):
 3. A softmax over the family's tags (`softmax_scale`) turns scores into probabilities, so a tag's own phrases never compete.
 4. Tags with `prob ≥ min_prob` are kept, up to `max_tags`.
 
-`riffle tag` redoes this from stored embeddings in seconds (about 4 s for 1,150 photos).
+`deep-gallery tag` redoes this from stored embeddings in seconds (about 4 s for 1,150 photos).
 
 Known limitations:
 
@@ -567,7 +567,7 @@ A single page without a router. View state lives in a Svelte store mirrored into
   - **Search in any script:** `query.text_matcher` (captions, tags, read text) matches Latin-script words as whole words and words in scripts without spaces (Han, kana, Hangul, Thai) as substrings, so `北京` finds `欢迎来到北京`; name matching found nothing there, since the whole run is one "word". Read text and translation are searched together, as the tier after captions (badge "text").
   - **Export:** `metadata.jsonl` rows gain `ocr_text` and `ocr_translation`. With `with_text`, the text and translation also follow the caption in the XMP `dc:description` (after a blank line; photo apps show the description as the caption, and XMP has no field for text in the image) and go on their own lines in the `.txt`; photos with only read text get it too.
   - **Export the selection:** **Export…** in the selection bar and the context menu opens the export dialog with `{ids, kind: 'selection'}`, the path the Curate draft uses (`photo_ids`): exactly these photos, picked or not.
-  - **Generating:** cheap methods run in the request: `riffle` (vocabulary tags without articles or catch-alls like "other", plus learned tags) and `phrases` (cluster-name phrases with similarity ≥ 0.04 above the library mean and within 0.02 of the photo's best, at most 4). Models run as a `BackgroundJob`, one model per run, loaded in the job thread and freed after (`torch.cuda.empty_cache`); results are stored per batch of 8, so a cancel keeps what is done. Modes: add (a caption only where none, tags appended), replace (generated ones; typed and edited ones kept), replace all. Auto-exit and profile switching wait for the job.
+  - **Generating:** cheap methods run in the request: `deep-gallery` (vocabulary tags without articles or catch-alls like "other", plus learned tags) and `phrases` (cluster-name phrases with similarity ≥ 0.04 above the library mean and within 0.02 of the photo's best, at most 4). Models run as a `BackgroundJob`, one model per run, loaded in the job thread and freed after (`torch.cuda.empty_cache`); results are stored per batch of 8, so a cancel keeps what is done. Modes: add (a caption only where none, tags appended), replace (generated ones; typed and edited ones kept), replace all. Auto-exit and profile switching wait for the job.
   - **JoyCaption on the first library:** 8 photos in 44.5 s with the model load (~4.4 s per photo for a medium caption plus keywords); VRAM released after the run. Asked for "10 to 20 keywords", it gave 26–40, the last ones filler ("serene, calm, peaceful"): keywords are capped at 15 and "photograph" and the like dropped.
 - **Search:** with Names on, text search ranks file-name, folder, fixed-tag, then caption matches first (whole words, `query.text_matches`), badges "tag" / "caption".
   - **Export:** `embed` writes `dc:description` and `dc:subject` into an XMP APP1 segment (JPEG) or iTXt chunk (PNG) in the same pass as the GPS EXIF edit (`geotag.Meta`, edits applied to the header only); a file that already has XMP gets a sidecar. `xmp`: sidecars (combined with a location). `txt`: `<image name>.txt` with tags, the caption, or both. `jsonl`: `metadata.jsonl` (`file_name`, `text`, `tags`).
@@ -673,9 +673,9 @@ Linux and Windows use CPU-only PyTorch, since CUDA wheels would exceed GitHub's 
 
 **CPU defaults:** a first start in the app writes the faster model into the new config (`paths.standalone_defaults`: ViT-B-16 / DFN-2B, `stacks.min_similarity` 0.90). On the same CPU that gives 11.5 photos/s instead of 2.7, and a 571 MB download instead of 1.6 GB. The pip install keeps ViT-L.
 
-**In the app** (`frozen.py`, `packaging/riffle_app.py`):
+**In the app** (`frozen.py`, `packaging/deepgallery_app.py`):
 
-- Output goes to `riffle.log` (previous run: `.log.1`).
+- Output goes to `deep-gallery.log` (previous run: `.log.1`).
 - Fatal errors show a native message box.
 - On Linux the browser starts without PyInstaller's `LD_LIBRARY_PATH`.
 - The model loads in the background (§3), and the page shows a banner while it downloads or if it fails.
@@ -802,7 +802,7 @@ Question: can the CLIP embeddings group a library into broader themes than stack
 
 ### 14.3 Experiment: captions and booru tags (27 Sep 2026)
 
-**Question:** which local models to offer for generated captions and tags (exported as `.txt` next to the image, among other formats), how fast they are, and whether a master tag list can keep tags to real booru tags. Captioning itself is established (TagGUI does this); the question is the choice for Riffle.
+**Question:** which local models to offer for generated captions and tags (exported as `.txt` next to the image, among other formats), how fast they are, and whether a master tag list can keep tags to real booru tags. Captioning itself is established (TagGUI does this); the question is the choice for Deep Gallery.
 
 **Setup:** 40 images of the first library (25 photos from three folders including film scans, 15 illustrations from two folders), 1600 px previews, RTX 3090. Models from the local Hugging Face cache, transformers 5.17, onnxruntime 1.30, greedy decoding.
 
@@ -899,6 +899,25 @@ A photo shows on one branch only; the trail and the centre's stack are excluded;
 - *Contrasting* (no composition twice: the highest correlation with any chosen photo): 3–4 of 12 photos swapped, a mild effect, since a varied draft rarely repeats a composition anyway.
 
 A 12×12 luminance grid is too crude to steer a selection across mixed material; it only works when one composition dominates. Not reliable enough to offer (the user's condition), so Curate is unchanged. Ordering a draft by flow (echoes between neighbours) was judged not worth it.
+
+### 14.8 Experiment: editing (29 Sep 2026, branch `experiment/image-editing`)
+
+Non-destructive editing in its own view (`EditView.svelte`), AI and not.
+- **Storage** (`edits.py`): an edit list per photo in `edits.sqlite3` beside the default profile's flags (shared by all profiles, user data), keyed by content hash; retouch pixels in `edits/<sha256>/<id>.patch.png` and `.mask.png`. Kinds: `geometry` (one per photo: quarter turns, straightening, a crop as fractions of the turned and straightened frame, a flip) and `heal` / `remove` / `inpaint` / `instruct` (a patch over a box in the upright original's pixels, with its feathered mask and how it was made). Retouching lives in the original's space and the geometry is applied last, so disabling or deleting a step never shifts another; AI results are stored as pixels and never re-run. Each edit records the original's size, so a preview renders by scaling (`render`).
+- **In the library:** a changed list re-renders the thumbnail and preview at once (the unedited preview kept as `<id>.original.jpg`), clears the photo's measures, embedding and tags, and starts an index run that redoes them from the edited preview; `thumbs.make_derivatives` renders through the edits, so a rebuilt cache keeps them. Listing items carry `edited` and a versioned thumbnail URL; thumbnails and previews are served `Cache-Control: no-cache` (browsers revalidate, many components build image URLs themselves). A filter Edited / Unedited.
+- **Tools** (`editing.py`): a mask's box plus context (×1.5, at least 512 px) at the model's size, blended back through a feathered mask. Heal: OpenCV Telea (0.06 s). Remove: LaMa (`fashn-ai/LaMa`, TorchScript; spandrel does not recognise that file, so TorchScript is the fallback), 2.9 s including loading, then about a second. Replace: diffusers `AutoPipelineForInpainting`, SDXL inpainting by default (79 s the first time including the 6.9 GB download, then 9 s for two candidates on the RTX 3090); SD 1.5 inpainting and FLUX.1 Fill (offloaded) listed; custom: a repo, `repo:file`, or a local `.safetensors`. Upscale: spandrel, Real-ESRGAN ×4 (`lllyasviel/Annotators`), in 512 px tiles with 32 px overlap (no seams); ×2 is ×4 halved. Models stay loaded while used and are freed after 5 minutes idle.
+- **Edit with a prompt** (`instruct`, added the same day): Qwen-Image 2.1 (`QwenImage21Pipeline`, in diffusers main after 0.40). Default: the 4-bit GGUF of the official weights (`abenzerps/Qwen-Image-2.1-Uncensored-GGUF`, branch `base`, `qwen-image-2.1-Q4_K_M.gguf`, 4.6 GB) with the official repo's Qwen3-VL text encoder (bf16), VAE and scheduler, under model CPU offload: about 56 s per candidate at 30 steps on the RTX 3090. The text encoder first ran in 8 bits (bitsandbytes) to keep everything on the GPU (15.4 GB, 53 s) at 1184×880 (the pipeline's own rounding); with the same prompt and seed, that edit also redrew the main subject, where bf16 at the model's 1184×896 left it as it was (which of the two changes mattered was not separated). The VAE decodes in tiles. diffusers leaves the GGUF's bf16 norm weights packed, which only `GGUFLinear` unpacks; `_dequantize_loose` unpacks them after loading. Specs take a revision (`org/repo@rev:file`). The model gets no mask and redraws what it is shown, so a painted area is edited with the whole photo as context (a crop of 4× the area, at least 1024 px, only when it is under a quarter of the photo each way) and pasted through the mask. On a crop that was mostly a tray to remove, it kept the tray twice and redrew it across the mask's edge; with the whole photo it removed it. Nothing painted edits the whole photo. Working size: the model card's sizes (about 4 MP, one per aspect ratio: 2048², 2400×1792, 2528×1696, 2752×1536 and portraits) at half size, the shape closest to the photo's (the photo stretched a little to fit, and back). At the full 2400×1792 a candidate took 292 s, followed the instruction worse and showed vertical stripes from the tiled decode (untiled, it runs out of memory); at 1184×896 it took 56 s and was clean. Output is about 1 MP; `keep_detail` adds back the original's high frequencies (original minus its downscaled copy) where the edit differs from the photo by less than about 10 levels, fading out where it changed. Results depend on the wording and seed, hence candidates.
+- **Duplicate grouping** (found while indexing a 95k library): comparing every pair of perceptual hashes by byte lookups took 273 s of a 291 s index run with nothing to do, and held the catalogue's write lock throughout (it cleared `dupe_group` first). Now `np.bitwise_count` on the XOR of each hash with those after it (14 s), skipped when a signature of the hashes, the embedded rows and file, and the thresholds matches the last run (`meta` key `dupes`), with only the changed rows written at the end. The same run: 30 s, 7 s with nothing to do.
+- **Bake-in** (`edits.bake`): render at full resolution in the original's format (EXIF kept, orientation 1, sRGB profile), copy the original to `originals-backup/<time>/…` (default), replace the file, and move everything recorded for the old content hash to the new one in every profile (`selections.migrate_sha`: flags, export history, tag examples and negatives, captions, fixed tags, read text).
+- **Export** renders edited images to a temporary folder (named like the originals, so metadata, targets and captions work unchanged); *originals* skips the edits; *upscale* 2 or 4. RAWs are copied as they are.
+- **Known limits:** 16-bit sources render as 8-bit; SDXL shifts colours inside a hard-edged mask a little (a visible square with a rectangle; brush strokes and the feather soften it); the editor paints on a 1600 px preview (masks are scaled to the photo), with zoom up to 4×.
+- **Find & replace across photos** (`segment.py`; the editor's Find mode, `BatchEdit.svelte`, kept mounted while other modes are used): Grounding DINO (base) finds boxes for the words, SAM 2.1 (hiera-large) cuts a mask from each box (SAM 3 does text to masks in one model, but its weights are gated); a smaller pair (tiny + small) is listed. On the RTX 3090: 30 s to load, 2.6 GB, 0.4 s per 1600 px photo; on four street photos it found every person, down to small ones far off. Masks are made at 1600 px, holes inside an object filled (a print on a bag was left out otherwise), grown 1 % of the long side, and scaled to the photo. `editing.retouch_regions` fills each area (parts within 2 % of the long side joined) on its own with its own context, so small ones keep their resolution, and makes one patch over them all: one step per photo, with `find` in its parameters. Removing 17 people from a 20 MP street photo with LaMa took 12 s (a large person cut by the frame's edge became a dark smear); replacing two people in an alley with SDXL ("empty cobblestone street…") took 30 s including loading, and invented a plausible doorway and plant. Review: masks shown in red per photo, unticked photos left out; Refine paints a photo's mask onto the brush canvas (the mask is made at the base image's 1600 px) and unticks it; results with undo (deleting the step). One batch's masks at a time (`data_dir/batch/<token>`).
+- **Replace options** (after trying it): the prompt may be empty; **Denoising** is diffusers' `strength`; **Mask blur** is the blend's Gaussian radius in the editor's 1600 px (default 3.2, the old fixed blend); below full denoising, **Start from** fills the mask first (`prefill`): original, heal (OpenCV Telea), remove (LaMa), or noise (±32 in 8 px blotches, a latent cell: per-pixel noise at ±48 made SDXL paint a whole forest scene at 0.6). **Context**: a mask's box ×1.5 (at least 512 px) is now grown 1:1 to the model's working area (about 1 MP for SDXL/FLUX and LaMa, 512² for SD 1.5; `_grow`), and crops are fitted to that area, not a long side (an elongated crop got well under 1 MP). On one distant person in a street, no prompt: the tight crop put an orange glow in a shop window behind him; the grown one continued the stall's table.
+- **Next:** tone and colour adjustments.
+
+### 14.9 Importing captions and tags (29 Sep 2026)
+
+`sidecars.py` reads back what export writes, when a folder is added (for the profile it was added to: at the end of the index run for a new folder; at once in its own job for one indexed already, since an index run would hold up switching profiles) or on request per folder (Settings shows what it found). In order: `metadata.jsonl` in the photo's folder or above (`text` unless it is only the tags joined, `tags`, `ocr_text`, `ocr_translation`); `<name>.xmp` or `<name>.<ext>.xmp`; XMP in JPEG/PNG (Pillow's `info`, header only); `<name>.txt` (tags, caption, or caption then tags, told apart by whether a line is a comma-separated list of short items). The first source with a part gives it; only parts the photo lacks in the profile are written (method `imported`, marked edited so generating again keeps them). Read text is appended to the XMP description and the `.txt` without a marker, so export now also writes it to `deepgallery:text` / `deepgallery:translation` (namespace `urn:deepgallery:xmp:1.0`), and the import takes the appended block off the description; from a `.txt` it is not imported. Camera boilerplate descriptions ("OLYMPUS DIGITAL CAMERA"…) are ignored. On the 95k library, 2,000 photos took 0.56 ms each, and the only finds were darktable's automatic tags (`darktable|format|jpg`, flattened into `dc:subject` of its `.JPG.xmp`): components that only come from a `darktable|` hierarchy in `lr:hierarchicalSubject` are dropped. Another 5,000: one stock description, correct.
 
 ## 15. Candidates
 

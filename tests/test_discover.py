@@ -5,8 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from riffle import discover
-from riffle.server import create_app
+from deep_gallery import discover
+from deep_gallery.server import create_app
 from conftest import FakeClip, photo
 
 

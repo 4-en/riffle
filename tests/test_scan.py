@@ -2,9 +2,9 @@ import os
 
 import pytest
 
-from riffle import db as _db
+from deep_gallery import db as _db
 
-from riffle.scan import scan
+from deep_gallery.scan import scan
 from conftest import photo
 
 
@@ -97,7 +97,7 @@ def test_v1_catalogue_is_migrated_and_metadata_backfilled(cfg, archive_dir):
     on the next scan, without invalidating derived data."""
     import sqlite3
 
-    from riffle import db
+    from deep_gallery import db
 
     path = cfg.db_path
     path.parent.mkdir(parents=True)
@@ -130,7 +130,7 @@ def test_every_older_catalogue_migrates_to_the_current_schema(tmp_path, version)
     columns as a new one (guards against a migration without a version bump)."""
     import sqlite3
 
-    from riffle import db
+    from deep_gallery import db
 
     def columns(conn):
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")]
