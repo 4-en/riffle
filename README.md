@@ -1,3 +1,4 @@
+
 # Deep Gallery
 
 A local tool for finding the best photos in a large archive and exporting them for editing, sharing, or printing.
@@ -25,6 +26,10 @@ You search and browse by image content, cull by picking and rejecting photos, co
 - Duplicate detection (perceptual hash), RAW matching by file name, EXIF metadata.
 
 Originals are read-only. Everything Deep Gallery derives lives in a cache folder and can be deleted and rebuilt. What you create by hand (pick/reject flags, your tags, captions and fixed tags) lives separately in `selections.sqlite3`; it survives re-indexing, deleting the cache, and moving files. Back it up.
+
+<img width="2559" height="1322" alt="Screenshot 2026-11-03 at 16-33-40 Deep Gallery" src="https://github.com/user-attachments/assets/3825548a-d4d2-41f3-90a2-d7b29d82eb18" /><img width="2559" height="1317" alt="Screenshot_20261103_163741" src="https://github.com/user-attachments/assets/2b5860ce-0989-49c7-9558-83988a986cf5" />
+
+
 
 ## Install
 
@@ -99,6 +104,10 @@ With a location history configured, exports add the position to photos without G
 
 Stacks link photos at most `stacks.max_gap_seconds` apart that are at least `stacks.min_similarity` alike. If they're too eager or too strict, adjust these and rerun `deep-gallery index`; it doesn't re-embed. The right similarity depends on the model (see [Model](#model)).
 
+<img width="2558" height="1316" alt="Screenshot_20261103_164802" src="https://github.com/user-attachments/assets/b866691a-79a9-42fa-b403-ba8615044454" />
+
+
+
 ## Taste model
 
 **Settings → Your taste → Calibrate** trains a small model on your flags; it takes a second or two. It needs at least 20 scenes with a pick (or an export) and 50 fully rejected scenes, and it must clearly beat chance on photos it wasn't trained on.
@@ -110,6 +119,9 @@ Once calibrated, it keeps itself up to date: when Deep Gallery starts (and when 
 ## Curate
 
 Filter down to a trip, a timeframe, or a place, then press **Curate** for a draft of a small selection: good photos, but not ten of the same scene, moment, or spot.
+
+<img width="2559" height="1317" alt="Screenshot_20261103_164629" src="https://github.com/user-attachments/assets/1f961491-cf1c-4b4b-b716-7e711a93f875" />
+
 
 - **Candidates**: picks and unflagged photos within the filters; a switch adds rejects. Each stack contributes one photo: its pick, or its best frame.
 - **Quality**: your taste model (once calibrated), the CLIP quality score, exposure, and a bonus for picks.
@@ -129,7 +141,12 @@ The draft is laid out as one block in capture order: rows of equal height that f
 
 **Order** shows the same draft by date, quality, similarity (alike photos next to each other), colour, light, or place (the shortest route, or a zigzag across the map); drag photos to arrange them yourself. **Mark as picks** flags the draft (undo with Ctrl+Z); **Export** copies exactly these photos, numbered in the shown order if you like. The draft is remembered per filter set in the browser, and **Reset draft** starts over.
 
+
+
+
 ## Discover
+
+<img width="2558" height="1315" alt="Screenshot_20261103_164327" src="https://github.com/user-attachments/assets/b1736018-b4ec-4dc1-b30c-5fd9ffb6f67b" />
 
 **Discover** in the top bar starts at a random photo (newer ones more likely), **Discover** in the photo view at that photo. It sits in the middle, with up to nine branches to photos related to it in one way each:
 
@@ -155,6 +172,9 @@ Tags taught by example: select one or more photos, right-click → **Learn a tag
 ## Captions and tags
 
 Select photos and click **Caption…** in the selection bar (or right-click → **Caption N photos…**, or **Add…** in the photo view). Each photo gets a caption and a list of **fixed tags**: written on the photo, unlike the tags Deep Gallery computes.
+
+<img width="2558" height="1316" alt="Screenshot_20261103_170519" src="https://github.com/user-attachments/assets/0edf7b5e-9fb8-4a9f-9696-f0fd3f19ba48" />
+
 
 - **Edit** a caption in place (saved when you click away); add tags with Enter or a comma, remove with **×**, drag to reorder. On wide screens the photos sit in several columns.
 - **New tags** go after the existing ones or before them (e.g. a trigger word first), both when generating and when adding a tag to all.
